@@ -1,0 +1,111 @@
+# ── Wav Fake Cleaner V2 — DOM Selectors ──────────────────
+# Hot-updatable: modify this file without restarting the app.
+# Threads changes its DOM frequently — update selectors here.
+
+profile:
+  # Wait for any of these to confirm page loaded
+  loaded_check: "header,main,h1,[data-pressable-container]"
+
+  # Followers link/button
+  followers_link: "a[href*='followers']"
+  followers_text_pattern: '^\d[\d,.\s]*\s*(followers|abonnés)$'
+
+  # Profile images
+  profile_pic: "img"
+  default_pic_patterns:
+    - "default"
+    - "empty"
+    - "placeholder"
+    - "/44884218_345"
+
+  # Tab navigation
+  replies_tab_texts:
+    - "Réponses"
+    - "Replies"
+    - "réponses"
+    - "replies"
+
+  threads_tab_texts:
+    - "Threads"
+    - "threads"
+
+  # Content indicators
+  no_reply_patterns:
+    - 'no replies yet'
+    - 'pas encore de r[ée]ponse'
+    - 'aucune r[ée]ponse'
+    - 'nothing here yet'
+    - 'rien pour l.instant'
+    - "hasn.t replied"
+    - "n.a pas encore r[ée]pondu"
+
+  no_threads_patterns:
+    - "aucun thread"
+    - "no threads yet"
+    - "nothing here yet"
+    - "hasn.t posted"
+    - "n.a pas encore publi"
+
+  not_found_patterns:
+    - "not found"
+    - "not available"
+    - "n'est pas disponible"
+    - "page isn.t available"
+    - "page introuvable"
+
+  private_patterns:
+    - "account is private"
+    - "compte est priv"
+    - "profil priv"
+
+scroll:
+  # Selectors for the follower list container
+  dialog_links: 'div[role="dialog"] a[href*="/@"]'
+  profile_links: 'a[href*="/@"]'
+  scrollable_attr: "data-autoscroll"
+
+menu:
+  # Three-dots menu items
+  remove_patterns:
+    - "supprimer follower"
+    - "remove follower"
+    - "supprimer l.abonn"
+    - "retirer.*abonn"
+    - "remove.*follow"
+
+  block_patterns:
+    - "^bloquer$"
+    - "^block$"
+
+  confirm_patterns:
+    - "^supprimer$"
+    - "^remove$"
+    - "^bloquer$"
+    - "^block$"
+    - "confirm"
+    - "^oui$"
+    - "^yes$"
+
+api:
+  # Internal Threads API
+  app_id: "238260118697367"
+  followers_endpoint: "https://www.threads.net/api/v1/friendships/{user_id}/followers/"
+  profile_endpoint: "https://www.threads.net/api/v1/users/web_profile_info/"
+  search_endpoint: "https://www.threads.net/api/v1/users/search/"
+  page_size: 50
+
+spam:
+  # Spam detection keywords
+  keywords:
+    - "whatsapp"
+    - "telegram"
+    - "signal"
+    - "envie de faire connaissance"
+    - "click.*link.*bio"
+    - "dm.*for.*promo"
+    - "follow.*for.*follow"
+    - "check.*my.*profile"
+
+  phone_patterns:
+    - '\b0\d{9,}\b'
+    - '\+\d{10,}'
