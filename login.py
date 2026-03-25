@@ -8,8 +8,8 @@ Usage:
 
 import asyncio
 import json
+import sys
 from pathlib import Path
-from playwright.async_api import async_playwright
 
 DATA_DIR = Path(__file__).parent / "data"
 STORAGE_PATH = DATA_DIR / "storage_state.json"
@@ -28,10 +28,17 @@ async def main() -> None:
     print("  -> Une fois connecte, reviens ici et appuie sur Entree.")
     print()
 
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("  ERREUR: Playwright n'est pas installe.")
+        print("  Lance: pip install playwright && python -m playwright install chromium")
+        sys.exit(1)
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
 
-        ctx_opts = {"viewport": {"width": 1280, "height": 900}}
+        ctx_opts: dict = {"viewport": {"width": 1280, "height": 900}}
         if STORAGE_PATH.exists():
             ctx_opts["storage_state"] = str(STORAGE_PATH)
             print("  (Session precedente detectee, tentative de restauration...)")
@@ -55,4 +62,10 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n  Annule.")
+    except Exception as e:
+        print(f"\n  ERREUR: {e}")
+        sys.exit(1)
