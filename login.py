@@ -19,9 +19,9 @@ async def main() -> None:
     DATA_DIR.mkdir(exist_ok=True)
 
     print()
-    print("  ╔══════════════════════════════════════════╗")
-    print("  ║   Wav Fake Cleaner V2 - Connexion        ║")
-    print("  ╚══════════════════════════════════════════╝")
+    print("  ==========================================")
+    print("   Wav Fake Cleaner V2 - Connexion Threads")
+    print("  ==========================================")
     print()
     print("  Un navigateur va s'ouvrir.")
     print("  1. Connecte-toi a ton compte Threads")
@@ -32,12 +32,12 @@ async def main() -> None:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        print("  ╔══════════════════════════════════════════════════════╗")
-        print("  ║  ERREUR : Playwright n'est pas installe !            ║")
-        print("  ║                                                      ║")
-        print("  ║  Lance d'abord : setup.bat (Windows)                 ║")
-        print("  ║             ou : ./setup.sh (Mac/Linux)              ║")
-        print("  ╚══════════════════════════════════════════════════════╝")
+        print("  ==================================================")
+        print("   ERREUR : Playwright n'est pas installe !")
+        print()
+        print("   Lance d'abord : setup.bat (Windows)")
+        print("               ou : ./setup.sh (Mac/Linux)")
+        print("  ==================================================")
         sys.exit(1)
 
     try:
@@ -72,15 +72,15 @@ async def main() -> None:
         raise
 
     print()
-    print("  ╔══════════════════════════════════════════════════════╗")
-    print("  ║                                                      ║")
-    print("  ║   CONNEXION REUSSIE !                                ║")
-    print("  ║                                                      ║")
-    print("  ║   Ta session est sauvegardee.                        ║")
-    print("  ║   Tu peux maintenant lancer : start.bat              ║")
-    print("  ║                           ou : ./start.sh            ║")
-    print("  ║                                                      ║")
-    print("  ╚══════════════════════════════════════════════════════╝")
+    print("  ==================================================")
+    print()
+    print("   CONNEXION REUSSIE !")
+    print()
+    print("   Ta session est sauvegardee.")
+    print("   Tu peux maintenant lancer : start.bat")
+    print("                           ou : ./start.sh")
+    print()
+    print("  ==================================================")
     print()
 
 
