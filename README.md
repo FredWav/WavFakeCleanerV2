@@ -1,155 +1,157 @@
 # Wav Fake Cleaner V2
 
-> Async Threads follower cleaning engine — fully decoupled architecture.
+Nettoie automatiquement les faux followers de ton compte Threads.
 
-## Architecture
+---
+
+## Comment ca marche ?
+
+1. L'app recupere ta liste de followers
+2. Elle analyse chaque profil avec un algorithme en 7 etapes
+3. Les comptes detectes comme fake sont automatiquement supprimes
+4. Tu suis tout en temps reel depuis un dashboard web
+
+---
+
+## Installation (5 minutes)
+
+### Ce qu'il te faut
+
+- **Python 3.11+** : [python.org/downloads](https://www.python.org/downloads/)
+  > IMPORTANT : Coche "Add Python to PATH" pendant l'installation
+- **Node.js 18+** : [nodejs.org](https://nodejs.org/) (prends la version LTS)
+
+### Windows
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  React SPA (Vite + Tailwind)                          │
-│  ┌──────────┐ ┌────────────┐ ┌─────────────────────┐ │
-│  │StatCards  │ │ControlPanel│ │   LogConsole (WS)   │ │
-│  └──────────┘ └─────┬──────┘ └──────────┬──────────┘ │
-│                     │ REST               │ WebSocket   │
-└─────────────────────┼───────────────────┼────────────┘
-                      ▼                   ▼
-┌──────────────────────────────────────────────────────┐
-│  FastAPI Backend                                      │
-│  ┌────────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │ /api/*     │  │ /ws/logs │  │  Background Tasks │  │
-│  │ REST routes│  │ broadcast│  │  (asyncio.Task)   │  │
-│  └─────┬──────┘  └────┬─────┘  └────────┬─────────┘  │
-│        │              │                  │             │
-│  ┌─────▼──────────────▼──────────────────▼──────────┐ │
-│  │              Engine Layer                          │ │
-│  │  ┌─────────┐ ┌───────┐ ┌───────┐ ┌───────────┐  │ │
-│  │  │Fetcher  │ │Scorer │ │Cleaner│ │BrowserMgr │  │ │
-│  │  │(scroll) │ │(pure) │ │(block)│ │(Playwright)│  │ │
-│  │  └────┬────┘ └───────┘ └───┬───┘ └─────┬─────┘  │ │
-│  │       │                    │            │         │ │
-│  │  ┌────▼────────────────────▼────────────▼──────┐  │ │
-│  │  │   HumanPacer (micro / macro delays)         │  │ │
-│  │  └─────────────────────────────────────────────┘  │ │
-│  └───────────────────────┬───────────────────────────┘ │
-│                          │                              │
-│  ┌───────────────────────▼───────────────────────────┐ │
-│  │  SQLite (WAL) — followers + action_logs            │ │
-│  └────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────┘
+1. Double-clique sur setup.bat
+2. Attends que tout s'installe
+3. C'est pret !
 ```
 
-## Directory Structure
+### Mac / Linux
+
+```bash
+chmod +x setup.sh start.sh
+./setup.sh
+```
+
+---
+
+## Utilisation
+
+### Etape 1 : Se connecter a Threads (une seule fois)
+
+```
+python login.py
+```
+
+Un navigateur s'ouvre. Connecte-toi a ton compte Threads, puis reviens dans le terminal et appuie sur Entree. Ta session est sauvegardee, tu n'auras pas besoin de le refaire.
+
+### Etape 2 : Lancer l'application
+
+**Windows :** double-clique sur `start.bat`
+**Mac/Linux :** `./start.sh`
+
+Ouvre ton navigateur sur **http://localhost:8000**
+
+### Etape 3 : Utiliser le dashboard
+
+Le dashboard affiche :
+- **5 compteurs** : total followers, en attente, scannes, faux, supprimes
+- **4 boutons** :
+  - **Recuperer** : charge la liste de tes followers
+  - **Scanner** : analyse les profils un par un
+  - **Nettoyer** : supprime les faux followers
+  - **Autopilote** : fait tout automatiquement (recommande)
+- **Logs en direct** : tu vois exactement ce que fait l'app
+- **Tableau** : liste de tous les followers avec leur score
+
+### Le bouton "Parametres" permet de :
+- Changer ton nom d'utilisateur Threads
+- Ajuster le seuil de detection (defaut: 70/100)
+- Choisir le profil de securite (prudent / normal / agressif)
+
+---
+
+## Comment fonctionne la detection ?
+
+Chaque profil commence a 0 et accumule des points. Au-dessus du seuil (70 par defaut), il est considere comme fake.
+
+| Signal | Points | Pourquoi |
+|--------|--------|----------|
+| 0 followers | +15 | Suspect |
+| 0 posts | +35 | Tres suspect |
+| Posts tous recents (<72h) | +20 | Spam |
+| Posts dupliques (>50%) | +40 | Spambot |
+| Mots spam (WhatsApp, Telegram...) | +25 | Arnaque |
+| 0 reponses | +25 | Pas d'interaction |
+| 0 posts ET 0 reponses | +20 | Combo suspect |
+| Pas de bio | +15 | Pas d'effort |
+| Compte prive + peu de followers | +40 | Fake typique |
+| --- | --- | --- |
+| A une bio | -10 | Bon signe |
+| 500+ followers | -10 | Probablement reel |
+| A des posts + des reponses | -15 | Actif |
+| A un vrai nom | -5 | Bon signe |
+
+**Exemples :**
+- Bot typique (0 followers, 0 posts, 0 reponses, pas de bio) = **100/100**
+- Compte legit (200 followers, 10 posts, bio, nom) = **0/100**
+
+---
+
+## Profils de securite
+
+| Profil | Suppressions/jour | Suppressions/heure | Vitesse |
+|--------|------------------|--------------------|---------|
+| Prudent | 160 | 25 | Lent mais tres safe |
+| Normal | 300 | 40 | Equilibre (recommande) |
+| Agressif | 500 | 50 | Rapide mais plus de risque |
+
+L'app simule un comportement humain (pauses aleatoires, delais variables) pour eviter d'etre bloquee par Threads.
+
+---
+
+## En cas de probleme
+
+| Probleme | Solution |
+|----------|----------|
+| "Python non trouve" | Reinstalle Python et coche "Add to PATH" |
+| "Node.js non trouve" | Installe Node.js depuis nodejs.org |
+| Erreur 429 | L'app se met en pause automatiquement. Attends. |
+| Session expiree | Relance `python login.py` |
+| Le dashboard ne charge pas | Verifie que le backend tourne (terminal) |
+
+---
+
+## Structure du projet
 
 ```
 wav-fake-cleaner-v2/
-├── backend/
-│   ├── core/            # Config (Pydantic), logger, singletons
-│   ├── database/        # SQLAlchemy V2 models + async session
-│   ├── engine/
-│   │   ├── browser_manager.py   # Playwright pool + resource blocker
-│   │   ├── fetcher.py           # Scroll-based follower scraping
-│   │   ├── scorer.py            # Pure scoring algorithm (0-100)
-│   │   ├── cleaner.py           # Remove / block execution
-│   │   ├── pacer.py             # HumanPacer (organic delays)
-│   │   └── selectors.yaml       # DOM selectors (hot-updatable)
-│   ├── api/
-│   │   ├── routes.py            # REST endpoints
-│   │   └── websocket.py         # /ws/logs real-time broadcast
-│   └── main.py                  # FastAPI app + lifespan
-├── frontend/
-│   └── src/
-│       ├── components/          # StatCards, ControlPanel, LogConsole
-│       ├── hooks/               # useWebSocket, useStats
-│       └── lib/                 # Typed API client
-├── alembic/                     # Database migrations
-├── tests/                       # Unit tests (scorer, pacer)
-└── pyproject.toml
+├── backend/           # Serveur Python (FastAPI)
+│   ├── engine/        # Moteur : fetcher, scorer, cleaner
+│   ├── api/           # Endpoints REST + WebSocket
+│   └── database/      # Base de donnees SQLite
+├── frontend/          # Interface web (React + Tailwind)
+├── data/              # Session Threads + base de donnees
+├── setup.bat/.sh      # Installation automatique
+├── start.bat/.sh      # Lancement one-click
+└── login.py           # Connexion a Threads
 ```
 
-## Quick Start
+## API (pour les developpeurs)
 
-### 1. Backend
+| Methode | URL | Description |
+|---------|-----|-------------|
+| GET | /api/stats | Stats du dashboard |
+| GET | /api/followers | Liste des followers |
+| POST | /api/fetch | Lancer la recuperation |
+| POST | /api/scan | Lancer le scan |
+| POST | /api/clean | Lancer le nettoyage |
+| POST | /api/autopilot | Tout automatique |
+| POST | /api/stop | Arreter |
+| GET | /api/logs | Historique des actions |
+| WS | /ws/logs | Logs temps reel |
 
-```bash
-# Install Python deps
-pip install -e ".[dev]"
-
-# Install Playwright browsers
-playwright install chromium
-
-# Copy env file
-cp .env.example .env
-# Edit .env → set WAV_THREADS_USERNAME
-
-# Start the API
-uvicorn backend.main:app --reload --port 8000
-```
-
-### 2. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open **http://localhost:5173**
-
-### 3. Authentication
-
-Before using Fetch/Scan/Clean, you need a valid Threads session:
-
-1. Set `WAV_HEADLESS=false` in `.env`
-2. Start the backend — a browser window opens
-3. Manually log in to Threads
-4. The session cookies are saved to `data/storage_state.json`
-5. Switch back to `WAV_HEADLESS=true` for production runs
-
-## Testing
-
-```bash
-pytest tests/ -v
-```
-
-## Scoring Algorithm (7 Steps)
-
-Each profile starts at **0** and accumulates points. Above the threshold (**70** by default) → flagged as fake.
-
-| Step | Signal | Points | Logic |
-|------|--------|--------|-------|
-| **1** | Follower count | 0=+15, 1-10=+10, 11-50=+5, 51-99=0, 100-499=-5, 500+=-10 | Low follower count = suspect |
-| **2** | Posts (public) | 0=+35, 1-2=+20, 3-4=+10, 5+=-15. All recent (<72h): +20 extra | No content = very suspect |
-| **2b** | Spam detection | 50%+ identical posts: cancel -15 bonus and +40. Spam keywords (WhatsApp/Telegram/phone): +25 | Catches spammers like @linaskge |
-| **3** | Replies (public) | None=+25, replies+posts=-15, replies only=+10, reply spam=+10 | No interaction = suspect |
-| **4** | Combos | 0 posts AND 0 replies=+20, 0 posts BUT replies=+10, 1-4 posts/0 replies/no bio=+10 | Reinforcing signals |
-| **5** | Bio | Has bio=-10 (or -5 if zero activity), no bio=+15 | Personalization effort |
-| **6** | Private accounts | Steps 2-4 skipped. Smart mode: <10 followers=+40, 10-30 varies by bio/pic. Strict mode: flat +10 | Two modes available |
-| **7** | Full name | Has name=-5 | Minor personalization signal |
-
-**Score clamped to [0, 100].** Each scored profile gets a `score_breakdown` JSON for full auditability.
-
-### Real-world examples
-
-- **Typical bot** (0 followers, 0 posts, 0 replies, no bio): 15+35+25+20+15 = **100/100**
-- **Legit account** (200 followers, 10 posts, replies, bio, name): -5-15-15+0-10-5 = **0/100**
-- **@linaskge spammer** (2 followers, 5+ identical posts, reply spam, WhatsApp): 10-15+80+10+0+15+0 = **100/100**
-
-## Internationalization (i18n)
-
-The frontend is fully bilingual **French (default) / English**. A toggle button in the header switches the UI language instantly. All labels, statuses, and console messages are translated. The preference is persisted in `localStorage`.
-
-## Key Design Decisions
-
-| Decision | Rationale |
-|---|---|
-| SQLite WAL over JSON | Concurrent reads/writes, indexed queries, crash recovery |
-| selectors.yaml | Update DOM selectors without touching Python code |
-| asyncio.Semaphore | Hard cap on browser contexts to prevent rate limits |
-| HumanPacer | Organic delays prevent bot detection (micro + macro) |
-| Pure scorer (7 steps) | Zero network deps — 100% unit-testable, full breakdown audit |
-| Spam detection (step 2b) | Catches duplicate-post bots and keyword spammers |
-| Smart vs strict private modes | Intelligent scoring for private accounts, or flat penalty |
-| WebSocket logs | Real-time UX without polling overhead |
-| storage_state persistence | No CDP port dependency, headless-compatible |
-| Resource interception | Block images/fonts/media for 3-5× speed gain |
-| Bilingual FR/EN | French default with instant toggle, zero-reload |
+Documentation interactive : **http://localhost:8000/docs**

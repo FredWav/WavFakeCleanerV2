@@ -6,9 +6,11 @@ import StatCards from "./components/StatCards"
 import ControlPanel from "./components/ControlPanel"
 import LogConsole from "./components/LogConsole"
 import FollowerTable from "./components/FollowerTable"
+import SettingsPanel from "./components/SettingsPanel"
 
 export default function App() {
   const [lang, setLang] = useState(getStoredLang)
+  const [showSettings, setShowSettings] = useState(false)
   const { stats, refresh } = useStats(3000)
   const { logs, connected, clearLogs } = useWebSocket(300)
 
@@ -26,13 +28,23 @@ export default function App() {
           <h1 className="text-2xl font-bold text-white">{t("title", lang)}</h1>
           <p className="text-sm text-gray-500">{t("subtitle", lang)}</p>
         </div>
-        <button
-          onClick={toggleLang}
-          className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm text-gray-400
-            hover:text-white transition-colors"
-        >
-          {t("lang_toggle", lang)}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm text-gray-400
+              hover:text-white transition-colors"
+            title={t("settings", lang)}
+          >
+            {t("settings", lang)}
+          </button>
+          <button
+            onClick={toggleLang}
+            className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm text-gray-400
+              hover:text-white transition-colors"
+          >
+            {t("lang_toggle", lang)}
+          </button>
+        </div>
       </header>
 
       {/* Stats */}
@@ -51,6 +63,11 @@ export default function App() {
         />
         <FollowerTable lang={lang} refreshTrigger={stats?.scanned} />
       </div>
+
+      {/* Settings modal */}
+      {showSettings && (
+        <SettingsPanel lang={lang} onClose={() => setShowSettings(false)} />
+      )}
     </div>
   )
 }
