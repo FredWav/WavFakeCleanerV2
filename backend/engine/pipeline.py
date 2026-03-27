@@ -156,6 +156,11 @@ class Pipeline:
 
     # ── Scan phase ────────────────────────────────────────────────────────
 
+    # Micro-batch settings
+    SCAN_MICRO_BATCH = 12            # profiles per micro-batch
+    SCAN_MICRO_PAUSE = (120, 200)    # 2-3min pause between micro-batches
+    SCAN_BLOCK_COOLDOWN = 7200       # 2h on confirmed blocking
+
     async def scan(self, batch_size: int | None = None) -> dict:
         """Scan pending followers and score them."""
         self._running = True
@@ -164,7 +169,8 @@ class Pipeline:
         if batch_size is None:
             batch_size = self.rate_tracker.profile["scan_batch"]
 
-        stats = {"scanned": 0, "fakes": 0, "errors": 0, "rate_limited": False}
+        stats = {"scanned": 0, "fakes": 0, "errors": 0,
+                 "requeued": 0, "rate_limited": False}
 
         # Get pending followers
         async with async_session() as session:
@@ -183,9 +189,12 @@ class Pipeline:
         # Shuffle for unpredictable navigation patterns
         random.shuffle(pending)
         total = len(pending)
-        log.info("pipeline", f"Scanning {total} profiles")
+        log.info("pipeline", f"Scanning {total} profiles "
+                 f"(micro-batches of {self.SCAN_MICRO_BATCH})")
 
-        pacer = HumanPacer(base_min=2, base_max=6)
+        pacer = HumanPacer(base_min=8, base_max=15)
+        consecutive_not_found = 0
+        micro_batch_count = 0
 
         try:
             ctx, page = await browser_manager.new_page()
@@ -199,6 +208,22 @@ class Pipeline:
                         log.warning("pipeline", f"Auto-stop: {reason}")
                         self.stop_event.set()
                         break
+
+                    # Micro-batch pause: every N profiles, take a long break
+                    micro_batch_count += 1
+                    if micro_batch_count > self.SCAN_MICRO_BATCH:
+                        micro_batch_count = 1
+                        pause = random.uniform(*self.SCAN_MICRO_PAUSE)
+                        log.info("pipeline",
+                                 f"Micro-batch pause: {int(pause)}s "
+                                 f"({stats['scanned']}/{total} done)")
+                        await isleep(pause, self.stop_event)
+                        if self.stop_event.is_set():
+                            break
+
+                    # Human navigation: every 3-6 scans, visit home page
+                    if micro_batch_count > 1 and random.random() < 0.22:
+                        await self._simulate_human_navigation(page)
 
                     t0 = time.time()
 
@@ -229,6 +254,57 @@ class Pipeline:
                     score, details = score_profile(
                         data, threshold=settings.score_threshold)
 
+                    # Handle not_found: distinguish real vs blocking
+                    if score == -1 and data.not_found:
+                        is_blocked = self._is_likely_blocked(dt_ms, data)
+
+                        if is_blocked:
+                            # 1st blocked: re-queue and warn
+                            consecutive_not_found += 1
+                            await self._requeue_follower(follower.username)
+                            stats["requeued"] += 1
+
+                            if consecutive_not_found >= 2:
+                                # 2nd consecutive: confirmed blocking → 2h stop
+                                log.error("pipeline",
+                                          f"@{follower.username}: 2nd blocked "
+                                          f"— stopping for 2h")
+                                stats["rate_limited"] = True
+                                await self._log_action(
+                                    "scan", follower.username,
+                                    "blocked_2h", duration_ms=dt_ms)
+                                # Wait 2h
+                                log.warning("pipeline",
+                                            f"Cooldown: waiting "
+                                            f"{self.SCAN_BLOCK_COOLDOWN // 3600}h "
+                                            f"to avoid permanent block")
+                                await isleep(
+                                    self.SCAN_BLOCK_COOLDOWN, self.stop_event)
+                                if self.stop_event.is_set():
+                                    break
+                                # Reset and continue
+                                consecutive_not_found = 0
+                                micro_batch_count = 0
+                                log.info("pipeline", "Cooldown ended, resuming...")
+                                continue
+                            else:
+                                log.warning("pipeline",
+                                            f"[{i+1}/{total}] "
+                                            f"@{follower.username} → "
+                                            f"blocked (re-queued, "
+                                            f"{dt_ms}ms response)")
+                                # Pace longer after blocked
+                                await isleep(
+                                    random.uniform(30, 60), self.stop_event)
+                                continue
+                        else:
+                            # Real not found (account deleted/renamed)
+                            consecutive_not_found = 0
+                            log.warning("pipeline",
+                                        f"[{i+1}/{total}] "
+                                        f"@{follower.username} → "
+                                        f"not found (real, {dt_ms}ms)")
+
                     # Save to DB
                     async with async_session() as session:
                         result = await session.execute(
@@ -242,6 +318,7 @@ class Pipeline:
                                 stats["errors"] += 1
                                 status = "error"
                             else:
+                                consecutive_not_found = 0
                                 f.scanned = True
                                 f.score = score
                                 f.score_breakdown = json.dumps(details)
@@ -258,8 +335,6 @@ class Pipeline:
                                 threshold = settings.score_threshold
                                 margin = 10  # borderline zone
                                 if score >= threshold:
-                                    # Borderline (threshold to threshold+margin)?
-                                    # Flag for review if has any legit signal
                                     has_legit = (data.has_bio or data.has_link_in_bio
                                                  or data.has_ig_link or data.has_real_pic)
                                     if score <= threshold + margin and has_legit:
@@ -291,12 +366,8 @@ class Pipeline:
                         log.info("pipeline",
                                  f"[{i+1}/{total}] @{follower.username} → "
                                  f"{level} {score}/100")
-                    else:
-                        log.warning("pipeline",
-                                    f"[{i+1}/{total}] @{follower.username} → "
-                                    f"not found")
 
-                    # Pace
+                    # Pace (8-15s with human variation)
                     if not self.stop_event.is_set() and i < total - 1:
                         pause = pacer.next_scan_pause()
                         await isleep(pause, self.stop_event)
@@ -311,8 +382,52 @@ class Pipeline:
 
         log.info("pipeline",
                  f"Scan done: {stats['scanned']} scanned, "
-                 f"{stats['fakes']} fakes, {stats['errors']} errors")
+                 f"{stats['fakes']} fakes, {stats['errors']} errors"
+                 + (f", {stats['requeued']} re-queued"
+                    if stats['requeued'] else ""))
         return stats
+
+    def _is_likely_blocked(self, response_ms: int,
+                           data: ProfileData) -> bool:
+        """Distinguish a real 'not found' from a rate-limit block.
+        - Blocked responses come back instantly (<2s)
+        - Real not found pages take 3-8s to load and render
+        """
+        if response_ms < 2000:
+            return True
+        if data.error == "timeout":
+            return True
+        return False
+
+    async def _requeue_follower(self, username: str) -> None:
+        """Put a blocked follower back in the pending queue."""
+        async with async_session() as session:
+            result = await session.execute(
+                select(Follower).where(Follower.username == username))
+            f = result.scalar_one_or_none()
+            if f:
+                f.scanned = False
+                f.scan_error = None
+                await session.commit()
+
+    async def _simulate_human_navigation(self, page) -> None:
+        """Visit Threads home page briefly to break the profile-visit pattern."""
+        try:
+            destinations = [
+                "https://www.threads.net/",
+                "https://www.threads.net/search",
+                f"https://www.threads.net/@{settings.threads_username}",
+            ]
+            url = random.choice(destinations)
+            log.info("pacer", f"Human nav: visiting {url.split('.net')[1]}")
+            await page.goto(url, timeout=10000, wait_until="domcontentloaded")
+            # Simulate reading/scrolling
+            await asyncio.sleep(random.uniform(2, 5))
+            scroll_amount = random.randint(200, 800)
+            await page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+            await asyncio.sleep(random.uniform(1, 3))
+        except Exception:
+            pass  # Non-critical, just continue scanning
 
     # ── Clean phase ───────────────────────────────────────────────────────
 

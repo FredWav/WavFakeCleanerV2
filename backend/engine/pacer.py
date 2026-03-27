@@ -49,23 +49,26 @@ class HumanPacer:
             return random.uniform(self.base_max * 2, self.base_max * 4)
 
     def next_scan_pause(self) -> float:
-        """Shorter pauses for scanning (just navigating, less suspicious)."""
+        """8-15s base pauses for scanning, with human variation."""
         self._action_count += 1
 
         if self._action_count >= self._session_length:
             self._action_count = 0
-            self._session_length = random.randint(15, 35)
-            delay = random.uniform(30, 90)
+            self._session_length = random.randint(8, 18)
+            delay = random.uniform(120, 240)
             log.info("pacer", f"Scan session break: {delay:.0f}s")
             return delay
 
         roll = random.random()
-        if roll < 0.75:
-            return random.uniform(0.3, 0.8)
-        elif roll < 0.92:
-            return random.uniform(1.0, 3.0)
+        if roll < 0.65:
+            # Normal pace: 8-12s
+            return random.uniform(8, 12)
+        elif roll < 0.88:
+            # Slower: reading the profile (12-18s)
+            return random.uniform(12, 18)
         else:
-            return random.uniform(5, 12)
+            # Human distraction (20-35s)
+            return random.uniform(20, 35)
 
 
 async def isleep(seconds: float, stop_event: asyncio.Event, step: float = 0.2) -> None:
