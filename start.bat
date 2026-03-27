@@ -62,6 +62,9 @@ if not exist "frontend\dist\index.html" (
     )
 )
 
+:: --- Ouvrir le navigateur automatiquement ---
+start http://127.0.0.1:8000/
+
 :: --- Lancer le backend (qui sert aussi le frontend) ---
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 

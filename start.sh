@@ -51,5 +51,12 @@ if [ ! -f "frontend/dist/index.html" ] && [ -f "frontend/package.json" ]; then
     echo
 fi
 
+# --- Ouvrir le navigateur automatiquement ---
+if command -v xdg-open &>/dev/null; then
+    xdg-open "http://127.0.0.1:8000/" &>/dev/null &
+elif command -v open &>/dev/null; then
+    open "http://127.0.0.1:8000/" &>/dev/null &
+fi
+
 # --- Lancer le backend (qui sert aussi le frontend) ---
 python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
