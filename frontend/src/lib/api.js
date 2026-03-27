@@ -25,6 +25,9 @@ export const api = {
   autopilot: () => request("/autopilot", { method: "POST" }),
   stop: () => request("/stop", { method: "POST" }),
 
+  approveFollower: (username) => request(`/followers/${username}/approve`, { method: "POST" }),
+  rejectFollower: (username) => request(`/followers/${username}/reject`, { method: "POST" }),
+
   updateSettings: (body) => request("/settings", {
     method: "PATCH",
     body: JSON.stringify(body),

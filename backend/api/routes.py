@@ -30,6 +30,7 @@ class StatsResponse(BaseModel):
     scanned: int
     fakes: int
     removed: int
+    to_review: int
     is_running: bool
     rate: dict
 
@@ -67,6 +68,8 @@ async def list_followers(
             query = query.where(Follower.is_fake == True, Follower.removed == False)
         elif status == "removed":
             query = query.where(Follower.removed == True)
+        elif status == "review":
+            query = query.where(Follower.to_review == True, Follower.removed == False)
 
         query = query.order_by(Follower.score.desc().nullslast())
         query = query.offset(offset).limit(limit)
@@ -77,8 +80,11 @@ async def list_followers(
         return [
             {
                 "username": f.username,
+                "profile_url": f"https://www.threads.net/@{f.username}",
                 "score": f.score,
                 "is_fake": f.is_fake,
+                "to_review": f.to_review,
+                "approved": f.approved,
                 "scanned": f.scanned,
                 "removed": f.removed,
                 "is_private": f.is_private,
@@ -150,6 +156,36 @@ async def get_settings():
         "safety_profile": "normal",
         "rate": pipeline.rate_tracker.stats(),
     }
+
+
+@router.post("/followers/{username}/approve", response_model=StartResponse)
+async def approve_follower(username: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(Follower).where(Follower.username == username))
+        follower = result.scalar_one_or_none()
+        if not follower:
+            raise HTTPException(404, "Follower not found")
+        follower.approved = True
+        follower.to_review = False
+        follower.is_fake = False
+        await session.commit()
+    return StartResponse(status="ok", message=f"@{username} approved")
+
+
+@router.post("/followers/{username}/reject", response_model=StartResponse)
+async def reject_follower(username: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(Follower).where(Follower.username == username))
+        follower = result.scalar_one_or_none()
+        if not follower:
+            raise HTTPException(404, "Follower not found")
+        follower.approved = False
+        follower.to_review = False
+        follower.is_fake = True
+        await session.commit()
+    return StartResponse(status="ok", message=f"@{username} rejected")
 
 
 @router.patch("/settings")

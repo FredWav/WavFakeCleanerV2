@@ -5,6 +5,7 @@ const cards = [
   { key: "pending", color: "bg-yellow-500/20 text-yellow-400", field: "pending" },
   { key: "scanned", color: "bg-cyan-500/20 text-cyan-400", field: "scanned" },
   { key: "fakes", color: "bg-red-500/20 text-red-400", field: "fakes" },
+  { key: "to_review", color: "bg-orange-500/20 text-orange-400", field: "to_review" },
   { key: "removed", color: "bg-green-500/20 text-green-400", field: "removed" },
 ]
 
@@ -12,7 +13,7 @@ export default function StatCards({ stats, lang }) {
   if (!stats) return null
 
   return (
-    <div className="grid grid-cols-5 gap-3">
+    <div className="grid grid-cols-6 gap-3">
       {cards.map(({ key, color, field }) => (
         <div
           key={key}
@@ -58,7 +59,7 @@ export default function StatCards({ stats, lang }) {
               </span>
             </div>
           </div>
-          <div className="rounded-xl p-3 bg-gray-800/50 flex items-center justify-center">
+          <div className="rounded-xl p-3 bg-gray-800/50 col-span-2 flex items-center justify-center">
             <span className={`text-sm font-bold ${stats.is_running ? "text-green-400" : "text-gray-500"}`}>
               {stats.is_running ? t("running", lang) : t("stopped", lang)}
             </span>

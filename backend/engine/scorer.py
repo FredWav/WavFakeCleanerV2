@@ -27,7 +27,8 @@ _JS_EXTRACT_PROFILE = r"""
     const result = {
         follower_count: null, has_real_pic: false, has_full_name: false,
         has_ig_link: false, has_bio: false, is_verified: false,
-        bio_text: '', full_name: '',
+        bio_text: '', full_name: '', has_link_in_bio: false,
+        has_external_link: false, looks_private: false,
     };
 
     // ── Follower count ──
@@ -127,6 +128,56 @@ _JS_EXTRACT_PROFILE = r"""
             bio = bio.replace(/^.*?-\s*/, '').trim();
             result.bio_text = bio;
             result.has_bio = bio.length >= 5;
+        }
+    } catch(e) {}
+
+    // ── Link in bio ──
+    try {
+        // Check for external links near bio area (not IG, not Threads internal)
+        const allLinks = document.querySelectorAll('a[href]');
+        for (const a of allLinks) {
+            const href = (a.href || '').toLowerCase();
+            const text = (a.textContent || '').trim();
+            // Skip internal Threads links, IG link, and navigation
+            if (href.includes('threads.net') || href.includes('instagram.com')
+                || href.includes('javascript:') || href === '#'
+                || href.includes('/login') || href.includes('/signup'))
+                continue;
+            // Must be a real external URL with visible text
+            if ((href.startsWith('http://') || href.startsWith('https://'))
+                && text.length > 3 && a.offsetHeight > 0) {
+                const r = a.getBoundingClientRect();
+                if (r.top < 600) {  // above the fold, near profile header
+                    result.has_link_in_bio = true;
+                    result.has_external_link = true;
+                    break;
+                }
+            }
+        }
+        // Also check bio text for URLs
+        if (!result.has_link_in_bio && result.bio_text) {
+            result.has_link_in_bio = /https?:\/\/\S{5,}/.test(result.bio_text);
+        }
+    } catch(e) {}
+
+    // ── Private detection (heuristic) ──
+    try {
+        // If no articles/posts and no Threads/Replies tabs visible => probably private
+        const articles = document.querySelectorAll('article, [data-pressable-container]');
+        const tabs = document.querySelectorAll('[role="tab"], [role="tablist"]');
+        const hasFollowBtn = !!document.querySelector(
+            'button, div[role="button"]');
+        const bodyText = (document.body?.innerText || '').toLowerCase();
+        const hasPrivateText = /account is private|compte est priv|profil priv/.test(bodyText);
+        const hasNoContent = articles.length === 0
+            && !bodyText.includes('aucun thread')
+            && !bodyText.includes('no threads yet')
+            && !bodyText.includes("hasn't posted")
+            && !bodyText.includes("n'a pas encore publi");
+        const hasNoTabs = tabs.length === 0;
+        // Private if: explicit text OR (no content + no tabs + profile has loaded)
+        if (hasPrivateText || (hasNoContent && hasNoTabs && result.follower_count !== null)) {
+            result.looks_private = true;
         }
     } catch(e) {}
 
@@ -252,6 +303,7 @@ class ProfileData:
     has_real_pic: bool = False
     has_full_name: bool = False
     has_ig_link: bool = False
+    has_link_in_bio: bool = False
     full_name: str = ""
     all_posts_recent: bool = False
     duplicate_ratio: float = 0.0
@@ -307,7 +359,7 @@ async def extract_profile(page: Page, username: str) -> ProfileData:
         r"account is private|compte est priv[ée]|profil priv",
         full_text, re.IGNORECASE))
 
-    # JS extraction (follower count, pic, name, bio, etc.)
+    # JS extraction (follower count, pic, name, bio, links, etc.)
     try:
         info = await page.evaluate(_JS_EXTRACT_PROFILE, username)
         if info:
@@ -317,7 +369,11 @@ async def extract_profile(page: Page, username: str) -> ProfileData:
             data.full_name = info.get("full_name", "")
             data.has_ig_link = info.get("has_ig_link", False)
             data.has_bio = info.get("has_bio", False)
+            data.has_link_in_bio = info.get("has_link_in_bio", False)
             data.is_verified = info.get("is_verified", False)
+            # Heuristic private detection (when user follows the account)
+            if not data.is_private and info.get("looks_private", False):
+                data.is_private = True
     except Exception:
         pass
 
@@ -511,7 +567,15 @@ def score_profile(data: ProfileData, threshold: int = 0,
         if strict_private:
             score += 10; details.append("private +10")
         else:
-            if fc is not None and fc < 10:
+            # Count legitimacy signals
+            legit = sum([data.has_bio, data.has_link_in_bio,
+                         data.has_real_pic, data.has_ig_link])
+            if legit >= 3:
+                # Bio + link + pic/IG = almost certainly real
+                score -= 15; details.append(f"private(legit:{legit}sig) -15")
+            elif legit >= 2:
+                score -= 5; details.append(f"private(semi:{legit}sig) -5")
+            elif fc is not None and fc < 10:
                 score += 40; details.append("private(<10abn) +40")
             elif fc is not None and fc < 30:
                 if not data.has_bio and not data.has_real_pic:
@@ -526,5 +590,11 @@ def score_profile(data: ProfileData, threshold: int = 0,
     # ── Step 7: Full name ─────────────────────────────────────────────
     if data.has_full_name:
         score -= 5; details.append("name -5")
+
+    # ── Step 8: Legitimacy signals (links) ────────────────────────────
+    if data.has_link_in_bio:
+        score -= 15; details.append("link_bio -15")
+    if data.has_ig_link:
+        score -= 10; details.append("ig_link -10")
 
     return max(0, min(100, score)), details

@@ -245,7 +245,6 @@ class Pipeline:
                                 f.scanned = True
                                 f.score = score
                                 f.score_breakdown = json.dumps(details)
-                                f.is_fake = score >= settings.score_threshold
                                 f.is_private = data.is_private
                                 f.follower_count = data.follower_count
                                 f.post_count = data.post_count
@@ -256,8 +255,23 @@ class Pipeline:
                                 self.rate_tracker.record_success()
                                 status = "ok"
 
-                                if f.is_fake:
-                                    stats["fakes"] += 1
+                                threshold = settings.score_threshold
+                                margin = 10  # borderline zone
+                                if score >= threshold:
+                                    # Borderline (threshold to threshold+margin)?
+                                    # Flag for review if has any legit signal
+                                    has_legit = (data.has_bio or data.has_link_in_bio
+                                                 or data.has_ig_link or data.has_real_pic)
+                                    if score <= threshold + margin and has_legit:
+                                        f.is_fake = False
+                                        f.to_review = True
+                                        stats.setdefault("to_review", 0)
+                                        stats["to_review"] += 1
+                                    else:
+                                        f.is_fake = True
+                                        stats["fakes"] += 1
+                                else:
+                                    f.is_fake = False
 
                             stats["scanned"] += 1
                             await session.commit()
@@ -268,7 +282,12 @@ class Pipeline:
 
                     # Log progress
                     if score >= 0:
-                        level = "FAKE" if score >= settings.score_threshold else "OK"
+                        if f and f.to_review:
+                            level = "REVIEW"
+                        elif score >= settings.score_threshold:
+                            level = "FAKE"
+                        else:
+                            level = "OK"
                         log.info("pipeline",
                                  f"[{i+1}/{total}] @{follower.username} → "
                                  f"{level} {score}/100")
@@ -315,6 +334,8 @@ class Pipeline:
                     Follower.is_fake == True,
                     Follower.removed == False,
                     Follower.scanned == True,
+                    Follower.approved == False,
+                    Follower.to_review == False,
                 )
                 .order_by(Follower.score.desc())
                 .limit(batch_size)
@@ -666,6 +687,10 @@ class Pipeline:
             scanned = (await session.execute(
                 select(func.count(Follower.id))
                 .where(Follower.scanned == True))).scalar() or 0
+            to_review = (await session.execute(
+                select(func.count(Follower.id))
+                .where(Follower.to_review == True,
+                       Follower.removed == False))).scalar() or 0
 
         return {
             "total_followers": total,
@@ -673,6 +698,7 @@ class Pipeline:
             "scanned": scanned,
             "fakes": fakes,
             "removed": removed,
+            "to_review": to_review,
             "is_running": self._running,
             "rate": self.rate_tracker.stats(),
         }

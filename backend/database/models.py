@@ -24,6 +24,8 @@ class Follower(Base):
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     is_fake: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    to_review: Mapped[bool] = mapped_column(Boolean, default=False)  # borderline, needs human check
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)   # user manually approved
 
     # Status tracking
     scanned: Mapped[bool] = mapped_column(Boolean, default=False)

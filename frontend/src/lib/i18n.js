@@ -43,6 +43,11 @@ const translations = {
     filter_pending: "En attente",
     filter_fake: "Faux",
     filter_removed: "Supprimés",
+    filter_review: "A vérifier",
+    to_review: "A vérifier",
+    approve: "Approuver",
+    reject: "Rejeter",
+    approved: "Approuvé",
     no_data: "Aucune donnée",
     loading: "Chargement...",
 
@@ -97,6 +102,11 @@ const translations = {
     filter_pending: "Pending",
     filter_fake: "Fake",
     filter_removed: "Removed",
+    filter_review: "To review",
+    to_review: "To review",
+    approve: "Approve",
+    reject: "Reject",
+    approved: "Approved",
     no_data: "No data",
     loading: "Loading...",
 
