@@ -29,7 +29,7 @@ export default function App() {
           <p className="text-sm text-gray-500">
             by{" "}
             <a
-              href="https://www.threads.net/@fredwav"
+              href="https://www.threads.net/@fredwavoff"
               target="_blank"
               rel="noopener noreferrer"
               className="text-purple-400 hover:text-purple-300 transition-colors"
@@ -40,7 +40,7 @@ export default function App() {
         </div>
         <div className="flex gap-2 items-center">
           <a
-            href="https://www.threads.net/@fredwav"
+            href="https://paypal.me/fredwav"
             target="_blank"
             rel="noopener noreferrer"
             className="px-3 py-1.5 rounded-lg bg-purple-600 text-sm text-white
