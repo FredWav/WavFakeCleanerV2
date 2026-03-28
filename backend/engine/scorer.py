@@ -1,10 +1,10 @@
 """
-Scorer — 7-step pure scoring algorithm (0-100).
+Scorer — 8-step pure scoring algorithm (0-100) + username heuristics + pre-scoring.
 
 Zero network deps — 100% unit-testable.
 Each scored profile gets a full score_breakdown for auditability.
 
-Ported from V1 with identical logic.
+Ported from V1 with identical logic + V2 enhancements.
 """
 
 import asyncio
@@ -19,6 +19,109 @@ from backend.core.config import settings
 from backend.core.logger import log
 from backend.engine.browser_manager import browser_manager
 from backend.engine.fetcher import navigate_to_profile, RateLimitError
+
+
+# ── Username pattern detection ───────────────────────────────────────────────
+
+# Patterns that indicate bot/fake usernames
+_BOT_USERNAME_PATTERNS = [
+    # Mostly digits: user738291637
+    (re.compile(r"^[a-z]{1,6}\d{6,}$", re.I), 20, "bot_digits"),
+    # Random string ending with many digits: sara847362
+    (re.compile(r"^[a-z]{2,8}\d{5,}$", re.I), 15, "name+digits"),
+    # Underscore-heavy: __x_x__y__
+    (re.compile(r"^_.*_.*_.*_"), 10, "underscore_heavy"),
+    # All digits except maybe 1-2 letters
+    (re.compile(r"^\d[\d_]{8,}$"), 25, "all_digits"),
+    # Pattern: word.word.digits (common bot pattern)
+    (re.compile(r"^[a-z]+\.[a-z]+\.\d{3,}$", re.I), 15, "dot_dot_num"),
+    # Very long usernames (>25 chars)
+    (re.compile(r"^.{26,}$"), 10, "very_long"),
+    # Random consonant clusters (no vowels in 5+ char stretch)
+    (re.compile(r"[^aeiou_.\d]{6,}", re.I), 10, "no_vowels"),
+]
+
+
+def score_username(username: str) -> tuple[int, list[str]]:
+    """Analyse username for bot-like patterns. Returns (bonus, details)."""
+    bonus = 0
+    details: list[str] = []
+
+    for pattern, points, label in _BOT_USERNAME_PATTERNS:
+        if pattern.search(username):
+            bonus += points
+            details.append(f"@pattern({label}) +{points}")
+
+    # Digit ratio: if >50% of username is digits
+    digit_count = sum(1 for c in username if c.isdigit())
+    if len(username) > 4 and digit_count / len(username) > 0.5:
+        bonus += 15
+        details.append(f"@digit_ratio({digit_count}/{len(username)}) +15")
+
+    return min(bonus, 30), details  # Cap at +30 to avoid over-penalizing
+
+
+def pre_score_from_metadata(username: str, follower_count: int | None,
+                            is_private: bool, full_name: str | None,
+                            has_profile_pic: bool) -> tuple[int | None, list[str]]:
+    """Pre-score using only metadata from fetch phase (no page visit needed).
+    Returns (score, details) or (None, []) if inconclusive.
+
+    Only returns a score for OBVIOUS cases (>85 or <20).
+    Borderline cases return None → need full scan.
+    """
+    score = 0
+    details: list[str] = []
+
+    # Username patterns
+    u_bonus, u_details = score_username(username)
+    score += u_bonus
+    details.extend(u_details)
+
+    # Follower count
+    if follower_count is not None:
+        if follower_count == 0:
+            score += 15
+            details.append(f"pre:0abn +15")
+        elif follower_count <= 10:
+            score += 10
+            details.append(f"pre:{follower_count}abn +10")
+        elif follower_count >= 500:
+            score -= 15
+            details.append(f"pre:{follower_count}abn -15")
+        elif follower_count >= 100:
+            score -= 10
+            details.append(f"pre:{follower_count}abn -10")
+
+    # No profile pic
+    if not has_profile_pic:
+        score += 20
+        details.append("pre:!pic +20")
+    else:
+        score -= 5
+        details.append("pre:pic -5")
+
+    # Full name
+    if full_name and len(full_name) >= 3:
+        score -= 5
+        details.append("pre:name -5")
+    elif not full_name:
+        score += 10
+        details.append("pre:!name +10")
+
+    # Private with no name and no pic → suspicious
+    if is_private and not full_name and not has_profile_pic:
+        score += 15
+        details.append("pre:private(!name,!pic) +15")
+
+    # Decision: only return score for obvious cases
+    score = max(0, min(100, score))
+    if score >= 75:
+        return score, details  # Obvious fake
+    if score <= 15:
+        return score, details  # Obviously legit
+
+    return None, details  # Inconclusive → needs full scan
 
 # ── Profile data extraction ───────────────────────────────────────────────────
 
@@ -484,6 +587,12 @@ def score_profile(data: ProfileData, threshold: int = 0,
     score = 0
     details: list[str] = []
     fc = data.follower_count
+
+    # ── Step 0: Username pattern ──────────────────────────────────────
+    u_bonus, u_details = score_username(data.username)
+    if u_bonus > 0:
+        score += u_bonus
+        details.extend(u_details)
 
     # ── Step 1: Follower count ────────────────────────────────────────
     if fc is not None:
