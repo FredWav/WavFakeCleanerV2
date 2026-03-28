@@ -19,15 +19,15 @@ fi
 # --- Etape 1 : Python ---
 echo "[1/5] Recherche de Python..."
 if ! command -v python3 &>/dev/null; then
-    echo "      Python3 non trouve, installation automatique..."
+    echo "      Python3 non trouve. Installation automatique..."
     echo
     if $IS_MAC; then
-        # macOS: try brew first
         if command -v brew &>/dev/null; then
             echo "      Installation via Homebrew..."
             brew install python3
         else
-            echo "      Homebrew non trouve, installation de Homebrew puis Python..."
+            echo "      Homebrew non trouve. Installation de Homebrew puis Python..."
+            echo "      (un mot de passe admin peut etre demande)"
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             # Add brew to PATH for this session
             if [ -f "/opt/homebrew/bin/brew" ]; then
@@ -38,22 +38,26 @@ if ! command -v python3 &>/dev/null; then
             brew install python3
         fi
     else
-        # Linux: detect package manager
-        if command -v apt &>/dev/null; then
+        echo "      (un mot de passe admin peut etre demande)"
+        if command -v apt-get &>/dev/null; then
             echo "      Installation via apt..."
-            sudo apt update -qq
-            sudo apt install -y python3 python3-pip python3-venv
+            sudo apt-get update -qq
+            sudo apt-get install -y python3 python3-pip python3-venv
         elif command -v dnf &>/dev/null; then
             echo "      Installation via dnf..."
             sudo dnf install -y python3 python3-pip
         elif command -v pacman &>/dev/null; then
             echo "      Installation via pacman..."
             sudo pacman -Sy --noconfirm python python-pip
+        elif command -v apk &>/dev/null; then
+            echo "      Installation via apk..."
+            sudo apk add python3 py3-pip
         else
             echo
             echo "  ERREUR : Impossible d'installer Python automatiquement."
-            echo "  Installe Python3 manuellement puis relance ce script."
-            echo "  https://www.python.org/downloads/"
+            echo "  Installe Python3 manuellement :"
+            echo "    https://www.python.org/downloads/"
+            echo "  Puis relance ce script."
             echo
             exit 1
         fi
@@ -62,7 +66,7 @@ if ! command -v python3 &>/dev/null; then
     if ! command -v python3 &>/dev/null; then
         echo
         echo "  ERREUR : L'installation de Python a echoue."
-        echo "  Installe Python3 manuellement puis relance ce script."
+        echo "  Installe-le manuellement : https://www.python.org/downloads/"
         echo
         exit 1
     fi
@@ -74,7 +78,7 @@ echo
 # --- Etape 2 : Node.js ---
 echo "[2/5] Recherche de Node.js..."
 if ! command -v node &>/dev/null; then
-    echo "      Node.js non trouve, installation automatique..."
+    echo "      Node.js non trouve. Installation automatique..."
     echo
     if $IS_MAC; then
         if command -v brew &>/dev/null; then
@@ -88,21 +92,25 @@ if ! command -v node &>/dev/null; then
             exit 1
         fi
     else
-        # Linux: use NodeSource for up-to-date version
-        if command -v apt &>/dev/null; then
-            echo "      Installation via NodeSource (Node 22 LTS)..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt install -y nodejs
+        echo "      (un mot de passe admin peut etre demande)"
+        if command -v apt-get &>/dev/null; then
+            # NodeSource for up-to-date Node
+            echo "      Installation de Node.js 22 LTS via NodeSource..."
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>/dev/null || true
+            sudo apt-get install -y nodejs
         elif command -v dnf &>/dev/null; then
             echo "      Installation via dnf..."
             sudo dnf install -y nodejs npm
         elif command -v pacman &>/dev/null; then
             echo "      Installation via pacman..."
             sudo pacman -Sy --noconfirm nodejs npm
+        elif command -v apk &>/dev/null; then
+            echo "      Installation via apk..."
+            sudo apk add nodejs npm
         else
             echo
             echo "  ERREUR : Impossible d'installer Node.js automatiquement."
-            echo "  Installe Node.js manuellement : https://nodejs.org/"
+            echo "  Installe-le manuellement : https://nodejs.org/"
             echo
             exit 1
         fi
@@ -123,7 +131,7 @@ echo
 # --- Etape 3 : Dependances Python ---
 echo "[3/5] Installation des dependances Python..."
 echo "      (ca peut prendre 1-2 minutes)"
-pip3 install -r requirements.txt -q
+python3 -m pip install -r requirements.txt -q 2>/dev/null || pip3 install -r requirements.txt -q
 echo "      OK"
 echo
 
@@ -143,7 +151,7 @@ echo "      OK"
 echo
 
 # --- Config ---
-if [ ! -f ".env" ]; then
+if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     cp .env.example .env
     echo "      Fichier .env cree"
 fi

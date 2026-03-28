@@ -31,18 +31,6 @@ fi
 
 mkdir -p data
 
-echo "  Demarrage du backend..."
-echo
-echo "  -------------------------------------------"
-echo
-echo "   Dashboard :  http://localhost:8000"
-echo "   API Docs  :  http://localhost:8000/docs"
-echo
-echo "   Ctrl+C pour arreter"
-echo
-echo "  -------------------------------------------"
-echo
-
 # --- Construire le frontend si pas deja fait ---
 if [ ! -f "frontend/dist/index.html" ] && [ -f "frontend/package.json" ]; then
     echo "  Construction du frontend..."
@@ -51,12 +39,31 @@ if [ ! -f "frontend/dist/index.html" ] && [ -f "frontend/package.json" ]; then
     echo
 fi
 
-# --- Ouvrir le navigateur automatiquement ---
-if command -v xdg-open &>/dev/null; then
-    xdg-open "http://127.0.0.1:8000/" &>/dev/null &
-elif command -v open &>/dev/null; then
-    open "http://127.0.0.1:8000/" &>/dev/null &
-fi
+echo "  Demarrage du serveur..."
+echo
+echo "  -------------------------------------------"
+echo
+echo "   Dashboard :  http://127.0.0.1:8000"
+echo "   API Docs  :  http://127.0.0.1:8000/docs"
+echo
+echo "   Ctrl+C pour arreter"
+echo
+echo "  -------------------------------------------"
+echo
+
+# --- Ouvrir le navigateur APRES un delai (attendre que le serveur demarre) ---
+(
+    sleep 3
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "http://127.0.0.1:8000/" 2>/dev/null
+    elif command -v open &>/dev/null; then
+        open "http://127.0.0.1:8000/"
+    elif command -v sensible-browser &>/dev/null; then
+        sensible-browser "http://127.0.0.1:8000/" 2>/dev/null
+    elif command -v wslview &>/dev/null; then
+        wslview "http://127.0.0.1:8000/"
+    fi
+) &
 
 # --- Lancer le backend (qui sert aussi le frontend) ---
 python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
