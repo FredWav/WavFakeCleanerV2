@@ -25,10 +25,29 @@ export default function App() {
       {/* Header */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">{t("title", lang)}</h1>
-          <p className="text-sm text-gray-500">{t("subtitle", lang)}</p>
+          <h1 className="text-2xl font-bold text-white">Wav Fake Cleaner V2</h1>
+          <p className="text-sm text-gray-500">
+            by{" "}
+            <a
+              href="https://www.threads.net/@fredwavoff"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-purple-400 hover:text-purple-300 transition-colors"
+            >
+              Fred Wav
+            </a>
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <a
+            href="https://paypal.me/fredwav"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-lg bg-purple-600 text-sm text-white
+              hover:bg-purple-500 transition-colors font-medium"
+          >
+            {lang === "fr" ? "Faire un don" : "Donate"}
+          </a>
           <button
             onClick={() => setShowSettings(true)}
             className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm text-gray-400

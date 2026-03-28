@@ -313,7 +313,78 @@ def _extract_api_meta(u: dict) -> dict:
         "is_verified": u.get("is_verified", False),
         "full_name": (u.get("full_name") or "").strip(),
         "is_private": u.get("is_private", False),
+        "has_profile_pic": not _is_default_pic(u.get("profile_pic_url", "")),
+        "biography": (u.get("biography") or "").strip(),
+        "bio_links": u.get("bio_links", []),
+        "external_url": (u.get("external_url") or "").strip(),
     }
+
+
+# ── Profile info via API (no page visit) ────────────────────────────────────
+
+_JS_FETCH_PROFILE_API = r"""
+async (username) => {
+    const csrf = (document.cookie.match(/csrftoken=([^;]+)/)||[])[1]||'';
+    const headers = {
+        'X-IG-App-ID': '238260118697367',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+    };
+    if (csrf) headers['X-CSRFToken'] = csrf;
+
+    try {
+        const url = `https://www.threads.net/api/v1/users/web_profile_info/?username=${username}`;
+        const r = await fetch(url, { credentials: 'include', headers });
+        if (r.status === 429) return {error: '429'};
+        if (!r.ok) return {error: `http_${r.status}`};
+        const j = await r.json();
+        const u = j?.data?.user || j?.user;
+        if (!u) return {error: 'no_user'};
+        return {
+            username: u.username || username,
+            full_name: u.full_name || '',
+            biography: u.biography || '',
+            bio_links: (u.bio_links || []).map(l => l.url || ''),
+            external_url: u.external_url || '',
+            follower_count: u.follower_count ?? null,
+            following_count: u.following_count ?? null,
+            is_private: !!u.is_private,
+            is_verified: !!u.is_verified,
+            profile_pic_url: u.profile_pic_url || '',
+            media_count: u.media_count ?? null,
+        };
+    } catch(e) {
+        return {error: e.toString()};
+    }
+}
+"""
+
+
+async def fetch_profile_api(page: Page, username: str) -> dict | None:
+    """Fetch profile info via Threads API (no page navigation needed).
+    Returns profile dict or None if API fails."""
+    try:
+        result = await asyncio.wait_for(
+            page.evaluate(_JS_FETCH_PROFILE_API, username),
+            timeout=8.0)
+    except (asyncio.TimeoutError, Exception):
+        return None
+
+    if not result or "error" in result:
+        error = result.get("error", "") if result else ""
+        if error == "429":
+            return {"error": "429_RATE_LIMIT"}
+        return None
+
+    return result
+
+
+def _is_default_pic(url: str) -> bool:
+    """Check if a profile pic URL is the default/empty avatar."""
+    if not url:
+        return True
+    return any(x in url for x in ["default", "empty", "placeholder",
+                                   "/44884218_345"])
 
 
 # ── Scroll-based fetch ───────────────────────────────────────────────────────

@@ -21,11 +21,15 @@ from backend.database.session import async_session
 from backend.engine.browser_manager import browser_manager
 from backend.engine.cleaner import click_three_dots, click_remove_follower, click_confirm
 from backend.engine.fetcher import (
-    fetch_via_api, fetch_via_scroll, navigate_to_profile, RateLimitError,
+    fetch_via_api, fetch_via_scroll, navigate_to_profile,
+    fetch_profile_api, RateLimitError,
 )
 from backend.engine.pacer import HumanPacer, isleep
 from backend.engine.rate_tracker import RateTracker
-from backend.engine.scorer import extract_profile, score_profile, ProfileData
+from backend.engine.scorer import (
+    extract_profile, score_profile, ProfileData,
+    pre_score_from_metadata, score_username,
+)
 
 # Autopilot constants
 AUTOPILOT_SCAN_BATCH = (120, 150)
@@ -156,15 +160,30 @@ class Pipeline:
 
     # ── Scan phase ────────────────────────────────────────────────────────
 
+    # Micro-batch settings
+    SCAN_MICRO_BATCH = 12            # profiles per micro-batch
+    SCAN_MICRO_PAUSE = (120, 200)    # 2-3min pause between micro-batches
+    SCAN_BLOCK_COOLDOWN = 7200       # 2h on confirmed blocking
+    SESSION_ROTATE_EVERY = 25        # rotate browser every N scans
+
     async def scan(self, batch_size: int | None = None) -> dict:
-        """Scan pending followers and score them."""
+        """Scan pending followers and score them.
+
+        Pipeline:
+        1. Pre-score using metadata only (skip obvious cases)
+        2. Try API fetch for remaining profiles (fast, no page visit)
+        3. Fall back to full page visit for profiles that need it
+        4. Rotate browser session every 25 scans
+        """
         self._running = True
         self.stop_event.clear()
 
         if batch_size is None:
             batch_size = self.rate_tracker.profile["scan_batch"]
 
-        stats = {"scanned": 0, "fakes": 0, "errors": 0, "rate_limited": False}
+        stats = {"scanned": 0, "fakes": 0, "errors": 0,
+                 "requeued": 0, "pre_scored": 0, "api_scored": 0,
+                 "rate_limited": False}
 
         # Get pending followers
         async with async_session() as session:
@@ -180,17 +199,60 @@ class Pipeline:
             self._running = False
             return stats
 
-        # Shuffle for unpredictable navigation patterns
-        random.shuffle(pending)
-        total = len(pending)
-        log.info("pipeline", f"Scanning {total} profiles")
+        # ── Phase 1: Pre-score with metadata (instant, no network) ────
+        needs_scan = []
+        for follower in pending:
+            if self.stop_event.is_set():
+                break
+            pre_score, pre_details = pre_score_from_metadata(
+                follower.username,
+                follower.follower_count,
+                follower.is_private,
+                follower.full_name,
+                follower.has_profile_pic,
+            )
+            if pre_score is not None:
+                # Obvious case: save immediately without visiting
+                await self._save_pre_score(follower, pre_score, pre_details)
+                stats["scanned"] += 1
+                stats["pre_scored"] += 1
+                if pre_score >= settings.score_threshold:
+                    stats["fakes"] += 1
+                log.info("pipeline",
+                         f"[pre] @{follower.username} → "
+                         f"{'FAKE' if pre_score >= settings.score_threshold else 'OK'} "
+                         f"{pre_score}/100 (no visit)")
+            else:
+                needs_scan.append(follower)
 
-        pacer = HumanPacer(base_min=2, base_max=6)
+        if stats["pre_scored"]:
+            log.info("pipeline",
+                     f"Pre-scored {stats['pre_scored']} obvious profiles "
+                     f"(skipped page visits)")
+
+        if not needs_scan or self.stop_event.is_set():
+            self._running = False
+            log.info("pipeline",
+                     f"Scan done: {stats['scanned']} scanned, "
+                     f"{stats['fakes']} fakes "
+                     f"({stats['pre_scored']} pre-scored)")
+            return stats
+
+        # ── Phase 2+3: API-first scan with page fallback ─────────────
+        random.shuffle(needs_scan)
+        total = len(needs_scan)
+        log.info("pipeline", f"Deep scanning {total} profiles "
+                 f"(micro-batches of {self.SCAN_MICRO_BATCH})")
+
+        pacer = HumanPacer(base_min=8, base_max=15)
+        consecutive_not_found = 0
+        micro_batch_count = 0
+        scans_since_rotation = 0
 
         try:
             ctx, page = await browser_manager.new_page()
             try:
-                for i, follower in enumerate(pending):
+                for i, follower in enumerate(needs_scan):
                     if self.stop_event.is_set():
                         break
 
@@ -200,17 +262,50 @@ class Pipeline:
                         self.stop_event.set()
                         break
 
+                    # Session rotation: new fingerprint every N scans
+                    scans_since_rotation += 1
+                    if scans_since_rotation >= self.SESSION_ROTATE_EVERY:
+                        scans_since_rotation = 0
+                        log.info("pipeline", "Rotating browser session...")
+                        await ctx.close()
+                        browser_manager.release_context()
+                        await asyncio.sleep(random.uniform(3, 8))
+                        ctx, page = await browser_manager.new_page()
+                        log.info("pipeline", "New session ready")
+
+                    # Micro-batch pause: every N profiles, take a long break
+                    micro_batch_count += 1
+                    if micro_batch_count > self.SCAN_MICRO_BATCH:
+                        micro_batch_count = 1
+                        pause = random.uniform(*self.SCAN_MICRO_PAUSE)
+                        log.info("pipeline",
+                                 f"Micro-batch pause: {int(pause)}s "
+                                 f"({stats['scanned']}/{total + stats['pre_scored']} done)")
+                        await isleep(pause, self.stop_event)
+                        if self.stop_event.is_set():
+                            break
+
+                    # Human navigation: ~22% chance between scans
+                    if micro_batch_count > 1 and random.random() < 0.22:
+                        await self._simulate_human_navigation(page)
+
                     t0 = time.time()
 
-                    try:
-                        data = await asyncio.wait_for(
-                            extract_profile(page, follower.username),
-                            timeout=20.0,
-                        )
-                    except asyncio.TimeoutError:
-                        data = ProfileData(
-                            username=follower.username,
-                            not_found=True, error="timeout")
+                    # ── Try API first (no page visit) ──
+                    data = await self._try_api_scan(page, follower.username)
+                    used_api = data is not None
+
+                    # ── Fall back to full page visit ──
+                    if data is None:
+                        try:
+                            data = await asyncio.wait_for(
+                                extract_profile(page, follower.username),
+                                timeout=20.0,
+                            )
+                        except asyncio.TimeoutError:
+                            data = ProfileData(
+                                username=follower.username,
+                                not_found=True, error="timeout")
 
                     dt_ms = int((time.time() - t0) * 1000)
 
@@ -229,6 +324,51 @@ class Pipeline:
                     score, details = score_profile(
                         data, threshold=settings.score_threshold)
 
+                    # Handle not_found: distinguish real vs blocking
+                    if score == -1 and data.not_found:
+                        is_blocked = self._is_likely_blocked(dt_ms, data)
+
+                        if is_blocked:
+                            consecutive_not_found += 1
+                            await self._requeue_follower(follower.username)
+                            stats["requeued"] += 1
+
+                            if consecutive_not_found >= 2:
+                                log.error("pipeline",
+                                          f"@{follower.username}: 2nd blocked "
+                                          f"— stopping for 2h")
+                                stats["rate_limited"] = True
+                                await self._log_action(
+                                    "scan", follower.username,
+                                    "blocked_2h", duration_ms=dt_ms)
+                                log.warning("pipeline",
+                                            f"Cooldown: waiting "
+                                            f"{self.SCAN_BLOCK_COOLDOWN // 3600}h "
+                                            f"to avoid permanent block")
+                                await isleep(
+                                    self.SCAN_BLOCK_COOLDOWN, self.stop_event)
+                                if self.stop_event.is_set():
+                                    break
+                                consecutive_not_found = 0
+                                micro_batch_count = 0
+                                log.info("pipeline", "Cooldown ended, resuming...")
+                                continue
+                            else:
+                                log.warning("pipeline",
+                                            f"[{i+1}/{total}] "
+                                            f"@{follower.username} → "
+                                            f"blocked (re-queued, "
+                                            f"{dt_ms}ms response)")
+                                await isleep(
+                                    random.uniform(30, 60), self.stop_event)
+                                continue
+                        else:
+                            consecutive_not_found = 0
+                            log.warning("pipeline",
+                                        f"[{i+1}/{total}] "
+                                        f"@{follower.username} → "
+                                        f"not found (real, {dt_ms}ms)")
+
                     # Save to DB
                     async with async_session() as session:
                         result = await session.execute(
@@ -242,10 +382,10 @@ class Pipeline:
                                 stats["errors"] += 1
                                 status = "error"
                             else:
+                                consecutive_not_found = 0
                                 f.scanned = True
                                 f.score = score
                                 f.score_breakdown = json.dumps(details)
-                                f.is_fake = score >= settings.score_threshold
                                 f.is_private = data.is_private
                                 f.follower_count = data.follower_count
                                 f.post_count = data.post_count
@@ -256,8 +396,24 @@ class Pipeline:
                                 self.rate_tracker.record_success()
                                 status = "ok"
 
-                                if f.is_fake:
-                                    stats["fakes"] += 1
+                                if used_api:
+                                    stats["api_scored"] += 1
+
+                                threshold = settings.score_threshold
+                                margin = 10  # borderline zone
+                                if score >= threshold:
+                                    has_legit = (data.has_bio or data.has_link_in_bio
+                                                 or data.has_ig_link or data.has_real_pic)
+                                    if score <= threshold + margin and has_legit:
+                                        f.is_fake = False
+                                        f.to_review = True
+                                        stats.setdefault("to_review", 0)
+                                        stats["to_review"] += 1
+                                    else:
+                                        f.is_fake = True
+                                        stats["fakes"] += 1
+                                else:
+                                    f.is_fake = False
 
                             stats["scanned"] += 1
                             await session.commit()
@@ -268,18 +424,23 @@ class Pipeline:
 
                     # Log progress
                     if score >= 0:
-                        level = "FAKE" if score >= settings.score_threshold else "OK"
+                        if f and f.to_review:
+                            level = "REVIEW"
+                        elif score >= settings.score_threshold:
+                            level = "FAKE"
+                        else:
+                            level = "OK"
+                        method = "api" if used_api else "page"
                         log.info("pipeline",
                                  f"[{i+1}/{total}] @{follower.username} → "
-                                 f"{level} {score}/100")
-                    else:
-                        log.warning("pipeline",
-                                    f"[{i+1}/{total}] @{follower.username} → "
-                                    f"not found")
+                                 f"{level} {score}/100 ({method})")
 
-                    # Pace
+                    # Pace: API scans can go faster (2-5s), page scans 8-15s
                     if not self.stop_event.is_set() and i < total - 1:
-                        pause = pacer.next_scan_pause()
+                        if used_api:
+                            pause = random.uniform(2, 5)
+                        else:
+                            pause = pacer.next_scan_pause()
                         await isleep(pause, self.stop_event)
 
             finally:
@@ -292,8 +453,122 @@ class Pipeline:
 
         log.info("pipeline",
                  f"Scan done: {stats['scanned']} scanned, "
-                 f"{stats['fakes']} fakes, {stats['errors']} errors")
+                 f"{stats['fakes']} fakes, {stats['errors']} errors"
+                 + (f", {stats['pre_scored']} pre-scored"
+                    if stats['pre_scored'] else "")
+                 + (f", {stats['api_scored']} via API"
+                    if stats['api_scored'] else "")
+                 + (f", {stats['requeued']} re-queued"
+                    if stats['requeued'] else ""))
         return stats
+
+    async def _try_api_scan(self, page, username: str) -> ProfileData | None:
+        """Try to scan a profile via API without page navigation.
+        Returns ProfileData if API gives enough data, None otherwise."""
+        api_data = await fetch_profile_api(page, username)
+        if not api_data:
+            return None
+
+        if api_data.get("error") == "429_RATE_LIMIT":
+            return ProfileData(username=username, not_found=True,
+                               error="429_RATE_LIMIT")
+
+        # Convert API response to ProfileData
+        bio = (api_data.get("biography") or "").strip()
+        bio_links = api_data.get("bio_links", [])
+        ext_url = (api_data.get("external_url") or "").strip()
+        pic_url = api_data.get("profile_pic_url", "")
+
+        from backend.engine.fetcher import _is_default_pic
+
+        data = ProfileData(
+            username=username,
+            follower_count=api_data.get("follower_count"),
+            is_private=api_data.get("is_private", False),
+            is_verified=api_data.get("is_verified", False),
+            has_bio=len(bio) >= 5,
+            has_full_name=len((api_data.get("full_name") or "")) >= 3,
+            full_name=api_data.get("full_name", ""),
+            has_real_pic=not _is_default_pic(pic_url),
+            has_link_in_bio=bool(bio_links) or bool(ext_url),
+            has_ig_link=any("instagram.com" in (l or "")
+                           for l in bio_links),
+            post_count=api_data.get("media_count") or 0,
+        )
+
+        # API gives enough for a confident score on public non-borderline
+        # For private accounts, API is usually sufficient
+        # For public accounts with 0 posts, we can't check replies via API
+        # → only use API result if the score is clearly fake or clearly OK
+        score, details = score_profile(data, threshold=settings.score_threshold)
+        threshold = settings.score_threshold
+
+        # If score is clearly above or below threshold, use it
+        if score >= threshold + 15 or score <= threshold - 20:
+            return data
+
+        # Borderline: fall back to page visit for full analysis
+        return None
+
+    async def _save_pre_score(self, follower, score: int,
+                              details: list[str]) -> None:
+        """Save a pre-scored follower to DB."""
+        async with async_session() as session:
+            result = await session.execute(
+                select(Follower).where(Follower.username == follower.username))
+            f = result.scalar_one_or_none()
+            if f:
+                f.scanned = True
+                f.score = score
+                f.score_breakdown = json.dumps(details)
+                f.scanned_at = datetime.now(timezone.utc)
+                threshold = settings.score_threshold
+                if score >= threshold:
+                    f.is_fake = True
+                else:
+                    f.is_fake = False
+                await session.commit()
+
+    def _is_likely_blocked(self, response_ms: int,
+                           data: ProfileData) -> bool:
+        """Distinguish a real 'not found' from a rate-limit block.
+        - Blocked responses come back instantly (<2s)
+        - Real not found pages take 3-8s to load and render
+        """
+        if response_ms < 2000:
+            return True
+        if data.error == "timeout":
+            return True
+        return False
+
+    async def _requeue_follower(self, username: str) -> None:
+        """Put a blocked follower back in the pending queue."""
+        async with async_session() as session:
+            result = await session.execute(
+                select(Follower).where(Follower.username == username))
+            f = result.scalar_one_or_none()
+            if f:
+                f.scanned = False
+                f.scan_error = None
+                await session.commit()
+
+    async def _simulate_human_navigation(self, page) -> None:
+        """Visit Threads home page briefly to break the profile-visit pattern."""
+        try:
+            destinations = [
+                "https://www.threads.net/",
+                "https://www.threads.net/search",
+                f"https://www.threads.net/@{settings.threads_username}",
+            ]
+            url = random.choice(destinations)
+            log.info("pacer", f"Human nav: visiting {url.split('.net')[1]}")
+            await page.goto(url, timeout=10000, wait_until="domcontentloaded")
+            await asyncio.sleep(random.uniform(2, 5))
+            scroll_amount = random.randint(200, 800)
+            await page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+            await asyncio.sleep(random.uniform(1, 3))
+        except Exception:
+            pass
 
     # ── Clean phase ───────────────────────────────────────────────────────
 
@@ -315,6 +590,8 @@ class Pipeline:
                     Follower.is_fake == True,
                     Follower.removed == False,
                     Follower.scanned == True,
+                    Follower.approved == False,
+                    Follower.to_review == False,
                 )
                 .order_by(Follower.score.desc())
                 .limit(batch_size)
@@ -666,6 +943,10 @@ class Pipeline:
             scanned = (await session.execute(
                 select(func.count(Follower.id))
                 .where(Follower.scanned == True))).scalar() or 0
+            to_review = (await session.execute(
+                select(func.count(Follower.id))
+                .where(Follower.to_review == True,
+                       Follower.removed == False))).scalar() or 0
 
         return {
             "total_followers": total,
@@ -673,6 +954,7 @@ class Pipeline:
             "scanned": scanned,
             "fakes": fakes,
             "removed": removed,
+            "to_review": to_review,
             "is_running": self._running,
             "rate": self.rate_tracker.stats(),
         }

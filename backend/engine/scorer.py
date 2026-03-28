@@ -1,10 +1,10 @@
 """
-Scorer — 7-step pure scoring algorithm (0-100).
+Scorer — 8-step pure scoring algorithm (0-100) + username heuristics + pre-scoring.
 
 Zero network deps — 100% unit-testable.
 Each scored profile gets a full score_breakdown for auditability.
 
-Ported from V1 with identical logic.
+Ported from V1 with identical logic + V2 enhancements.
 """
 
 import asyncio
@@ -20,6 +20,109 @@ from backend.core.logger import log
 from backend.engine.browser_manager import browser_manager
 from backend.engine.fetcher import navigate_to_profile, RateLimitError
 
+
+# ── Username pattern detection ───────────────────────────────────────────────
+
+# Patterns that indicate bot/fake usernames
+_BOT_USERNAME_PATTERNS = [
+    # Mostly digits: user738291637
+    (re.compile(r"^[a-z]{1,6}\d{6,}$", re.I), 20, "bot_digits"),
+    # Random string ending with many digits: sara847362
+    (re.compile(r"^[a-z]{2,8}\d{5,}$", re.I), 15, "name+digits"),
+    # Underscore-heavy: __x_x__y__
+    (re.compile(r"^_.*_.*_.*_"), 10, "underscore_heavy"),
+    # All digits except maybe 1-2 letters
+    (re.compile(r"^\d[\d_]{8,}$"), 25, "all_digits"),
+    # Pattern: word.word.digits (common bot pattern)
+    (re.compile(r"^[a-z]+\.[a-z]+\.\d{3,}$", re.I), 15, "dot_dot_num"),
+    # Very long usernames (>25 chars)
+    (re.compile(r"^.{26,}$"), 10, "very_long"),
+    # Random consonant clusters (no vowels in 5+ char stretch)
+    (re.compile(r"[^aeiou_.\d]{6,}", re.I), 10, "no_vowels"),
+]
+
+
+def score_username(username: str) -> tuple[int, list[str]]:
+    """Analyse username for bot-like patterns. Returns (bonus, details)."""
+    bonus = 0
+    details: list[str] = []
+
+    for pattern, points, label in _BOT_USERNAME_PATTERNS:
+        if pattern.search(username):
+            bonus += points
+            details.append(f"@pattern({label}) +{points}")
+
+    # Digit ratio: if >50% of username is digits
+    digit_count = sum(1 for c in username if c.isdigit())
+    if len(username) > 4 and digit_count / len(username) > 0.5:
+        bonus += 15
+        details.append(f"@digit_ratio({digit_count}/{len(username)}) +15")
+
+    return min(bonus, 30), details  # Cap at +30 to avoid over-penalizing
+
+
+def pre_score_from_metadata(username: str, follower_count: int | None,
+                            is_private: bool, full_name: str | None,
+                            has_profile_pic: bool) -> tuple[int | None, list[str]]:
+    """Pre-score using only metadata from fetch phase (no page visit needed).
+    Returns (score, details) or (None, []) if inconclusive.
+
+    Only returns a score for OBVIOUS cases (>85 or <20).
+    Borderline cases return None → need full scan.
+    """
+    score = 0
+    details: list[str] = []
+
+    # Username patterns
+    u_bonus, u_details = score_username(username)
+    score += u_bonus
+    details.extend(u_details)
+
+    # Follower count
+    if follower_count is not None:
+        if follower_count == 0:
+            score += 15
+            details.append(f"pre:0abn +15")
+        elif follower_count <= 10:
+            score += 10
+            details.append(f"pre:{follower_count}abn +10")
+        elif follower_count >= 500:
+            score -= 15
+            details.append(f"pre:{follower_count}abn -15")
+        elif follower_count >= 100:
+            score -= 10
+            details.append(f"pre:{follower_count}abn -10")
+
+    # No profile pic
+    if not has_profile_pic:
+        score += 20
+        details.append("pre:!pic +20")
+    else:
+        score -= 5
+        details.append("pre:pic -5")
+
+    # Full name
+    if full_name and len(full_name) >= 3:
+        score -= 5
+        details.append("pre:name -5")
+    elif not full_name:
+        score += 10
+        details.append("pre:!name +10")
+
+    # Private with no name and no pic → suspicious
+    if is_private and not full_name and not has_profile_pic:
+        score += 15
+        details.append("pre:private(!name,!pic) +15")
+
+    # Decision: only return score for obvious cases
+    score = max(0, min(100, score))
+    if score >= 75:
+        return score, details  # Obvious fake
+    if score <= 15:
+        return score, details  # Obviously legit
+
+    return None, details  # Inconclusive → needs full scan
+
 # ── Profile data extraction ───────────────────────────────────────────────────
 
 _JS_EXTRACT_PROFILE = r"""
@@ -27,7 +130,8 @@ _JS_EXTRACT_PROFILE = r"""
     const result = {
         follower_count: null, has_real_pic: false, has_full_name: false,
         has_ig_link: false, has_bio: false, is_verified: false,
-        bio_text: '', full_name: '',
+        bio_text: '', full_name: '', has_link_in_bio: false,
+        has_external_link: false, looks_private: false,
     };
 
     // ── Follower count ──
@@ -127,6 +231,56 @@ _JS_EXTRACT_PROFILE = r"""
             bio = bio.replace(/^.*?-\s*/, '').trim();
             result.bio_text = bio;
             result.has_bio = bio.length >= 5;
+        }
+    } catch(e) {}
+
+    // ── Link in bio ──
+    try {
+        // Check for external links near bio area (not IG, not Threads internal)
+        const allLinks = document.querySelectorAll('a[href]');
+        for (const a of allLinks) {
+            const href = (a.href || '').toLowerCase();
+            const text = (a.textContent || '').trim();
+            // Skip internal Threads links, IG link, and navigation
+            if (href.includes('threads.net') || href.includes('instagram.com')
+                || href.includes('javascript:') || href === '#'
+                || href.includes('/login') || href.includes('/signup'))
+                continue;
+            // Must be a real external URL with visible text
+            if ((href.startsWith('http://') || href.startsWith('https://'))
+                && text.length > 3 && a.offsetHeight > 0) {
+                const r = a.getBoundingClientRect();
+                if (r.top < 600) {  // above the fold, near profile header
+                    result.has_link_in_bio = true;
+                    result.has_external_link = true;
+                    break;
+                }
+            }
+        }
+        // Also check bio text for URLs
+        if (!result.has_link_in_bio && result.bio_text) {
+            result.has_link_in_bio = /https?:\/\/\S{5,}/.test(result.bio_text);
+        }
+    } catch(e) {}
+
+    // ── Private detection (heuristic) ──
+    try {
+        // If no articles/posts and no Threads/Replies tabs visible => probably private
+        const articles = document.querySelectorAll('article, [data-pressable-container]');
+        const tabs = document.querySelectorAll('[role="tab"], [role="tablist"]');
+        const hasFollowBtn = !!document.querySelector(
+            'button, div[role="button"]');
+        const bodyText = (document.body?.innerText || '').toLowerCase();
+        const hasPrivateText = /account is private|compte est priv|profil priv/.test(bodyText);
+        const hasNoContent = articles.length === 0
+            && !bodyText.includes('aucun thread')
+            && !bodyText.includes('no threads yet')
+            && !bodyText.includes("hasn't posted")
+            && !bodyText.includes("n'a pas encore publi");
+        const hasNoTabs = tabs.length === 0;
+        // Private if: explicit text OR (no content + no tabs + profile has loaded)
+        if (hasPrivateText || (hasNoContent && hasNoTabs && result.follower_count !== null)) {
+            result.looks_private = true;
         }
     } catch(e) {}
 
@@ -252,6 +406,7 @@ class ProfileData:
     has_real_pic: bool = False
     has_full_name: bool = False
     has_ig_link: bool = False
+    has_link_in_bio: bool = False
     full_name: str = ""
     all_posts_recent: bool = False
     duplicate_ratio: float = 0.0
@@ -307,7 +462,7 @@ async def extract_profile(page: Page, username: str) -> ProfileData:
         r"account is private|compte est priv[ée]|profil priv",
         full_text, re.IGNORECASE))
 
-    # JS extraction (follower count, pic, name, bio, etc.)
+    # JS extraction (follower count, pic, name, bio, links, etc.)
     try:
         info = await page.evaluate(_JS_EXTRACT_PROFILE, username)
         if info:
@@ -317,7 +472,11 @@ async def extract_profile(page: Page, username: str) -> ProfileData:
             data.full_name = info.get("full_name", "")
             data.has_ig_link = info.get("has_ig_link", False)
             data.has_bio = info.get("has_bio", False)
+            data.has_link_in_bio = info.get("has_link_in_bio", False)
             data.is_verified = info.get("is_verified", False)
+            # Heuristic private detection (when user follows the account)
+            if not data.is_private and info.get("looks_private", False):
+                data.is_private = True
     except Exception:
         pass
 
@@ -429,6 +588,12 @@ def score_profile(data: ProfileData, threshold: int = 0,
     details: list[str] = []
     fc = data.follower_count
 
+    # ── Step 0: Username pattern ──────────────────────────────────────
+    u_bonus, u_details = score_username(data.username)
+    if u_bonus > 0:
+        score += u_bonus
+        details.extend(u_details)
+
     # ── Step 1: Follower count ────────────────────────────────────────
     if fc is not None:
         if fc == 0:
@@ -511,7 +676,15 @@ def score_profile(data: ProfileData, threshold: int = 0,
         if strict_private:
             score += 10; details.append("private +10")
         else:
-            if fc is not None and fc < 10:
+            # Count legitimacy signals
+            legit = sum([data.has_bio, data.has_link_in_bio,
+                         data.has_real_pic, data.has_ig_link])
+            if legit >= 3:
+                # Bio + link + pic/IG = almost certainly real
+                score -= 15; details.append(f"private(legit:{legit}sig) -15")
+            elif legit >= 2:
+                score -= 5; details.append(f"private(semi:{legit}sig) -5")
+            elif fc is not None and fc < 10:
                 score += 40; details.append("private(<10abn) +40")
             elif fc is not None and fc < 30:
                 if not data.has_bio and not data.has_real_pic:
@@ -526,5 +699,11 @@ def score_profile(data: ProfileData, threshold: int = 0,
     # ── Step 7: Full name ─────────────────────────────────────────────
     if data.has_full_name:
         score -= 5; details.append("name -5")
+
+    # ── Step 8: Legitimacy signals (links) ────────────────────────────
+    if data.has_link_in_bio:
+        score -= 15; details.append("link_bio -15")
+    if data.has_ig_link:
+        score -= 10; details.append("ig_link -10")
 
     return max(0, min(100, score)), details
