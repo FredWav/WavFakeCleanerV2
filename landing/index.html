@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WavFakeCleaner — Nettoyeur de faux followers Threads</title>
+  <meta name="description" content="Detectez et supprimez automatiquement les faux followers de votre compte Threads. Extension gratuite pour Chrome, Firefox, Safari, Opera.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    /* ── Reset & Variables ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #09090b;
+      --bg2: #18181b;
+      --bg3: #27272a;
+      --text: #fafafa;
+      --text2: #a1a1aa;
+      --accent: #8b5cf6;
+      --accent2: #a78bfa;
+      --accent-glow: rgba(139, 92, 246, 0.3);
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f59e0b;
+      --max-w: 1100px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      font-size: 16px;
+    }
+
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
+
+    /* ── Navigation ────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0;
+      width: 100%;
+      background: rgba(9,9,11,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--bg3);
+      z-index: 100;
+      padding: 0 24px;
+    }
+
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+    }
+
+    .nav-logo {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text2);
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+    .btn-primary:hover { filter: brightness(1.15); text-decoration: none; }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--bg3);
+      color: var(--text);
+    }
+    .btn-outline:hover { border-color: var(--accent); text-decoration: none; }
+
+    /* ── Hero ──────────────────────────────────────────── */
+    .hero {
+      padding: 140px 24px 80px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      font-size: clamp(32px, 5vw, 56px);
+      font-weight: 900;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent2), #c084fc, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--text2);
+      max-width: 600px;
+      margin: 0 auto 32px;
+      position: relative;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      position: relative;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 40px;
+      justify-content: center;
+      margin-top: 48px;
+      position: relative;
+    }
+
+    .hero-stat {
+      text-align: center;
+    }
+
+    .hero-stat .num {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--accent2);
+    }
+
+    .hero-stat .label {
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    /* ── Features ──────────────────────────────────────── */
+    .features {
+      padding: 80px 24px;
+    }
+
+    .section-title {
+      text-align: center;
+      font-size: 32px;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .section-subtitle {
+      text-align: center;
+      color: var(--text2);
+      margin-bottom: 48px;
+      font-size: 16px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      border: 1px solid var(--bg3);
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .feature-icon {
+      font-size: 28px;
+      margin-bottom: 12px;
+    }
+
+    .feature-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      color: var(--text2);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── How It Works ──────────────────────────────────── */
+    .how-it-works {
+      padding: 80px 24px;
+      background: var(--bg2);
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 32px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .step {
+      text-align: center;
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    .step h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    .step p {
+      color: var(--text2);
+      font-size: 14px;
+    }
+
+    /* ── Pricing ───────────────────────────────────────── */
+    .pricing {
+      padding: 80px 24px;
+    }
+
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .pricing-card {
+      background: var(--bg2);
+      border: 1px solid var(--bg3);
+      border-radius: 16px;
+      padding: 32px;
+      text-align: center;
+      position: relative;
+    }
+
+    .pricing-card.featured {
+      border-color: var(--accent);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    .pricing-badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 12px;
+      text-transform: uppercase;
+    }
+
+    .pricing-card h3 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+
+    .pricing-price {
+      font-size: 40px;
+      font-weight: 900;
+      margin-bottom: 4px;
+    }
+
+    .pricing-price .currency {
+      font-size: 18px;
+      color: var(--text2);
+    }
+
+    .pricing-period {
+      color: var(--text2);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    .pricing-features {
+      list-style: none;
+      text-align: left;
+      margin-bottom: 24px;
+    }
+
+    .pricing-features li {
+      padding: 8px 0;
+      font-size: 14px;
+      color: var(--text2);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pricing-features li::before {
+      content: "✓";
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .pricing-features li.limit::before {
+      content: "~";
+      color: var(--orange);
+    }
+
+    /* ── Browsers ──────────────────────────────────────── */
+    .browsers {
+      padding: 60px 24px;
+      background: var(--bg2);
+    }
+
+    .browser-list {
+      display: flex;
+      gap: 32px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 24px;
+    }
+
+    .browser-item {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    .browser-item .browser-icon {
+      font-size: 36px;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    /* ── Legal ─────────────────────────────────────────── */
+    .legal {
+      padding: 80px 24px;
+    }
+
+    .legal h2 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .legal-content {
+      color: var(--text2);
+      font-size: 14px;
+      line-height: 1.8;
+      max-width: 800px;
+    }
+
+    .legal-content h3 {
+      color: var(--text);
+      font-size: 16px;
+      margin: 24px 0 8px;
+    }
+
+    /* ── Footer ────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--bg3);
+      padding: 32px 24px;
+      text-align: center;
+      color: var(--text2);
+      font-size: 13px;
+    }
+
+    footer .footer-links {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    /* ── Responsive ────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .hero-stats { gap: 20px; }
+      .hero-stat .num { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="container">
+      <div class="nav-logo">
+        <span>WavFakeCleaner</span>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#features">Fonctionnalites</a></li>
+        <li><a href="#pricing">Tarifs</a></li>
+        <li><a href="#how">Comment ca marche</a></li>
+        <li><a href="#cgu">CGU</a></li>
+        <li><a href="#install" class="btn btn-primary">Installer</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>
+        Nettoyez vos <span class="gradient">faux followers</span><br>
+        Threads en un clic
+      </h1>
+      <p>
+        Extension navigateur intelligente qui detecte et supprime automatiquement
+        les faux comptes, bots et spammeurs de votre liste de followers Threads.
+      </p>
+      <div class="hero-buttons" id="install">
+        <a href="#browsers" class="btn btn-primary">Installer gratuitement</a>
+        <a href="#how" class="btn btn-outline">Comment ca marche</a>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <div class="num">9</div>
+          <div class="label">Criteres d'analyse</div>
+        </div>
+        <div class="hero-stat">
+          <div class="num">95%</div>
+          <div class="label">Precision</div>
+        </div>
+        <div class="hero-stat">
+          <div class="num">50/j</div>
+          <div class="label">Suppressions gratuites</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="features">
+    <div class="container">
+      <h2 class="section-title">Detection intelligente</h2>
+      <p class="section-subtitle">Un algorithme en 9 etapes analyse chaque profil pour determiner s'il est authentique.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <h3>Analyse de profil complete</h3>
+          <p>Username, followers, posts, bio, photo de profil, reponses — chaque signal est evalue et pondere.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🤖</div>
+          <h3>Detection de patterns bots</h3>
+          <p>7 patterns regex detectent les noms generes automatiquement (bot_digits, all_digits, no_vowels...).</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>Anti-blocage integre</h3>
+          <p>Delais humains 8-15s, navigation aleatoire, micro-batches, detection de blocage avec cooldown 2h.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3>Pre-scoring instantane</h3>
+          <p>Trie les profils evidents sans visiter leur page. Seuls les cas ambigus necessitent un scan approfondi.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>100% local et prive</h3>
+          <p>Tout se passe dans votre navigateur. Aucune donnee personnelle n'est envoyee a nos serveurs.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🌐</div>
+          <h3>Multi-navigateur</h3>
+          <p>Chrome, Firefox, Safari, Edge, Opera, Brave, Comet — une extension, tous les navigateurs.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section class="how-it-works" id="how">
+    <div class="container">
+      <h2 class="section-title">Comment ca marche</h2>
+      <p class="section-subtitle">3 etapes simples pour un compte Threads propre.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Installez l'extension</h3>
+          <p>Ajoutez WavFakeCleaner depuis le store de votre navigateur. 1 clic, 0 config.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Lancez le scan</h3>
+          <p>Ouvrez Threads, cliquez sur l'extension, et lancez l'analyse de vos followers.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Nettoyez</h3>
+          <p>Reviewez les resultats, validez les cas douteux, et lancez le nettoyage automatique.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pricing -->
+  <section class="pricing" id="pricing">
+    <div class="container">
+      <h2 class="section-title">Tarifs simples</h2>
+      <p class="section-subtitle">Commencez gratuitement, passez Pro quand vous en avez besoin.</p>
+      <div class="pricing-grid">
+        <div class="pricing-card">
+          <h3>Gratuit</h3>
+          <div class="pricing-price">0<span class="currency">EUR</span></div>
+          <div class="pricing-period">pour toujours</div>
+          <ul class="pricing-features">
+            <li>Scan illimite de followers</li>
+            <li>Score de detection IA</li>
+            <li>Review manuel des cas douteux</li>
+            <li class="limit">50 suppressions par jour</li>
+            <li>Anti-blocage integre</li>
+          </ul>
+          <a href="#install" class="btn btn-outline" style="width:100%">Commencer</a>
+        </div>
+        <div class="pricing-card featured">
+          <div class="pricing-badge">Populaire</div>
+          <h3>Pro</h3>
+          <div class="pricing-price">3,99<span class="currency">EUR</span></div>
+          <div class="pricing-period">par mois</div>
+          <ul class="pricing-features">
+            <li>Tout le plan Gratuit</li>
+            <li>Suppressions illimitees</li>
+            <li>Mode Autopilot</li>
+            <li>Scan prioritaire</li>
+            <li>Support prioritaire</li>
+          </ul>
+          <a href="#install" class="btn btn-primary" style="width:100%">Passer Pro</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Browsers -->
+  <section class="browsers" id="browsers">
+    <div class="container">
+      <h2 class="section-title">Compatible avec tous les navigateurs</h2>
+      <div class="browser-list">
+        <div class="browser-item">
+          <span class="browser-icon">🌐</span>
+          Chrome
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">🦊</span>
+          Firefox
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">🧭</span>
+          Safari
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">🔴</span>
+          Opera
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">🔷</span>
+          Edge
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">🦁</span>
+          Brave
+        </div>
+        <div class="browser-item">
+          <span class="browser-icon">☄️</span>
+          Comet
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CGU / Legal -->
+  <section class="legal" id="cgu">
+    <div class="container">
+      <h2>Conditions Generales d'Utilisation</h2>
+      <div class="legal-content">
+        <h3>1. Description du service</h3>
+        <p>WavFakeCleaner est une extension navigateur permettant de detecter et supprimer les faux followers sur le reseau social Threads. Le service est propose en version gratuite (50 suppressions/jour) et en version Pro (illimitee, 3,99 EUR/mois).</p>
+
+        <h3>2. Utilisation</h3>
+        <p>L'utilisateur s'engage a utiliser l'extension de maniere responsable et conforme aux conditions d'utilisation de Threads/Meta. WavFakeCleaner ne garantit pas un taux de detection de 100% et n'est pas responsable des suppressions accidentelles de vrais followers.</p>
+
+        <h3>3. Compte et abonnement</h3>
+        <p>La creation d'un compte est facultative pour le plan gratuit. L'abonnement Pro est facture mensuellement via Stripe. L'utilisateur peut annuler a tout moment depuis son espace client. L'annulation prend effet a la fin de la periode en cours.</p>
+
+        <h3>4. Donnees personnelles et confidentialite</h3>
+        <p>Conformement au RGPD (Reglement General sur la Protection des Donnees) :</p>
+        <ul style="margin: 8px 0 8px 20px; color: var(--text2);">
+          <li>L'analyse des followers se fait entierement dans le navigateur de l'utilisateur.</li>
+          <li>Seules les donnees strictement necessaires au fonctionnement du compte sont stockees : email, plan, historique d'utilisation.</li>
+          <li>Les emails promotionnels ne sont envoyes qu'avec le consentement explicite de l'utilisateur (case a cocher a l'inscription).</li>
+          <li>L'utilisateur peut retirer son consentement et supprimer ses donnees a tout moment.</li>
+          <li>Aucune donnee n'est vendue ou partagee avec des tiers.</li>
+        </ul>
+
+        <h3>5. Droit de retractation</h3>
+        <p>Conformement a la legislation europeenne, l'utilisateur dispose d'un droit de retractation de 14 jours apres la souscription d'un abonnement Pro. Pour exercer ce droit, contacter : support@wavfakecleaner.com</p>
+
+        <h3>6. Limitation de responsabilite</h3>
+        <p>WavFakeCleaner est fourni "en l'etat". Nous ne sommes pas responsables des actions entreprises par Threads/Meta suite a l'utilisation de l'extension (restrictions de compte, etc.).</p>
+
+        <h3>7. Contact</h3>
+        <p>Pour toute question : support@wavfakecleaner.com</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy -->
+  <section class="legal" id="privacy">
+    <div class="container">
+      <h2>Politique de Confidentialite</h2>
+      <div class="legal-content">
+        <p><strong>Derniere mise a jour :</strong> Mars 2026</p>
+
+        <h3>Donnees collectees</h3>
+        <p>Lorsque vous creez un compte : email, mot de passe (hashe bcrypt), preference d'emails promotionnels, date de creation.</p>
+        <p>Lors de l'utilisation : nombre de suppressions et scans par jour (compteurs anonymises, non lies aux profils analyses).</p>
+
+        <h3>Donnees NON collectees</h3>
+        <p>Nous ne collectons PAS : les noms des followers analyses, les scores attribues, l'historique de navigation, les cookies Threads, ni aucune autre donnee du navigateur.</p>
+
+        <h3>Traitement local</h3>
+        <p>L'integralite de l'analyse (scan, scoring, detection) se fait dans votre navigateur. Aucun profil Threads n'est envoye a nos serveurs.</p>
+
+        <h3>Sous-traitants</h3>
+        <ul style="margin: 8px 0 8px 20px; color: var(--text2);">
+          <li><strong>Stripe</strong> : paiement securise (certifie PCI DSS)</li>
+          <li><strong>Resend</strong> : envoi d'emails transactionnels</li>
+        </ul>
+
+        <h3>Vos droits (RGPD)</h3>
+        <p>Vous pouvez a tout moment : acceder a vos donnees, les rectifier, les supprimer, retirer votre consentement aux emails promotionnels, et exporter vos donnees. Contact : dpo@wavfakecleaner.com</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-links">
+      <a href="#cgu">CGU</a>
+      <a href="#privacy">Confidentialite</a>
+      <a href="mailto:support@wavfakecleaner.com">Contact</a>
+    </div>
+    <p>WavFakeCleaner — by Fred Wav. Tous droits reserves.</p>
+  </footer>
+
+</body>
+</html>
