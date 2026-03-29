@@ -83,8 +83,12 @@ async function handleMessage(msg, sender) {
       return handleRegister(msg.email, msg.password, msg.promoConsent);
     case "logout":
       return handleLogout();
+    case "upgrade":
+      return handleUpgrade();
+    case "get_me":
+      return handleGetMe();
     case "get_auth":
-      return { token: (await chrome.storage.local.get("wav_token")).wav_token, plan: quota.plan };
+      return { token: await getToken(), email: await getAuthEmail(), plan: quota.plan };
 
     // ── Settings ──
     case "update_settings":
@@ -382,42 +386,109 @@ async function runAutopilot(signal) {
 
 const API_BASE = "https://api.wavfakecleaner.com";
 
-async function handleLogin(email, password) {
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+// ── JWT Token Management ───────────────────────────────────────────────────
+
+async function getToken() {
+  const stored = await chrome.storage.local.get("wav_token");
+  return stored.wav_token || null;
+}
+
+async function setToken(token) {
+  if (token) {
+    await chrome.storage.local.set({ wav_token: token });
+  } else {
+    await chrome.storage.local.remove("wav_token");
+  }
+}
+
+async function setAuthEmail(email) {
+  if (email) {
+    await chrome.storage.local.set({ wav_email: email });
+  } else {
+    await chrome.storage.local.remove("wav_email");
+  }
+}
+
+async function getAuthEmail() {
+  const stored = await chrome.storage.local.get("wav_email");
+  return stored.wav_email || null;
+}
+
+async function apiFetch(path, options = {}) {
+  const token = await getToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  // Token expired → clear auth
+  if (res.status === 401) {
+    const err = await res.json().catch(() => ({}));
+    if (err.detail === "Token expired") {
+      await setToken(null);
+      await setAuthEmail(null);
+      await quota.setPlan("free");
+    }
+    return { error: err.detail || "Unauthorized", status: 401 };
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    return { error: err.detail || "Login failed" };
+    return { error: err.detail || `HTTP ${res.status}`, status: res.status };
   }
-  const data = await res.json();
-  await quota.setToken(data.token);
+  return await res.json();
+}
+
+// ── Auth handlers ──────────────────────────────────────────────────────────
+
+async function handleLogin(email, password) {
+  const data = await apiFetch("/api/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  if (data.error) return { error: data.error };
+
+  await setToken(data.token);
+  await setAuthEmail(data.email);
   await quota.setPlan(data.plan || "free");
-  return { ok: true, plan: data.plan };
+  await quota.syncWithBackend();
+  return { ok: true, plan: data.plan, email: data.email };
 }
 
 async function handleRegister(email, password, promoConsent) {
-  const res = await fetch(`${API_BASE}/api/auth/register`, {
+  const data = await apiFetch("/api/register", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, promo_consent: !!promoConsent }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    return { error: err.detail || "Registration failed" };
-  }
-  const data = await res.json();
-  await quota.setToken(data.token);
+  if (data.error) return { error: data.error };
+
+  await setToken(data.token);
+  await setAuthEmail(data.email);
+  await quota.setPlan("free");
+  return { ok: true, email: data.email };
+}
+
+async function handleLogout() {
+  await setToken(null);
+  await setAuthEmail(null);
   await quota.setPlan("free");
   return { ok: true };
 }
 
-async function handleLogout() {
-  await quota.setToken(null);
-  await quota.setPlan("free");
-  return { ok: true };
+async function handleUpgrade() {
+  const data = await apiFetch("/api/billing/checkout", { method: "POST" });
+  if (data.error) return { error: data.error };
+  return { url: data.url };
+}
+
+async function handleGetMe() {
+  const data = await apiFetch("/api/me");
+  if (data.error) return { error: data.error };
+  return data;
 }
 
 // ── Review handlers ─────────────────────────────────────────────────────────

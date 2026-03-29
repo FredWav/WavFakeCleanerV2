@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - wav-data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  landing:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./landing:/usr/share/nginx/html:ro
+    restart: unless-stopped
+
+volumes:
+  wav-data:

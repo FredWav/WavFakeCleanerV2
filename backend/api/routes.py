@@ -17,6 +17,11 @@ from backend.engine.pipeline import pipeline
 router = APIRouter(prefix="/api")
 
 
+@router.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 # ── Request/Response models ───────────────────────────────────────────────────
 
 class StartResponse(BaseModel):

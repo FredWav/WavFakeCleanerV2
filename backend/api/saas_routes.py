@@ -5,14 +5,16 @@ These routes serve the browser extension (and landing page).
 All prefixed with /api/.
 """
 
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database.models import User
+from backend.database.models import User, UsageRecord, Follower, ActionLog
 from backend.database.session import get_session
 from backend.api.auth import (
     create_token,
@@ -29,6 +31,26 @@ from backend.api.emails import (
 from backend.api.quota import get_quota_info
 
 router = APIRouter(prefix="/api", tags=["saas"])
+
+
+# ── Rate Limiter (in-memory, per IP) ────────────────────────────────────────
+
+_rate_store: dict[str, list[float]] = defaultdict(list)
+RATE_LIMIT_WINDOW = 300   # 5 minutes
+RATE_LIMIT_MAX = 10       # max attempts per window
+
+
+def _check_rate_limit(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    # Prune old entries
+    _rate_store[ip] = [t for t in _rate_store[ip] if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_store[ip]) >= RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again later.",
+        )
+    _rate_store[ip].append(now)
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -74,7 +96,8 @@ class MeResponse(BaseModel):
 # ── Register ─────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthResponse)
-async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+async def register(request: Request, body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+    _check_rate_limit(request)
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
@@ -107,7 +130,8 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
 # ── Login ────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=AuthResponse)
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login(request: Request, body: LoginRequest, session: AsyncSession = Depends(get_session)):
+    _check_rate_limit(request)
     result = await session.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
@@ -149,7 +173,8 @@ async def verify_email(token: str, session: AsyncSession = Depends(get_session))
 # ── Forgot Password ─────────────────────────────────────────────────────────
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest, session: AsyncSession = Depends(get_session)):
+async def forgot_password(request: Request, body: ForgotPasswordRequest, session: AsyncSession = Depends(get_session)):
+    _check_rate_limit(request)
     result = await session.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
@@ -238,3 +263,78 @@ async def report_usage(
         await record_scan(user.id, session)
 
     return {"status": "ok"}
+
+
+# ── Update Promo Consent (RGPD) ─────────────────────────────────────────────
+
+class PromoConsentRequest(BaseModel):
+    consent: bool
+
+
+@router.patch("/promo-consent")
+async def update_promo_consent(
+    body: PromoConsentRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user.promo_consent = body.consent
+    await session.commit()
+    return {"status": "ok", "promo_consent": user.promo_consent}
+
+
+# ── Delete Account (RGPD) ───────────────────────────────────────────────────
+
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
+@router.delete("/delete-account")
+async def delete_account(
+    body: DeleteAccountRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    # Cancel Stripe subscription if active
+    if user.stripe_subscription_id:
+        try:
+            import stripe
+            from backend.core.config import settings as cfg
+            stripe.api_key = cfg.stripe_secret_key
+            if cfg.stripe_secret_key:
+                stripe.Subscription.cancel(user.stripe_subscription_id)
+        except Exception:
+            pass
+
+    # Delete all user data
+    await session.execute(delete(UsageRecord).where(UsageRecord.user_id == user.id))
+    await session.execute(delete(Follower).where(Follower.user_id == user.id))
+    await session.execute(delete(ActionLog).where(ActionLog.user_id == user.id))
+    await session.execute(delete(User).where(User.id == user.id))
+    await session.commit()
+
+    return {"status": "ok", "message": "Account and all data deleted"}
+
+
+# ── Export Data (RGPD) ──────────────────────────────────────────────────────
+
+@router.get("/export-data")
+async def export_data(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    quota = await get_quota_info(user, session)
+
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "plan": user.plan,
+            "email_verified": user.email_verified,
+            "promo_consent": user.promo_consent,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+        "usage": quota,
+    }

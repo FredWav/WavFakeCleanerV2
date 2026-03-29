@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+.env
+data/
+node_modules/
+extension/dist/
+frontend/node_modules/
+frontend/dist/
+.git/
+*.db

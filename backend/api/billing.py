@@ -50,8 +50,8 @@ async def create_checkout(
         customer=user.stripe_customer_id,
         mode="subscription",
         line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
-        success_url=f"{settings.email_base_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{settings.email_base_url}/billing/cancel",
+        success_url=f"{settings.email_base_url}/billing-success.html?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{settings.email_base_url}/billing-cancel.html",
         metadata={"user_id": str(user.id)},
     )
 

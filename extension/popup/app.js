@@ -38,8 +38,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 // Listen for state broadcasts from service worker
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "state_update") {
-    Object.assign(state, msg.data);
+  if (msg.action === "state_update" && msg.state) {
+    state.status = msg.state.phase || state.status;
+    state.stats = {
+      total: msg.state.counts?.total || 0,
+      scanned: msg.state.counts?.scanned || 0,
+      fake: msg.state.counts?.fakes || 0,
+      removed: msg.state.counts?.removed || 0,
+      to_review: msg.state.counts?.toReview || 0,
+      ok: msg.state.counts?.ok || 0,
+    };
+    state.plan = msg.state.plan || state.plan;
+    state.removalsToday = msg.state.removalsToday || 0;
+    state.settings = msg.state.settings || state.settings;
     render();
   }
 });
@@ -55,8 +66,35 @@ function send(action, data = {}) {
 }
 
 async function loadState() {
-  const res = await send("getState");
-  if (res) Object.assign(state, res);
+  const res = await send("get_state");
+  if (res && !res.error) {
+    state.status = res.phase || "idle";
+    state.statusText = res.running ? "En cours..." : "Pret";
+    state.plan = res.plan || "free";
+    state.removalsToday = res.removalsToday || 0;
+    state.settings = res.settings || state.settings;
+    if (res.counts) {
+      state.stats = {
+        total: res.counts.total || 0,
+        scanned: res.counts.scanned || 0,
+        fake: res.counts.fakes || 0,
+        removed: res.counts.removed || 0,
+        to_review: res.counts.toReview || 0,
+        ok: res.counts.ok || 0,
+      };
+    }
+  }
+  // Load auth state
+  const auth = await send("get_auth");
+  if (auth && !auth.error) {
+    state.email = auth.email || null;
+    state.plan = auth.plan || "free";
+  }
+  // Load followers
+  const followers = await send("get_followers", { filter: "all", limit: 500 });
+  if (Array.isArray(followers)) {
+    state.followers = followers;
+  }
 }
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
@@ -148,25 +186,25 @@ function setupActions() {
   document.getElementById("btn-fetch").addEventListener("click", async () => {
     setStatus("running", "Recuperation des followers...");
     disableActions(true);
-    await send("fetch");
+    await send("start_fetch");
   });
 
   document.getElementById("btn-scan").addEventListener("click", async () => {
     setStatus("running", "Scan en cours...");
     disableActions(true);
-    await send("scan");
+    await send("start_scan");
   });
 
   document.getElementById("btn-clean").addEventListener("click", async () => {
     setStatus("running", "Nettoyage en cours...");
     disableActions(true);
-    await send("clean");
+    await send("start_clean");
   });
 
   document.getElementById("btn-autopilot").addEventListener("click", async () => {
     setStatus("running", "Autopilot actif...");
     disableActions(true);
-    await send("autopilot");
+    await send("start_autopilot");
   });
 
   document.getElementById("btn-stop").addEventListener("click", async () => {

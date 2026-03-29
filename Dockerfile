@@ -7,14 +7,14 @@ COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: Python backend ────────────────────────
-FROM python:3.11-slim
+FROM python:3.12-slim
 WORKDIR /app
 
 # System deps for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
     libxdamage1 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
-    libcairo2 libxshmfence1 libx11-xcb1 fonts-liberation \
+    libcairo2 libxshmfence1 libx11-xcb1 fonts-liberation curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml requirements.txt ./
@@ -24,11 +24,18 @@ RUN playwright install chromium
 COPY backend/ ./backend/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY landing/ ./landing/
 COPY .env.example ./.env
 
 # Copy built frontend
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
-# Serve frontend static from FastAPI (prod addition)
+# Data directory for SQLite
+RUN mkdir -p data
+
 EXPOSE 8000
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+CMD ["sh", "-c", "alembic upgrade head 2>/dev/null; uvicorn backend.main:app --host 0.0.0.0 --port 8000"]

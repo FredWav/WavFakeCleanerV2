@@ -1,157 +1,161 @@
-# Wav Fake Cleaner V2
+# WavFakeCleaner V2
 
-Nettoie automatiquement les faux followers de ton compte Threads.
+Nettoyeur intelligent de faux followers Threads — extension navigateur + backend SaaS.
 
----
-
-## Comment ca marche ?
-
-1. L'app recupere ta liste de followers
-2. Elle analyse chaque profil avec un algorithme en 7 etapes
-3. Les comptes detectes comme fake sont automatiquement supprimes
-4. Tu suis tout en temps reel depuis un dashboard web
-
----
-
-## Installation (5 minutes)
-
-### Ce qu'il te faut
-
-- **Python 3.11+** : [python.org/downloads](https://www.python.org/downloads/)
-  > IMPORTANT : Coche "Add Python to PATH" pendant l'installation
-- **Node.js 18+** : [nodejs.org](https://nodejs.org/) (prends la version LTS)
-
-### Windows
+## Architecture
 
 ```
-1. Double-clique sur setup.bat
-2. Attends que tout s'installe
-3. C'est pret !
+wavfakecleanerv2/
+├── extension/          # Extension navigateur (Chrome, Firefox, Safari)
+│   ├── background/     # Service worker, scorer, pacer, quota
+│   ├── content/        # Content script (injection threads.net)
+│   ├── popup/          # Popup UI (dashboard, login, settings)
+│   └── build.js        # Multi-browser build system
+├── backend/            # FastAPI backend
+│   ├── api/            # Routes REST + SaaS (auth, billing, quota, emails)
+│   ├── core/           # Config, logger
+│   ├── database/       # SQLAlchemy models + session
+│   └── engine/         # Scorer, pipeline, pacer, browser manager
+├── frontend/           # React dashboard (legacy, standalone mode)
+├── landing/            # Landing page statique
+├── tests/              # Tests unitaires
+└── docker-compose.yml  # Deploiement Docker
 ```
 
-### Mac / Linux
+## Fonctionnalites
+
+- **Algorithme de scoring en 9 etapes** : username patterns, followers, posts, replies, bio, photo de profil, liens, compte prive, ratio
+- **Pre-scoring instantane** : trie les profils evidents sans visiter leur page
+- **Anti-blocage** : delais humains 8-15s, navigation aleatoire, micro-batches de 12, detection de blocage, cooldown 2h
+- **Mode Autopilot** : fetch → scan → clean en boucle automatique
+- **SaaS** : inscription, plan gratuit (50 suppressions/jour), Pro (3,99 EUR/mois illimite)
+- **RGPD** : consentement promo, suppression de compte, export de donnees, traitement 100% local
+- **Multi-navigateur** : Chrome, Firefox, Safari, Edge, Opera, Brave, Comet
+
+## Installation rapide
+
+### Methode 1 : Extension navigateur (recommande)
+
+1. Cloner le repo et builder l'extension :
+```bash
+git clone https://github.com/FredWav/WavFakeCleanerV2.git
+cd WavFakeCleanerV2/extension
+node build.js
+```
+
+2. Charger l'extension dans votre navigateur :
+   - **Chrome** : `chrome://extensions` → Mode developpeur → Charger non empaquetee → `extension/dist/chromium`
+   - **Firefox** : `about:debugging` → Charger un module temporaire → `extension/dist/firefox/manifest.json`
+   - **Safari** : `xcrun safari-web-extension-converter extension/dist/safari`
+
+### Methode 2 : Mode standalone (avec Playwright)
 
 ```bash
+# Windows
+setup.bat
+start.bat
+
+# macOS / Linux
 chmod +x setup.sh start.sh
 ./setup.sh
+./start.sh
 ```
 
----
+### Methode 3 : Docker
 
-## Utilisation
-
-### Etape 1 : Se connecter a Threads (une seule fois)
-
-```
-python login.py
+```bash
+cp .env.example .env
+# Editer .env avec vos cles
+docker compose up -d
 ```
 
-Un navigateur s'ouvre. Connecte-toi a ton compte Threads, puis reviens dans le terminal et appuie sur Entree. Ta session est sauvegardee, tu n'auras pas besoin de le refaire.
+## Configuration
 
-### Etape 2 : Lancer l'application
+Copier `.env.example` en `.env` et remplir les valeurs :
 
-**Windows :** double-clique sur `start.bat`
-**Mac/Linux :** `./start.sh`
+| Variable | Description | Requis |
+|----------|-------------|--------|
+| `WAV_THREADS_USERNAME` | Votre username Threads | Mode standalone |
+| `WAV_JWT_SECRET` | Secret JWT (generer avec `python -c "import secrets; print(secrets.token_hex(32))"`) | SaaS |
+| `WAV_STRIPE_SECRET_KEY` | Cle secrete Stripe | Billing |
+| `WAV_STRIPE_WEBHOOK_SECRET` | Secret webhook Stripe | Billing |
+| `WAV_STRIPE_PRICE_ID` | Price ID du plan Pro | Billing |
+| `WAV_EMAIL_API_KEY` | Cle API Resend ou Mailgun | Emails |
 
-Ouvre ton navigateur sur **http://localhost:8000**
+## API Endpoints
 
-### Etape 3 : Utiliser le dashboard
+### Auth
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/register` | Inscription |
+| POST | `/api/login` | Connexion |
+| GET | `/api/verify?token=...` | Verification email |
+| POST | `/api/forgot-password` | Mot de passe oublie |
+| POST | `/api/reset-password` | Reset mot de passe |
+| GET | `/api/me` | Info utilisateur + quota |
 
-Le dashboard affiche :
-- **5 compteurs** : total followers, en attente, scannes, faux, supprimes
-- **4 boutons** :
-  - **Recuperer** : charge la liste de tes followers
-  - **Scanner** : analyse les profils un par un
-  - **Nettoyer** : supprime les faux followers
-  - **Autopilote** : fait tout automatiquement (recommande)
-- **Logs en direct** : tu vois exactement ce que fait l'app
-- **Tableau** : liste de tous les followers avec leur score
+### RGPD
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PATCH | `/api/promo-consent` | Modifier consentement promo |
+| DELETE | `/api/delete-account` | Supprimer compte + donnees |
+| GET | `/api/export-data` | Exporter ses donnees |
 
-### Le bouton "Parametres" permet de :
-- Changer ton nom d'utilisateur Threads
-- Ajuster le seuil de detection (defaut: 70/100)
-- Choisir le profil de securite (prudent / normal / agressif)
+### Billing
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/billing/checkout` | Creer session Stripe |
+| POST | `/api/billing/portal` | Portail client Stripe |
+| POST | `/api/billing/webhook` | Webhook Stripe |
 
----
+### Pipeline (mode standalone)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check |
+| POST | `/api/scan/start` | Lancer le scan |
+| POST | `/api/scan/stop` | Arreter le scan |
+| GET | `/api/followers` | Liste des followers |
+| GET | `/api/stats` | Statistiques |
 
-## Comment fonctionne la detection ?
+## Tests
 
-Chaque profil commence a 0 et accumule des points. Au-dessus du seuil (70 par defaut), il est considere comme fake.
+```bash
+# Python
+pip install pytest
+pytest tests/
 
-| Signal | Points | Pourquoi |
-|--------|--------|----------|
-| 0 followers | +15 | Suspect |
-| 0 posts | +35 | Tres suspect |
-| Posts tous recents (<72h) | +20 | Spam |
-| Posts dupliques (>50%) | +40 | Spambot |
-| Mots spam (WhatsApp, Telegram...) | +25 | Arnaque |
-| 0 reponses | +25 | Pas d'interaction |
-| 0 posts ET 0 reponses | +20 | Combo suspect |
-| Pas de bio | +15 | Pas d'effort |
-| Compte prive + peu de followers | +40 | Fake typique |
-| --- | --- | --- |
-| A une bio | -10 | Bon signe |
-| 500+ followers | -10 | Probablement reel |
-| A des posts + des reponses | -15 | Actif |
-| A un vrai nom | -5 | Bon signe |
-
-**Exemples :**
-- Bot typique (0 followers, 0 posts, 0 reponses, pas de bio) = **100/100**
-- Compte legit (200 followers, 10 posts, bio, nom) = **0/100**
-
----
-
-## Profils de securite
-
-| Profil | Suppressions/jour | Suppressions/heure | Vitesse |
-|--------|------------------|--------------------|---------|
-| Prudent | 160 | 25 | Lent mais tres safe |
-| Normal | 300 | 40 | Equilibre (recommande) |
-| Agressif | 500 | 50 | Rapide mais plus de risque |
-
-L'app simule un comportement humain (pauses aleatoires, delais variables) pour eviter d'etre bloquee par Threads.
-
----
-
-## En cas de probleme
-
-| Probleme | Solution |
-|----------|----------|
-| "Python non trouve" | Reinstalle Python et coche "Add to PATH" |
-| "Node.js non trouve" | Installe Node.js depuis nodejs.org |
-| Erreur 429 | L'app se met en pause automatiquement. Attends. |
-| Session expiree | Relance `python login.py` |
-| Le dashboard ne charge pas | Verifie que le backend tourne (terminal) |
-
----
-
-## Structure du projet
-
-```
-wav-fake-cleaner-v2/
-├── backend/           # Serveur Python (FastAPI)
-│   ├── engine/        # Moteur : fetcher, scorer, cleaner
-│   ├── api/           # Endpoints REST + WebSocket
-│   └── database/      # Base de donnees SQLite
-├── frontend/          # Interface web (React + Tailwind)
-├── data/              # Session Threads + base de donnees
-├── setup.bat/.sh      # Installation automatique
-├── start.bat/.sh      # Lancement one-click
-└── login.py           # Connexion a Threads
+# JavaScript (scorer)
+node tests/test_scorer.js
 ```
 
-## API (pour les developpeurs)
+## Build de l'extension
 
-| Methode | URL | Description |
-|---------|-----|-------------|
-| GET | /api/stats | Stats du dashboard |
-| GET | /api/followers | Liste des followers |
-| POST | /api/fetch | Lancer la recuperation |
-| POST | /api/scan | Lancer le scan |
-| POST | /api/clean | Lancer le nettoyage |
-| POST | /api/autopilot | Tout automatique |
-| POST | /api/stop | Arreter |
-| GET | /api/logs | Historique des actions |
-| WS | /ws/logs | Logs temps reel |
+```bash
+cd extension
 
-Documentation interactive : **http://localhost:8000/docs**
+# Tous les navigateurs
+node build.js
+
+# Un seul navigateur
+node build.js chromium
+node build.js firefox
+node build.js safari
+
+# Avec archives ZIP
+node build.js --zip
+```
+
+## Stack technique
+
+- **Backend** : FastAPI, SQLAlchemy (async), SQLite WAL, Alembic
+- **Auth** : JWT (PyJWT) + bcrypt
+- **Billing** : Stripe Checkout + Webhooks
+- **Emails** : Resend / Mailgun
+- **Extension** : Manifest V3, ES Modules, chrome.storage
+- **Frontend** : React + Vite + Tailwind CSS
+- **Landing** : HTML/CSS statique
+- **Deploy** : Docker + docker-compose
+
+## Licence
+
+Proprietary — by Fred Wav.
