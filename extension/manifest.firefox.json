@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Wav Fake Cleaner V2",
+  "version": "1.0.0",
+  "description": "Nettoyeur de faux followers Threads — by Fred Wav",
+  "author": "Fred Wav",
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "https://www.threads.net/*",
+    "https://api.wavfakecleaner.com/*"
+  ],
+
+  "background": {
+    "scripts": ["background/service-worker.js"],
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.threads.net/*"],
+      "js": ["content/threads.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+
+  "icons": {
+    "16": "assets/icon-16.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+
+  "default_locale": "fr",
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "wavfakecleaner@fredwav.com",
+      "strict_min_version": "109.0"
+    }
+  }
+}

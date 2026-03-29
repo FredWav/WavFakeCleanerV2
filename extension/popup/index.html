@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400">
+  <title>Wav Fake Cleaner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-row">
+      <img src="../assets/icon-48.png" alt="" class="logo" width="28" height="28">
+      <h1>WavFakeCleaner</h1>
+      <span id="plan-badge" class="badge badge-free">FREE</span>
+    </div>
+    <nav id="nav-tabs">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="login">Compte</button>
+      <button class="tab" data-tab="settings">Params</button>
+    </nav>
+  </header>
+
+  <!-- Dashboard Panel -->
+  <section id="panel-dashboard" class="panel active">
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-value" id="stat-total">—</span>
+        <span class="stat-label">Followers</span>
+      </div>
+      <div class="stat-card stat-red">
+        <span class="stat-value" id="stat-fake">—</span>
+        <span class="stat-label">Faux</span>
+      </div>
+      <div class="stat-card stat-orange">
+        <span class="stat-value" id="stat-review">—</span>
+        <span class="stat-label">A verifier</span>
+      </div>
+      <div class="stat-card stat-green">
+        <span class="stat-value" id="stat-ok">—</span>
+        <span class="stat-label">OK</span>
+      </div>
+      <div class="stat-card stat-blue">
+        <span class="stat-value" id="stat-removed">—</span>
+        <span class="stat-label">Supprimes</span>
+      </div>
+      <div class="stat-card stat-purple">
+        <span class="stat-value" id="stat-scanned">—</span>
+        <span class="stat-label">Scannes</span>
+      </div>
+    </div>
+
+    <!-- Quota bar (free tier) -->
+    <div id="quota-bar-wrap" class="quota-bar-wrap">
+      <div class="quota-text">
+        <span id="quota-used">0</span>/50 suppressions aujourd'hui
+      </div>
+      <div class="quota-track"><div id="quota-fill" class="quota-fill"></div></div>
+    </div>
+
+    <!-- Status -->
+    <div id="status-bar" class="status-bar">
+      <span id="status-icon" class="status-dot idle"></span>
+      <span id="status-text">Pret</span>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button id="btn-fetch" class="btn btn-primary">Recuperer followers</button>
+      <button id="btn-scan" class="btn btn-secondary">Scanner</button>
+      <button id="btn-clean" class="btn btn-danger">Nettoyer</button>
+      <button id="btn-autopilot" class="btn btn-accent">Autopilot</button>
+      <button id="btn-stop" class="btn btn-outline" disabled>Stop</button>
+    </div>
+
+    <!-- Follower filters -->
+    <div id="follower-section" class="follower-section hidden">
+      <div class="filter-tabs">
+        <button class="ftab active" data-filter="all">Tous</button>
+        <button class="ftab" data-filter="fake">Faux</button>
+        <button class="ftab" data-filter="review">A verifier</button>
+        <button class="ftab" data-filter="ok">OK</button>
+        <button class="ftab" data-filter="removed">Supprimes</button>
+      </div>
+      <div id="follower-list" class="follower-list"></div>
+      <div id="follower-empty" class="follower-empty hidden">Aucun resultat</div>
+    </div>
+  </section>
+
+  <!-- Login/Register Panel -->
+  <section id="panel-login" class="panel">
+    <div id="auth-logged-out">
+      <div class="auth-toggle">
+        <button class="auth-tab active" data-auth="login">Connexion</button>
+        <button class="auth-tab" data-auth="register">Inscription</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="form-login" class="auth-form">
+        <input type="email" id="login-email" placeholder="Email" required autocomplete="email">
+        <input type="password" id="login-password" placeholder="Mot de passe" required autocomplete="current-password">
+        <button type="submit" class="btn btn-primary btn-full">Se connecter</button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" class="auth-form hidden">
+        <input type="email" id="reg-email" placeholder="Email" required autocomplete="email">
+        <input type="password" id="reg-password" placeholder="Mot de passe (8+ car.)" required minlength="8" autocomplete="new-password">
+        <input type="password" id="reg-password2" placeholder="Confirmer le mot de passe" required minlength="8" autocomplete="new-password">
+        <label class="consent-row">
+          <input type="checkbox" id="reg-promo-consent">
+          <span>J'accepte de recevoir des emails promotionnels (facultatif)</span>
+        </label>
+        <p class="legal-text">
+          En vous inscrivant, vous acceptez nos
+          <a href="https://wavfakecleaner.com/cgu" target="_blank">CGU</a> et
+          <a href="https://wavfakecleaner.com/privacy" target="_blank">Politique de confidentialite</a>.
+        </p>
+        <button type="submit" class="btn btn-primary btn-full">Creer un compte</button>
+      </form>
+
+      <div id="auth-error" class="auth-error hidden"></div>
+    </div>
+
+    <!-- Logged in state -->
+    <div id="auth-logged-in" class="hidden">
+      <div class="profile-card">
+        <div class="profile-email" id="profile-email">—</div>
+        <div class="profile-plan">
+          Plan: <strong id="profile-plan">Free</strong>
+        </div>
+      </div>
+      <div id="upgrade-section">
+        <p class="upgrade-text">Passez en Pro pour des suppressions illimitees</p>
+        <button id="btn-upgrade" class="btn btn-accent btn-full">Passer Pro — 3,99 EUR/mois</button>
+      </div>
+      <button id="btn-logout" class="btn btn-outline btn-full">Se deconnecter</button>
+    </div>
+  </section>
+
+  <!-- Settings Panel -->
+  <section id="panel-settings" class="panel">
+    <div class="setting-group">
+      <label class="setting-label">Seuil de detection (score)</label>
+      <div class="range-row">
+        <input type="range" id="setting-threshold" min="40" max="80" value="60" step="5">
+        <span id="threshold-value" class="range-value">60</span>
+      </div>
+      <p class="setting-hint">Plus bas = plus agressif. Defaut: 60</p>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Profil de securite</label>
+      <select id="setting-safety">
+        <option value="stealth">Stealth (lent, discret)</option>
+        <option value="balanced" selected>Equilibre (recommande)</option>
+        <option value="fast">Rapide (risque de blocage)</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Navigation humaine</label>
+      <label class="toggle-row">
+        <input type="checkbox" id="setting-human-nav" checked>
+        <span>Simuler des visites aleatoires entre les scans</span>
+      </label>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Auto-review</label>
+      <label class="toggle-row">
+        <input type="checkbox" id="setting-auto-review">
+        <span>Approuver auto. les scores &lt; 30</span>
+      </label>
+    </div>
+
+    <div class="setting-group">
+      <button id="btn-reset-settings" class="btn btn-outline btn-full">Reinitialiser</button>
+    </div>
+
+    <div class="about-section">
+      <p>Wav Fake Cleaner v1.0.0</p>
+      <p><a href="https://wavfakecleaner.com" target="_blank">wavfakecleaner.com</a></p>
+    </div>
+  </section>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
