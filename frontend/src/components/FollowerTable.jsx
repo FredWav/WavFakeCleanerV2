@@ -5,8 +5,9 @@ import { t } from "../lib/i18n"
 const filters = [
   { key: "filter_all", param: "" },
   { key: "filter_pending", param: "status=pending" },
-  { key: "filter_fake", param: "status=fake" },
+  { key: "filter_ok", param: "status=ok" },
   { key: "filter_review", param: "status=review" },
+  { key: "filter_fake", param: "status=fake" },
   { key: "filter_removed", param: "status=removed" },
 ]
 

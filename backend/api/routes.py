@@ -70,6 +70,13 @@ async def list_followers(
             query = query.where(Follower.removed == True)
         elif status == "review":
             query = query.where(Follower.to_review == True, Follower.removed == False)
+        elif status == "ok":
+            query = query.where(
+                Follower.scanned == True,
+                Follower.is_fake == False,
+                Follower.removed == False,
+                Follower.to_review == False,
+            )
 
         query = query.order_by(Follower.score.desc().nullslast())
         query = query.offset(offset).limit(limit)
