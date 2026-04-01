@@ -439,7 +439,6 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
   // Reset error counters from previous runs
   await rateTracker.resetErrors();
 
-  const rateState = rateTracker.getStats();
   log("INFO", "scan", `Analyzing ${pending.length} followers...`);
   await updateState({ stage: "scanning", total: pending.length, progress: 0 });
 
@@ -489,7 +488,7 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
       error: null,
     };
 
-    // Verified accounts → skip immediately
+    // Verified accounts → immediately OK (no DOM check needed)
     if (follower.isVerified) {
       await updateFollower(follower.username, {
         score: 0,
@@ -504,7 +503,7 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
       continue;
     }
 
-    // Private accounts — we can score fully from metadata (no DOM data possible)
+    // Private accounts — DOM can't give us post/reply data anyway, score from metadata
     if (follower.isPrivate) {
       const scored = scoreProfile(profileData, threshold);
       await updateFollower(follower.username, {
@@ -521,14 +520,20 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
       continue;
     }
 
-    // Public accounts — score from metadata to triage
-    const scored = scoreProfile(profileData, threshold);
+    // Public accounts — only flag as fake if metadata score is already very high (>= 75)
+    // Without post/reply data we cannot reliably call a public account legit → send to Phase 2
+    const { score: metaScore, details: metaDetails } = preScoreFromMetadata(
+      follower.username,
+      follower.followersCount,
+      follower.isPrivate,
+      follower.fullName,
+      follower.hasProfilePic
+    );
 
-    // Clear fake (high score) → mark immediately
-    if (scored.score >= threshold) {
+    if (metaScore !== null && metaScore >= threshold) {
       await updateFollower(follower.username, {
-        score: scored.score,
-        scoreBreakdown: JSON.stringify(scored.breakdown),
+        score: metaScore,
+        scoreBreakdown: JSON.stringify(metaDetails),
         isFake: true,
         toReview: false,
         scanned: true,
@@ -540,22 +545,7 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
       continue;
     }
 
-    // Clear legit (low score, has signals of legitimacy) → mark as OK
-    if (scored.score <= 15 && (profileData.hasBio || profileData.hasFullName)) {
-      await updateFollower(follower.username, {
-        score: scored.score,
-        scoreBreakdown: JSON.stringify([...scored.breakdown, "meta_legit"]),
-        isFake: false,
-        toReview: false,
-        scanned: true,
-        status: "scanned",
-        scannedAt: Date.now(),
-      });
-      scanned++;
-      continue;
-    }
-
-    // Borderline (score between 16 and threshold-1) → needs DOM scan for posts/replies
+    // Everything else needs a real profile visit to check posts/replies
     needsDomScan.push(follower);
   }
 
