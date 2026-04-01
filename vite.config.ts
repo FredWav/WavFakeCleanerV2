@@ -151,6 +151,7 @@ export default defineConfig({
       "@content": resolve(__dirname, "src/content"),
     },
   },
+  base: "./",
   build: {
     outDir: "dist",
     emptyOutDir: true,
