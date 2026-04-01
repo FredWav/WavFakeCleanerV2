@@ -5,6 +5,8 @@ import { resolve } from "path";
 import { writeFileSync, mkdirSync, copyFileSync, existsSync } from "fs";
 import { build as esbuild } from "esbuild";
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 // Plugin to emit manifest.json, offscreen.html, icons, and IIFE content script
 function extensionPlugin(): Plugin {
   return {
@@ -143,7 +145,7 @@ function extensionPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), extensionPlugin()],
+  plugins: [react(), tailwindcss(), extensionPlugin(), cloudflare()],
   resolve: {
     alias: {
       "@shared": resolve(__dirname, "src/shared"),
