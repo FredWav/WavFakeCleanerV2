@@ -12,7 +12,8 @@
     "scripting"
   ],
   "host_permissions": [
-    "https://www.threads.net/*"
+    "https://www.threads.net/*",
+    "https://*.workers.dev/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",

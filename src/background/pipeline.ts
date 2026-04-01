@@ -357,35 +357,10 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
       await upsertFollowers(records);
     }
 
-    // Pre-score new followers using metadata (only flags obvious fakes)
-    let preScored = 0;
-    for (const rec of records) {
-      const { score, details } = preScoreFromMetadata(
-        rec.username,
-        rec.followersCount,
-        rec.isPrivate,
-        rec.fullName,
-        rec.hasProfilePic
-      );
-      if (score !== null) {
-        preScored++;
-        const threshold = settings.scoreThreshold;
-        await updateFollower(rec.username, {
-          score,
-          scoreBreakdown: JSON.stringify(details),
-          isFake: score >= threshold,
-          toReview: score >= threshold - 20 && score < threshold,
-          scanned: true,
-          status: score >= threshold ? "fake" : "scanned",
-          scannedAt: Date.now(),
-        });
-      }
-    }
-
     log(
       "INFO",
       "fetch",
-      `Done: ${total} followers, ${newCount} new, ${preScored} obvious fakes detected`
+      `Done: ${total} followers fetched, ${newCount} new — click Analyser to scan them`
     );
   } catch (e) {
     log("ERROR", "pipeline", `Fetch error: ${e}`);
@@ -467,67 +442,21 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
   for (const follower of pending) {
     if (signal.aborted) break;
 
-    // Build a ProfileData from stored metadata
-    const profileData: import("@shared/types").ProfileData = {
-      username: follower.username,
-      notFound: false,
-      isPrivate: follower.isPrivate,
-      isVerified: follower.isVerified,
-      followerCount: follower.followersCount,
-      postCount: -1, // unknown — scorer handles this
-      hasBio: (follower.bio || "").length >= 5,
-      hasReplies: false, // unknown
-      hasRealPic: follower.hasProfilePic,
-      hasFullName: (follower.fullName || "").length >= 3 && follower.fullName !== follower.username,
-      hasIgLink: false, // unknown from metadata
-      hasLinkInBio: false, // unknown from metadata
-      fullName: follower.fullName || "",
-      allPostsRecent: false,
-      duplicateRatio: 0,
-      hasSpamKeywords: false,
-      error: null,
-    };
-
-    // Verified accounts → immediately OK (no DOM check needed)
-    if (follower.isVerified) {
-      await updateFollower(follower.username, {
-        score: 0,
-        scoreBreakdown: JSON.stringify(["Verified"]),
-        isFake: false,
-        toReview: false,
-        scanned: true,
-        status: "scanned",
-        scannedAt: Date.now(),
-      });
-      scanned++;
-      continue;
-    }
-
-    // Private accounts — DOM can't give us post/reply data anyway, score from metadata
-    if (follower.isPrivate) {
-      const scored = scoreProfile(profileData, threshold);
-      await updateFollower(follower.username, {
-        score: scored.score,
-        scoreBreakdown: JSON.stringify(scored.breakdown),
-        isFake: scored.isFake,
-        toReview: scored.toReview,
-        scanned: true,
-        status: scored.isFake ? "fake" : "scanned",
-        scannedAt: Date.now(),
-      });
-      scanned++;
-      if (scored.isFake) fakes++;
-      continue;
-    }
-
-    // Public accounts — only flag as fake if metadata score is already very high (>= 75)
-    // Without post/reply data we cannot reliably call a public account legit → send to Phase 2
+    // All accounts go through the same pre-scorer — no shortcut for verified
+    // (verified can still be bots, and the scorer now applies -25 for the verified badge)
+    // For private accounts the followers-list API often omits profile_pic_url,
+    // making hasProfilePic unreliable — so we use the same conservative pre-scorer
+    // as for public accounts rather than the full scorer.
+    // Phase 2 DOM visit will extract accurate bio/pic/followerCount for everyone else.
+    const hasBio = (follower.bio || "").length >= 3;
     const { score: metaScore, details: metaDetails } = preScoreFromMetadata(
       follower.username,
       follower.followersCount,
       follower.isPrivate,
       follower.fullName,
-      follower.hasProfilePic
+      follower.hasProfilePic,
+      hasBio,
+      follower.isVerified
     );
 
     if (metaScore !== null && metaScore >= threshold) {
@@ -545,17 +474,12 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
       continue;
     }
 
-    // Everything else needs a real profile visit to check posts/replies
+    // Everything else needs a real profile visit for accurate scoring
     needsDomScan.push(follower);
   }
 
-  // Track scans for free tier
-  if (!licence.active) {
-    await incrementDailyUsage("scans", scanned);
-  }
-
   log("INFO", "scan",
-    `Quick analysis done: ${scanned} analyzed, ${fakes} fakes found, ${needsDomScan.length} need detailed check`
+    `Quick analysis done: ${scanned} already processed, ${needsDomScan.length} need detailed check`
   );
   await updateState({ stage: "scanning", progress: scanned, total: pending.length });
   await broadcastStats();
@@ -710,6 +634,11 @@ async function runScanInternal(batchSize: number | undefined, signal: AbortSigna
   }
 
   // Finalize
+  // Track total scans (Phase 1 + Phase 2) for free tier
+  if (!licence.active && scanned > 0) {
+    await incrementDailyUsage("scans", scanned);
+  }
+
   await updateScanSession(sessionId, {
     status: signal.aborted ? "stopped" : "completed",
     scannedCount: scanned,

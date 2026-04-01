@@ -43,13 +43,24 @@ function extensionPlugin(): Plugin {
           "@content": "./src/content",
         },
         tsconfig: "tsconfig.json",
-        minify: false, // keep readable for debugging
+        minify: false,
         banner: {
           js: 'console.log("[WFC] === Content script IIFE starting ===", window.location.href);',
         },
         footer: {
           js: 'console.log("[WFC] === Content script IIFE finished ===");',
         },
+      });
+
+      // Build licence activator content script (injected on Stripe success page)
+      await esbuild({
+        entryPoints: ["src/content/licence-activator.ts"],
+        bundle: true,
+        format: "iife",
+        outfile: "dist/licence-activator.js",
+        alias: { "@shared": "./src/shared" },
+        tsconfig: "tsconfig.json",
+        minify: true,
       });
 
       // Manifest
@@ -59,13 +70,14 @@ function extensionPlugin(): Plugin {
         "https://www.threads.com/*",
         "https://threads.com/*",
       ];
+      const workerDomain = "https://restless-credit-5e6a.fred-olalde.workers.dev";
       const manifest = {
         manifest_version: 3,
         name: "Wav Fake Cleaner",
         version: "2.0.0",
         description: "Detect and remove fake followers from your Threads account",
         permissions: ["sidePanel", "storage", "alarms", "offscreen", "activeTab", "scripting"],
-        host_permissions: threadsDomains,
+        host_permissions: [...threadsDomains, `${workerDomain}/*`],
         background: {
           service_worker: "service-worker.js",
           type: "module",
@@ -77,6 +89,11 @@ function extensionPlugin(): Plugin {
           {
             matches: threadsDomains,
             js: ["content.js"],
+            run_at: "document_idle",
+          },
+          {
+            matches: [`${workerDomain}/success*`],
+            js: ["licence-activator.js"],
             run_at: "document_idle",
           },
         ],

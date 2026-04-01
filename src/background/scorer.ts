@@ -82,10 +82,18 @@ export function preScoreFromMetadata(
   followerCount: number | null,
   isPrivate: boolean,
   fullName: string | null,
-  hasProfilePic: boolean
+  hasProfilePic: boolean,
+  hasBio?: boolean,   // from API biography field (reliable when provided)
+  isVerified?: boolean
 ): { score: number | null; details: string[] } {
   let score = 0;
   const details: string[] = [];
+
+  // Verified badge — strong legitimacy signal
+  if (isVerified) {
+    score -= 25;
+    details.push("pre:verified -25");
+  }
 
   // Username patterns
   const { bonus, details: uDetails } = scoreUsername(username);
@@ -109,24 +117,28 @@ export function preScoreFromMetadata(
     }
   }
 
-  // No profile pic — bonus, but having one is NOT a legitimacy signal (fakes have pics)
+  // No profile pic
   if (!hasProfilePic) {
     score += 20;
     details.push("pre:!pic +20");
   }
-  // Having a pic subtracts nothing (was -5 before — fakes often have pics)
 
-  // Full name — subtracts very little (fakes often have realistic names)
+  // Full name
   if (!fullName) {
     score += 10;
     details.push("pre:!name +10");
   }
-  // Having a name subtracts nothing (was -5 before)
 
   // Private with no name and no pic → suspicious
   if (isPrivate && !fullName && !hasProfilePic) {
     score += 15;
     details.push("pre:private(!name,!pic) +15");
+  }
+
+  // Private + < 50 followers + no bio = fake (API biography field is reliable)
+  if (isPrivate && hasBio === false && followerCount !== null && followerCount < 50) {
+    score += 40;
+    details.push("pre:private(<50,!bio) +40");
   }
 
   // Decision: only pre-score obvious fakes. Low scores stay pending for full scan.
@@ -149,22 +161,25 @@ export function scoreProfile(
   if (data.error && data.error !== "429_RATE_LIMIT") {
     return { score: -1, breakdown: [data.error.substring(0, 40)], isFake: false, toReview: false };
   }
-  if (data.isVerified) {
-    return { score: 0, breakdown: ["Verified"], isFake: false, toReview: false };
-  }
 
   let score = 0;
   const details: string[] = [];
   const fc = data.followerCount;
 
-  // ── Step 0: Username pattern ──
+  // ── Step 0: Verified badge (strong legitimacy signal, but not automatic OK) ──
+  if (data.isVerified) {
+    score -= 25;
+    details.push("verified -25");
+  }
+
+  // ── Step 1: Username pattern ──
   const { bonus: uBonus, details: uDetails } = scoreUsername(data.username);
   if (uBonus > 0) {
     score += uBonus;
     details.push(...uDetails);
   }
 
-  // ── Step 1: Follower count ──
+  // ── Step 2: Follower count ──
   if (fc !== null) {
     if (fc === 0) {
       score += 15;
@@ -328,6 +343,14 @@ export function scoreProfile(
       } else {
         score += 5;
         details.push("private(30+) +5");
+      }
+
+      // ── Private combo rules (additive, applied after base private scoring) ──
+      // Rule 1: private + < 50 followers + no bio = fake
+      // (real users who bother following you usually have at least a bio)
+      if (!data.hasBio && fc !== null && fc < 50) {
+        score += 40;
+        details.push("private(<50,!bio) +40");
       }
     }
   }

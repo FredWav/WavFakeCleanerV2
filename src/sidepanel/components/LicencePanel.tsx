@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import { STRIPE_PAYMENT_LINK, LICENCE_PRICE } from "@shared/constants";
+import { PAYMENT_LINK, LICENCE_PRICE } from "@shared/constants";
 import type { LicenseInfo } from "@shared/types";
 
 export default function LicencePanel({
@@ -29,10 +29,11 @@ export default function LicencePanel({
         const updated = await api.getLicense();
         onUpdate(updated);
       } else {
-        setError(t("licence_invalid", lang));
+        const errKey = result.error === "network_error" ? "licence_network_error" : "licence_invalid";
+        setError(t(errKey, lang));
       }
     } catch {
-      setError(t("licence_invalid", lang));
+      setError(t("licence_network_error", lang));
     } finally {
       setLoading(false);
     }
@@ -75,7 +76,7 @@ export default function LicencePanel({
 
             {/* Buy button */}
             <a
-              href={STRIPE_PAYMENT_LINK}
+              href={PAYMENT_LINK}
               target="_blank"
               rel="noopener noreferrer"
               className="block w-full px-3 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-bold

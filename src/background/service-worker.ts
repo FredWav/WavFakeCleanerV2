@@ -130,18 +130,31 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return await getLicense();
 
     case "ACTIVATE_LICENSE": {
-      const key = (msg.payload as { key: string }).key;
-      // Simple key validation: non-empty, min length
-      if (!key || key.trim().length < 8) {
-        return { ok: false, error: "invalid_key" };
+      const sessionId = (msg.payload as { key: string }).key?.trim();
+      // Stripe session IDs start with cs_live_ or cs_test_
+      if (!sessionId || !sessionId.startsWith("cs_")) {
+        return { ok: false, error: "licence_invalid" };
       }
-      const licenseInfo = {
-        active: true,
-        key: key.trim(),
-        activatedAt: Date.now(),
-      };
-      await saveLicense(licenseInfo);
-      // Switch to normal profile when license is activated
+
+      // Verify against the Cloudflare Worker (which calls Stripe API with the secret key)
+      try {
+        const { LICENCE_VERIFY_URL } = await import("@shared/constants");
+        const res = await fetch(`${LICENCE_VERIFY_URL}?session_id=${encodeURIComponent(sessionId)}`, {
+          headers: { "Accept": "application/json" },
+        });
+        if (!res.ok) {
+          return { ok: false, error: "network_error" };
+        }
+        const data = await res.json() as { valid: boolean };
+        if (!data.valid) {
+          return { ok: false, error: "licence_invalid" };
+        }
+      } catch {
+        return { ok: false, error: "network_error" };
+      }
+
+      // Payment confirmed — activate
+      await saveLicense({ active: true, key: sessionId, activatedAt: Date.now() });
       const currentSettings = await getSettings();
       if (currentSettings.safetyProfile === "gratuit") {
         await saveSettings({ safetyProfile: "normal" });

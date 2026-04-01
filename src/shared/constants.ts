@@ -65,9 +65,11 @@ export const DEFAULT_SETTINGS = {
   safetyProfile: "gratuit" as SafetyProfile,
 };
 
-// ── Stripe licence ──
-
-export const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/7sYdR84WU5z3cPobdKcMM0u";
+// ── Licence (Stripe + Cloudflare Worker) ──
+export const PAYMENT_LINK = "https://buy.stripe.com/7sYdR84WU5z3cPobdKcMM0u";
+// URL du Cloudflare Worker qui vérifie les sessions Stripe
+// ← à remplacer après déploiement du worker (cf. stripe-verify-worker.js)
+export const LICENCE_VERIFY_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/verify";
 export const LICENCE_PRICE = "7,99€";
 
 // ── Autopilot constants ──
