@@ -67,7 +67,7 @@ export const DEFAULT_SETTINGS = {
 
 // ── Stripe licence ──
 
-export const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/REPLACE_WITH_YOUR_LINK";
+export const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/7sYdR84WU5z3cPobdKcMM0u";
 export const LICENCE_PRICE = "7,99€";
 
 // ── Autopilot constants ──
