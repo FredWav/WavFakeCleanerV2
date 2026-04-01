@@ -30,6 +30,20 @@ function extensionPlugin(): Plugin {
         minify: true,
       });
 
+      // Build service worker as ESM (isolated from React chunks)
+      await esbuild({
+        entryPoints: ["src/background/service-worker.ts"],
+        bundle: true,
+        format: "esm",
+        outfile: "dist/service-worker.js",
+        alias: {
+          "@shared": "./src/shared",
+          "@background": "./src/background",
+        },
+        tsconfig: "tsconfig.json",
+        minify: false,
+      });
+
       // Build content script as IIFE (self-contained, no ES imports)
       // Content scripts MUST be classic scripts — Chrome doesn't load ES modules for them
       await esbuild({
@@ -144,13 +158,12 @@ export default defineConfig({
       input: {
         sidepanel: resolve(__dirname, "sidepanel.html"),
         popup: resolve(__dirname, "popup.html"),
-        "service-worker": resolve(__dirname, "src/background/service-worker.ts"),
         offscreen: resolve(__dirname, "src/offscreen/offscreen.ts"),
-        // content script is built separately by esbuild (IIFE format)
+        // service-worker and content scripts are built separately by esbuild
       },
       output: {
         entryFileNames: (chunk) => {
-          if (["service-worker", "offscreen"].includes(chunk.name)) {
+          if (chunk.name === "offscreen") {
             return "[name].js";
           }
           return "assets/[name]-[hash].js";
