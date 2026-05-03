@@ -1,77 +1,552 @@
 /**
- * Cloudflare Worker — vérifie qu'un Stripe Checkout Session a bien été payé.
+ * Cloudflare Worker — Stripe licence verify + Community voting API.
  *
- * DÉPLOIEMENT (2 minutes) :
- * 1. Va sur https://workers.cloudflare.com → "Create application" → "Worker"
- * 2. Colle ce code dans l'éditeur, clique "Deploy"
- * 3. Dans Settings → Variables → ajoute : STRIPE_SECRET_KEY = sk_live_XXXX
- * 4. Note l'URL du worker (ex: https://wfc-verify.tonnom.workers.dev)
- * 5. Dans src/shared/constants.ts → remplace LICENCE_VERIFY_URL par cette URL + "/verify"
+ * Privacy model:
+ *   - Every identifier stored in D1 is HMAC-SHA256(env.HMAC_SALT, ...).
+ *   - The salt lives only as a Cloudflare secret; the extension never sees it.
+ *   - A DB dump alone cannot be brute-forced back to usernames or session IDs.
  *
- * STRIPE :
- * - Dans ton Payment Link → "Après le paiement" → "Redirige vers une URL"
- * - URL de succès : https://wfc-verify.tonnom.workers.dev/success?session_id={CHECKOUT_SESSION_ID}
- *   (Stripe remplace automatiquement {CHECKOUT_SESSION_ID})
- * - La page de succès affiche le session ID que l'utilisateur copie dans l'extension.
+ * ROUTES :
+ *   GET  /verify?session_id=cs_xxx  - verifie paiement Stripe, retourne communityToken
+ *   GET  /success?session_id=cs_xxx - page de succes Stripe (HTML)
+ *   POST /vote                       - soumet un vote communautaire
+ *   POST /lookup                     - lookup batch de scores communautaires
+ *   GET  /community-stats            - stats agregees pour affichage public
+ *   POST /report-sightings           - signale des fakes (batch, auth)
+ *   POST /check-sightings            - verifie combien d'users ont signale un compte (batch, no auth)
+ *   POST /telemetry                  - rapport d'erreur anonyme opt-in (no auth, rate-limited)
  */
+
+// ── Crypto helpers ──
+
+let cachedHmacKey = null;
+let cachedHmacKeyForSalt = null;
+
+async function getHmacKey(salt) {
+  if (cachedHmacKey && cachedHmacKeyForSalt === salt) return cachedHmacKey;
+  cachedHmacKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(salt),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  cachedHmacKeyForSalt = salt;
+  return cachedHmacKey;
+}
+
+async function hmacHex(salt, data) {
+  const key = await getHmacKey(salt);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── CORS helpers ──
+
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (origin.startsWith("chrome-extension://")) return true;
+  const allowed = [
+    "https://www.threads.net", "https://threads.net",
+    "https://www.threads.com", "https://threads.com",
+  ];
+  return allowed.some((a) => origin === a || origin.startsWith(a + "/"));
+}
+
+function corsHeaders(request) {
+  const origin = request.headers.get("Origin");
+  if (!origin || !isAllowedOrigin(origin)) return {};
+  return { "Access-Control-Allow-Origin": origin };
+}
+
+// ── Response helpers ──
+
+function json(body, status = 200, request = null) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : {}) },
+  });
+}
+
+const STRIPE_RE = /^cs_(live|test)_[A-Za-z0-9]{20,80}$/;
+const HEX64_RE = /^[a-f0-9]{64}$/;
+
+// ── Rate limiting ──
+
+const RATE_LIMITS = {
+  vote: 200,        // votes per hour per token
+  sightings: 20,    // sighting batches per hour per token
+  telemetry: 50,    // telemetry events per hour per anon hash
+};
+
+async function checkAndBumpRateLimit(env, tokenHash, endpoint) {
+  const bucket = Math.floor(Date.now() / 3_600_000);
+  const limit = RATE_LIMITS[endpoint] ?? 100;
+
+  const row = await env.DB.prepare(
+    "SELECT count FROM rate_limits WHERE token_hash = ? AND hour_bucket = ? AND endpoint = ?"
+  ).bind(tokenHash, bucket, endpoint).first();
+
+  if (row && row.count >= limit) {
+    return { allowed: false, retryAfter: 3600 - (Math.floor(Date.now() / 1000) % 3600) };
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO rate_limits (token_hash, hour_bucket, endpoint, count) VALUES (?, ?, ?, 1) " +
+    "ON CONFLICT (token_hash, hour_bucket, endpoint) DO UPDATE SET count = count + 1"
+  ).bind(tokenHash, bucket, endpoint).run();
+
+  return { allowed: true };
+}
+
+// ── Lazy housekeeping (1% chance per write) ──
+
+async function maybeCleanup(env) {
+  if (Math.random() >= 0.01) return;
+  try {
+    const cutoffNonces = Date.now() - 600_000;          // 10 min
+    const cutoffBuckets = Math.floor(Date.now() / 3_600_000) - 25; // keep 25 hour-buckets
+    const cutoffTelemetry = Date.now() - 90 * 24 * 3_600_000; // keep 90 days
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM nonces WHERE used_at < ?").bind(cutoffNonces),
+      env.DB.prepare("DELETE FROM rate_limits WHERE hour_bucket < ?").bind(cutoffBuckets),
+      env.DB.prepare("DELETE FROM telemetry WHERE created_at < ?").bind(cutoffTelemetry),
+    ]);
+  } catch {
+    // non-critical; another request will clean later
+  }
+}
+
+// ── Main handler ──
 
 export default {
   async fetch(request, env) {
-    const headers = {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    };
-
     const url = new URL(request.url);
 
-    // ── /verify?session_id=cs_xxx — appelé par l'extension ──
-    if (url.pathname === "/verify") {
-      const sessionId = url.searchParams.get("session_id");
-
-      if (!sessionId || !sessionId.startsWith("cs_")) {
-        return new Response(JSON.stringify({ valid: false }), { headers });
+    if (request.method === "OPTIONS") {
+      const origin = request.headers.get("Origin");
+      if (!origin || !isAllowedOrigin(origin)) {
+        return new Response(null, { status: 403 });
       }
-
-      try {
-        const r = await fetch(
-          `https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
-          { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } }
-        );
-        const session = await r.json();
-        const valid = session.payment_status === "paid";
-        return new Response(JSON.stringify({ valid }), { headers });
-      } catch {
-        return new Response(JSON.stringify({ valid: false }), { headers });
-      }
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      });
     }
 
-    // ── /success?session_id=cs_xxx — page de succès Stripe ──
-    if (url.pathname === "/success") {
-      const html = `<!DOCTYPE html>
+    try {
+      if (url.pathname === "/verify") return handleVerify(request, env, url);
+      if (url.pathname === "/success") return handleSuccess(url);
+      if (url.pathname === "/vote" && request.method === "POST") return handleVote(request, env);
+      if (url.pathname === "/lookup" && request.method === "POST") return handleLookup(request, env);
+      if (url.pathname === "/community-stats") return handleCommunityStats(request, env);
+      if (url.pathname === "/report-sightings" && request.method === "POST") return handleReportSightings(request, env);
+      if (url.pathname === "/check-sightings" && request.method === "POST") return handleCheckSightings(request, env);
+      if (url.pathname === "/telemetry" && request.method === "POST") return handleTelemetry(request, env);
+      return json({ error: "not_found" }, 404, request);
+    } catch (e) {
+      return json({ error: "internal_error", detail: String(e) }, 500, request);
+    }
+  },
+};
+
+// ── /verify ──
+
+async function handleVerify(request, env, url) {
+  const sessionId = url.searchParams.get("session_id");
+  if (!sessionId || !STRIPE_RE.test(sessionId)) {
+    return json({ valid: false, error: "invalid_session_id" }, 200, request);
+  }
+  if (!env.HMAC_SALT) {
+    return json({ valid: false, error: "server_misconfigured" }, 500, request);
+  }
+
+  try {
+    const r = await fetch(
+      `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`,
+      { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } }
+    );
+    const session = await r.json();
+    const valid = session.payment_status === "paid";
+
+    if (!valid) return json({ valid: false }, 200, request);
+
+    // Use the session ID itself as the community token; only its HMAC ever lands in DB.
+    const communityToken = sessionId;
+    const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
+
+    // Register token in D1 (idempotent)
+    if (env.DB) {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO tokens (token_hash, created_at) VALUES (?, ?)"
+      ).bind(tokenHash, Date.now()).run();
+    }
+
+    return json({ valid: true, communityToken }, 200, request);
+  } catch (e) {
+    return json({ valid: false, error: String(e) }, 200, request);
+  }
+}
+
+// ── /success ──
+
+function handleSuccess(url) {
+  const sessionId = url.searchParams.get("session_id") || "";
+  // Escape any quotes in the sessionId (defensive — Stripe IDs are alphanum, but no harm)
+  const safeId = sessionId.replace(/[<>"'&]/g, "");
+  const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wav Fake Cleaner — Paiement confirmé</title>
+  <title>Wav Fake Cleaner — Paiement confirme</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f0f11; color: #e5e7eb;
            display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     .card { background: #1a1a2e; border: 1px solid #2d2d40; border-radius: 16px;
             padding: 32px; max-width: 440px; width: 90%; text-align: center; }
     h1 { color: #a855f7; margin: 0 0 16px; font-size: 1.4rem; }
-    #wfc-status { font-size: .95rem; line-height: 1.6; min-height: 60px; }
+    p { font-size: .9rem; color: #9ca3af; margin: 8px 0; }
+    #wfc-status { margin-top: 16px; }
+    .fallback-hint { font-size: .75rem; color: #6b7280; margin-top: 24px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Paiement confirmé ✓</h1>
-    <div id="wfc-status" style="color:#a855f7">Activation en cours…</div>
+    <h1>Paiement confirme</h1>
+    <div id="wfc-status" data-state="loading" data-session-id="${safeId}">
+      <p style="color:#9ca3af">Activation de ta licence en cours…</p>
+    </div>
+    <p class="fallback-hint">Probleme ? Ecris a <a href="mailto:contact@fredwav.com" style="color:#a855f7">contact@fredwav.com</a></p>
   </div>
+  <script>
+    // Si apres 3s l'activator n'a pas modifie data-state, c'est que l'extension
+    // n'est pas installee/active dans ce navigateur. On affiche alors l'ID a coller.
+    setTimeout(function () {
+      var el = document.getElementById('wfc-status');
+      if (el && el.dataset.state === 'loading') {
+        el.dataset.state = 'no-extension';
+        var sid = el.getAttribute('data-session-id') || '';
+        el.innerHTML =
+          '<div style="color:#fbbf24">Extension non detectee dans ce navigateur.</div>' +
+          '<div style="color:#9ca3af;font-size:.8rem;margin-top:10px">Copie cet ID dans le champ d\\'activation de l\\'extension :</div>' +
+          '<div style="background:#0f0f11;border:1px solid #3b3b52;border-radius:8px;padding:10px;font-family:monospace;color:#c084fc;word-break:break-all;margin-top:6px;cursor:pointer" onclick="navigator.clipboard.writeText(\\'' + sid + '\\')">' + sid + '</div>' +
+          '<div style="color:#6b7280;font-size:.75rem;margin-top:4px">Clique pour copier</div>';
+      }
+    }, 3000);
+  </script>
 </body>
 </html>`;
-      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-    }
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
 
-    return new Response("Not found", { status: 404 });
-  },
-};
+// ── /vote ──
+
+async function handleVote(request, env) {
+  if (!env.DB) return json({ error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { targetHash: clientTargetHash, communityToken, verdict, score, ts, nonce } = body || {};
+
+  if (!clientTargetHash || !communityToken || !verdict || score === undefined || !ts || !nonce) {
+    return json({ error: "missing_fields" }, 400, request);
+  }
+  if (!HEX64_RE.test(String(clientTargetHash))) {
+    return json({ error: "invalid_target_hash" }, 400, request);
+  }
+  if (!["fake", "ok", "review"].includes(verdict)) {
+    return json({ error: "invalid_verdict" }, 400, request);
+  }
+  if (typeof score !== "number" || score < 0 || score > 100) {
+    return json({ error: "invalid_score" }, 400, request);
+  }
+
+  // Timestamp freshness: +/-5 minutes
+  if (Math.abs(Date.now() - ts) > 5 * 60 * 1000) {
+    return json({ error: "timestamp_expired" }, 400, request);
+  }
+
+  // HMAC the identifiers BEFORE any DB lookup
+  const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
+  const targetHash = await hmacHex(env.HMAC_SALT, clientTargetHash);
+
+  // Verify community token
+  const tokenRow = await env.DB.prepare(
+    "SELECT token_hash FROM tokens WHERE token_hash = ?"
+  ).bind(tokenHash).first();
+  if (!tokenRow) return json({ error: "invalid_token" }, 403, request);
+
+  // Per-token rate limit
+  const rl = await checkAndBumpRateLimit(env, tokenHash, "vote");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+  }
+
+  // Nonce dedup (prevent replay)
+  const nonceRow = await env.DB.prepare(
+    "SELECT nonce FROM nonces WHERE nonce = ?"
+  ).bind(nonce).first();
+  if (nonceRow) return json({ error: "nonce_replayed" }, 400, request);
+
+  await env.DB.prepare(
+    "INSERT INTO nonces (nonce, used_at) VALUES (?, ?)"
+  ).bind(nonce, Date.now()).run();
+
+  // Upsert vote
+  await env.DB.prepare(`
+    INSERT INTO votes (target_hash, token_hash, verdict, score, ts, nonce)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (target_hash, token_hash) DO UPDATE SET
+      verdict = excluded.verdict,
+      score   = excluded.score,
+      ts      = excluded.ts,
+      nonce   = excluded.nonce
+  `).bind(targetHash, tokenHash, verdict, score, ts, nonce).run();
+
+  await maybeCleanup(env);
+  return json({ ok: true }, 200, request);
+}
+
+// ── /lookup ──
+
+async function handleLookup(request, env) {
+  if (!env.DB) return json({ error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { targetHashes: clientTargetHashes } = body || {};
+  if (!Array.isArray(clientTargetHashes) || clientTargetHashes.length === 0) {
+    return json({ error: "missing_target_hashes" }, 400, request);
+  }
+  if (clientTargetHashes.length > 200) {
+    return json({ error: "too_many_hashes" }, 400, request);
+  }
+
+  // Translate client SHA-256 hashes to server HMACs
+  const hmacToClient = new Map();
+  const targetHashes = [];
+  for (const h of clientTargetHashes) {
+    if (!HEX64_RE.test(String(h))) continue;
+    const hmac = await hmacHex(env.HMAC_SALT, h);
+    hmacToClient.set(hmac, h);
+    targetHashes.push(hmac);
+  }
+  if (targetHashes.length === 0) return json({}, 200, request);
+
+  const placeholders = targetHashes.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(`
+    SELECT
+      target_hash,
+      COUNT(*) AS vote_count,
+      CAST(ROUND(AVG(score)) AS INTEGER) AS consensus_score,
+      CAST(ROUND(
+        SUM(CASE WHEN verdict = 'fake' THEN 100.0 ELSE 0.0 END) / COUNT(*)
+      ) AS INTEGER) AS fake_pct
+    FROM votes
+    WHERE target_hash IN (${placeholders})
+    GROUP BY target_hash
+  `).bind(...targetHashes).all();
+
+  const result = {};
+  for (const row of rows.results) {
+    const clientHash = hmacToClient.get(row.target_hash);
+    if (!clientHash) continue;
+    result[clientHash] = {
+      voteCount: row.vote_count,
+      fakeRatio: row.fake_pct / 100,
+      consensusScore: row.consensus_score,
+    };
+  }
+
+  return json(result, 200, request);
+}
+
+// ── /community-stats ──
+
+async function handleCommunityStats(request, env) {
+  if (!env.DB) return json({ totalFakesDetected: 0 }, 200, request);
+  try {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(DISTINCT target_hash) AS total FROM votes WHERE verdict = 'fake'"
+    ).first();
+    return json({ totalFakesDetected: row?.total ?? 0 }, 200, request);
+  } catch {
+    return json({ totalFakesDetected: 0 }, 200, request);
+  }
+}
+
+// ── /report-sightings ── (batch, auth required)
+
+async function handleReportSightings(request, env) {
+  if (!env.DB) return json({ error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { communityToken, targetHashes: clientTargetHashes, ts, nonce } = body || {};
+  if (!communityToken || !Array.isArray(clientTargetHashes) || !ts || !nonce) {
+    return json({ error: "missing_fields" }, 400, request);
+  }
+  if (clientTargetHashes.length === 0 || clientTargetHashes.length > 50) {
+    return json({ error: "invalid_batch_size" }, 400, request);
+  }
+  if (Math.abs(Date.now() - ts) > 5 * 60 * 1000) {
+    return json({ error: "timestamp_expired" }, 400, request);
+  }
+
+  // Verify token (HMAC)
+  const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
+  const tokenRow = await env.DB.prepare(
+    "SELECT token_hash FROM tokens WHERE token_hash = ?"
+  ).bind(tokenHash).first();
+  if (!tokenRow) return json({ error: "invalid_token" }, 403, request);
+
+  // Per-token rate limit
+  const rl = await checkAndBumpRateLimit(env, tokenHash, "sightings");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+  }
+
+  // Nonce dedup
+  const nonceRow = await env.DB.prepare(
+    "SELECT nonce FROM nonces WHERE nonce = ?"
+  ).bind(nonce).first();
+  if (nonceRow) return json({ error: "nonce_replayed" }, 400, request);
+  await env.DB.prepare(
+    "INSERT INTO nonces (nonce, used_at) VALUES (?, ?)"
+  ).bind(nonce, Date.now()).run();
+
+  // Batch insert sightings (HMAC each target hash)
+  const now = Date.now();
+  let inserted = 0;
+  for (const clientHash of clientTargetHashes) {
+    if (!HEX64_RE.test(String(clientHash))) continue;
+    const targetHash = await hmacHex(env.HMAC_SALT, clientHash);
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO sightings (target_hash, reporter_hash, created_at) VALUES (?, ?, ?)"
+    ).bind(targetHash, tokenHash, now).run();
+    inserted++;
+  }
+
+  await maybeCleanup(env);
+  return json({ ok: true, reported: inserted }, 200, request);
+}
+
+// ── /check-sightings ── (batch, no auth)
+
+async function handleCheckSightings(request, env) {
+  if (!env.DB) return json({ results: {} }, 200, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { targetHashes: clientTargetHashes } = body || {};
+  if (!Array.isArray(clientTargetHashes) || clientTargetHashes.length === 0) {
+    return json({ error: "missing_target_hashes" }, 400, request);
+  }
+  if (clientTargetHashes.length > 200) {
+    return json({ error: "too_many_hashes" }, 400, request);
+  }
+
+  // Translate client SHA-256 hashes to server HMACs
+  const hmacToClient = new Map();
+  const targetHashes = [];
+  for (const h of clientTargetHashes) {
+    if (!HEX64_RE.test(String(h))) continue;
+    const hmac = await hmacHex(env.HMAC_SALT, h);
+    hmacToClient.set(hmac, h);
+    targetHashes.push(hmac);
+  }
+  if (targetHashes.length === 0) return json({ results: {} }, 200, request);
+
+  const placeholders = targetHashes.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(
+    `SELECT target_hash, COUNT(DISTINCT reporter_hash) AS cnt FROM sightings WHERE target_hash IN (${placeholders}) GROUP BY target_hash`
+  ).bind(...targetHashes).all();
+
+  const results = {};
+  for (const row of rows.results) {
+    const clientHash = hmacToClient.get(row.target_hash);
+    if (clientHash) results[clientHash] = row.cnt;
+  }
+
+  return json({ results }, 200, request);
+}
+
+// ── /telemetry ── (anonymous opt-in error reports, no auth)
+//
+// Body shape (all optional except anonId, errorCode, ts):
+//   {
+//     anonId: string (UUID v4 from the client, used for dedup),
+//     v: string (extension version),
+//     lang: string,
+//     ts: number (client ms),
+//     category: string,
+//     errorCode: string,
+//     reason?: string,
+//     stage?: string
+//   }
+
+async function handleTelemetry(request, env) {
+  if (!env.DB) return json({ error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { anonId, v, lang, ts, category, errorCode, reason, stage } = body || {};
+
+  if (typeof anonId !== "string" || anonId.length < 16 || anonId.length > 100) {
+    return json({ error: "invalid_anon_id" }, 400, request);
+  }
+  if (typeof errorCode !== "string" || errorCode.length === 0 || errorCode.length > 80) {
+    return json({ error: "invalid_error_code" }, 400, request);
+  }
+  if (typeof ts !== "number" || Math.abs(Date.now() - ts) > 10 * 60 * 1000) {
+    return json({ error: "timestamp_expired" }, 400, request);
+  }
+  // Soft-cap free-form fields to bound storage and avoid abuse
+  const safe = (s, max) =>
+    typeof s === "string" ? s.slice(0, max).replace(/[^\x20-\x7e]/g, "") : null;
+
+  const anonHash = await hmacHex(env.HMAC_SALT, anonId);
+
+  // Per-anonId rate limit
+  const rl = await checkAndBumpRateLimit(env, anonHash, "telemetry");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO telemetry (anon_hash, v, lang, category, error_code, reason, stage, ts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    anonHash,
+    safe(v, 20) || "unknown",
+    safe(lang, 8) || "unknown",
+    safe(category, 32),
+    safe(errorCode, 80),
+    safe(reason, 80),
+    safe(stage, 32),
+    ts
+  ).run();
+
+  await maybeCleanup(env);
+  return json({ ok: true }, 200, request);
+}

@@ -1,20 +1,3 @@
-// ── Follower profile data (from API or DOM scraping) ──
-
-export interface FollowerProfile {
-  username: string;
-  fullName: string;
-  bio: string;
-  followersCount: number | null;
-  followingCount: number | null;
-  postsCount: number | null;
-  hasProfilePic: boolean;
-  isPrivate: boolean;
-  isVerified: boolean;
-  mediaCount: number | null;
-  externalUrl: string;
-  bioLinks: string[];
-}
-
 // ── Scored follower (after scoring algorithm) ──
 
 export interface ScoredFollower {
@@ -43,6 +26,7 @@ export interface ProfileData {
   allPostsRecent: boolean;
   duplicateRatio: number;
   hasSpamKeywords: boolean;
+  hasMedia: boolean;
   error: string | null;
 }
 
@@ -102,7 +86,7 @@ export interface ScanSessionRecord {
 
 // ── Pipeline state ──
 
-export type PipelineStage = "idle" | "fetching" | "scanning" | "cleaning" | "autopilot";
+export type PipelineStage = "idle" | "fetching" | "cleaning";
 
 export interface PipelineState {
   stage: PipelineStage;
@@ -122,10 +106,11 @@ export interface Stats {
   toReview: number;
   removed: number;
   isRunning: boolean;
+  // Last user-facing error from the pipeline (cleared when a new run starts).
+  // Null when the last run succeeded or no run has happened yet.
+  lastError: string | null;
   rate: {
-    actionsToday: number;
     actionsThisHour: number;
-    limitDay: number;
     limitHour: number;
     consecutiveErrors: number;
   };
@@ -133,12 +118,13 @@ export interface Stats {
 
 // ── Settings ──
 
-export type SafetyProfile = "gratuit" | "prudent" | "normal" | "agressif";
-
 export interface Settings {
   threadsUsername: string;
   scoreThreshold: number;
-  safetyProfile: SafetyProfile;
+  privateAlwaysReview?: boolean;
+  // Opt-in: send anonymous error telemetry to the developer's worker so bugs
+  // can be diagnosed without the user having to copy logs manually. Default off.
+  telemetry?: boolean;
 }
 
 // ── License ──
@@ -147,13 +133,14 @@ export interface LicenseInfo {
   active: boolean;
   key: string | null;
   activatedAt: number | null;
+  communityToken: string | null; // HMAC token issued by the Worker on activation
 }
 
 // ── Free tier limits ──
 
 export const FREE_LIMITS = {
-  scansPerDay: 200,
-  removalsPerDay: 50,
+  cyclesPerDay: 1,
+  cycleSize: 50,
 } as const;
 
 // ── Log entry ──

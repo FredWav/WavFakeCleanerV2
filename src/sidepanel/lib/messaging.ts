@@ -13,10 +13,10 @@ async function send<T>(message: RequestMessage): Promise<T> {
 export const api = {
   getStats: () => send<Stats>({ type: "GET_STATS" }),
 
-  getFollowers: (filter?: string, limit = 200) =>
+  getFollowers: (filter?: string, limit = 200, search?: string) =>
     send<(FollowerRecord & { profile_url: string })[]>({
       type: "GET_FOLLOWERS",
-      payload: { filter, limit },
+      payload: { filter, limit, search },
     }),
 
   getSettings: () => send<Settings>({ type: "GET_SETTINGS" }),
@@ -26,13 +26,10 @@ export const api = {
 
   fetch: () => send<{ ok: boolean }>({ type: "START_FETCH" }),
 
-  scan: (batchSize?: number) =>
-    send<{ ok: boolean }>({ type: "START_SCAN", payload: { batchSize } }),
+  clean: () =>
+    send<{ ok: boolean }>({ type: "START_CLEAN" }),
 
-  clean: (batchSize?: number) =>
-    send<{ ok: boolean }>({ type: "START_CLEAN", payload: { batchSize } }),
-
-  autopilot: () => send<{ ok: boolean }>({ type: "START_AUTOPILOT" }),
+  continuous: () => send<{ ok: boolean }>({ type: "START_CONTINUOUS" }),
 
   stop: () => send<{ ok: boolean }>({ type: "STOP" }),
 
@@ -43,6 +40,12 @@ export const api = {
 
   rejectFollower: (username: string) =>
     send<{ ok: boolean }>({ type: "REJECT_FOLLOWER", payload: { username } }),
+
+  submitCommunityVote: (username: string, verdict: "fake" | "ok", score: number) =>
+    send<{ ok: boolean; error?: string }>({
+      type: "SUBMIT_COMMUNITY_VOTE",
+      payload: { username, verdict, score },
+    }),
 
   getLicense: () => send<LicenseInfo>({ type: "GET_LICENSE" }),
 

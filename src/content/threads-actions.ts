@@ -3,12 +3,10 @@
  *
  * Ported from backend/engine/cleaner.py.
  * Replaces Playwright clicks with direct DOM manipulation.
- *
- * v2: Enhanced with better menu detection, Threads blocking detection,
- *     and comprehensive error reporting.
  */
 
 import { SELECTORS } from "@shared/selectors";
+import { humanClick } from "./humanize";
 
 // ── State for detecting blocks ──
 
@@ -56,10 +54,10 @@ export async function clickThreeDots(): Promise<boolean> {
     }
   }
 
-  // Strategy 3: Look for ellipsis/more icon buttons anywhere in the header area
-  const headerArea = document.querySelector("header") || document.querySelector("main");
-  if (headerArea) {
-    const allBtns = findMenuButtons(headerArea as HTMLElement);
+  // Strategy 3: Look for ellipsis/more icon buttons anywhere in main area
+  const mainArea = document.querySelector("main") || document.querySelector("header");
+  if (mainArea) {
+    const allBtns = findMenuButtons(mainArea as HTMLElement);
     if (allBtns.length >= 1) {
       const result = await tryMenuButtons(allBtns);
       if (result) return true;
@@ -72,10 +70,9 @@ export async function clickThreeDots(): Promise<boolean> {
   );
   for (const btn of moreBtns) {
     if ((btn as HTMLElement).offsetHeight > 0 && (btn as HTMLElement).offsetHeight < 80) {
-      (btn as HTMLElement).click();
+      await humanClick(btn as HTMLElement);
       const appeared = await waitForMenu();
       if (appeared) return true;
-      // Dismiss and continue
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await sleep(300);
     }
@@ -103,14 +100,14 @@ function findMenuButtons(container: HTMLElement): HTMLElement[] {
 
 async function tryMenuButtons(btns: HTMLElement[]): Promise<boolean> {
   // Try last button first (usually the three dots)
-  (btns[btns.length - 1]).click();
+  await humanClick(btns[btns.length - 1]);
   let appeared = await waitForMenu();
   if (appeared) return true;
 
   // Maybe we clicked the bell — dismiss and try second-to-last
   if (await dismissBellPopup()) {
     if (btns.length >= 2) {
-      (btns[btns.length - 2]).click();
+      await humanClick(btns[btns.length - 2]);
       appeared = await waitForMenu();
       if (appeared) return true;
     }
@@ -127,26 +124,8 @@ async function tryMenuButtons(btns: HTMLElement[]): Promise<boolean> {
 async function waitForMenu(): Promise<boolean> {
   for (let attempt = 0; attempt < 6; attempt++) {
     await sleep(800 + attempt * 200);
-
-    // Check for role="menu" or role="dialog" content
-    const items = document.querySelectorAll(
-      '[role="menu"] *, [role="menuitem"], [role="dialog"] [role="button"], [role="dialog"] button, [role="dialog"] div[tabindex], [role="listbox"] *'
-    );
-
-    const texts = [
-      ...new Set(
-        Array.from(items)
-          .map((el) => (el.textContent || "").trim().toLowerCase())
-          .filter((t) => t.length > 0 && t.length < 60)
-      ),
-    ].slice(0, 20);
-
-    const clean = texts.filter(
-      (t) => !Array.from(SELECTORS.menu.chromeJunk).some((j) => t.includes(j))
-    );
-
-    if (clean.some((t) => SELECTORS.menu.menuItems.some((mi) => t.includes(mi)))) {
-      console.log("[WFC] Menu appeared with items:", clean.join(", "));
+    if (hasMenuContent()) {
+      console.log("[WFC] Menu appeared");
       return true;
     }
   }
@@ -154,21 +133,35 @@ async function waitForMenu(): Promise<boolean> {
   return false;
 }
 
+function hasMenuContent(): boolean {
+  // Fast broad check: scan all visible text for menu-specific strings
+  const bodyText = (document.body?.innerText || "").toLowerCase();
+  for (const mi of SELECTORS.menu.menuItems) {
+    if (bodyText.includes(mi)) return true;
+  }
+  return false;
+}
+
 // ── Dismiss bell popup ──
 
 async function dismissBellPopup(): Promise<boolean> {
-  const body = (document.body?.innerText || "").substring(0, 500).toLowerCase();
+  const body = (document.body?.innerText || "").substring(0, 800).toLowerCase();
   if (
     body.includes("abonner à ses notifications") ||
     body.includes("subscribe to notifications") ||
     body.includes("turn on notifications") ||
-    body.includes("activer les notifications")
+    body.includes("activer les notifications") ||
+    body.includes("notifications for") ||
+    body.includes("notifications de")
   ) {
-    for (const txt of ["Annuler", "Cancel", "Non merci", "No thanks", "Not now", "Pas maintenant"]) {
+    for (const txt of [
+      "Annuler", "Cancel", "Non merci", "No thanks",
+      "Not now", "Pas maintenant", "Close", "Fermer",
+    ]) {
       const buttons = document.querySelectorAll("button, [role='button']");
       for (const btn of buttons) {
         if ((btn.textContent || "").trim() === txt && (btn as HTMLElement).offsetHeight > 0) {
-          (btn as HTMLElement).click();
+          await humanClick(btn as HTMLElement);
           await sleep(500);
           return true;
         }
@@ -198,7 +191,6 @@ export async function clickRemoveFollower(forceBlock = false): Promise<"removed"
 }
 
 export async function clickConfirm(): Promise<boolean> {
-  // Wait a moment for confirmation dialog
   await sleep(800);
 
   for (const pat of SELECTORS.menu.confirmPatterns) {
@@ -206,7 +198,7 @@ export async function clickConfirm(): Promise<boolean> {
     for (const btn of buttons) {
       const text = (btn.textContent || "").trim();
       if (pat.test(text) && (btn as HTMLElement).offsetHeight > 0) {
-        (btn as HTMLElement).click();
+        await humanClick(btn as HTMLElement);
         console.log("[WFC] Clicked confirm button:", text);
         return true;
       }
@@ -221,9 +213,8 @@ export async function clickConfirm(): Promise<boolean> {
     const style = window.getComputedStyle(el);
     const color = style.color || "";
     const bg = style.backgroundColor || "";
-    // Red-ish buttons are usually destructive confirmation
     if ((color.includes("rgb(255") || bg.includes("rgb(255")) && el.textContent && el.textContent.trim().length < 30) {
-      el.click();
+      await humanClick(el);
       console.log("[WFC] Clicked red button as confirm:", el.textContent?.trim());
       return true;
     }
@@ -238,8 +229,6 @@ export async function clickConfirm(): Promise<boolean> {
 export async function performRemoveFollower(
   username: string
 ): Promise<{ success: boolean; action: string; error?: string; blocked?: boolean }> {
-  const startTime = Date.now();
-
   try {
     // Step 1: Open menu
     const menuOpened = await clickThreeDots();
@@ -257,7 +246,6 @@ export async function performRemoveFollower(
     const action = await clickRemoveFollower();
     if (!action) {
       consecutiveFailures++;
-      // Dismiss menu
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await sleep(300);
       return {
@@ -273,7 +261,6 @@ export async function performRemoveFollower(
     const confirmed = await clickConfirm();
     if (!confirmed) {
       consecutiveFailures++;
-      // Check if we got a "try again later" or rate limit message
       const bodyText = (document.body?.innerText || "").toLowerCase();
       const isBlocked =
         bodyText.includes("try again later") ||
@@ -291,7 +278,7 @@ export async function performRemoveFollower(
       };
     }
 
-    // Step 4: Verify the action succeeded
+    // Step 4: Verify
     await sleep(1500);
     const verifyResult = await verifyRemoval(username);
 
@@ -325,12 +312,77 @@ export async function performRemoveFollower(
   }
 }
 
-// ── Verify removal succeeded (check for blocking messages) ──
+// ── Detect Threads generic error page ──
 
-async function verifyRemoval(username: string): Promise<{ blocked: boolean; reason: string }> {
+const TRANSIENT_ERROR_PATTERNS = [
+  /une erreur s.est produite/i,
+  /an error occur/i,
+  /something went wrong/i,
+  /un problème est survenu/i,
+  /oops.+wrong/i,
+];
+
+const RETRY_BUTTON_TEXTS = [
+  "Réessayer", "Retry", "Try again", "Essayer à nouveau",
+  "Actualiser", "Refresh", "Recharger", "Reload",
+];
+
+export function isTransientErrorPage(): boolean {
+  const bodyText = (document.body?.innerText || "").toLowerCase();
+  return TRANSIENT_ERROR_PATTERNS.some((p) => p.test(bodyText));
+}
+
+export async function recoverFromErrorPage(): Promise<boolean> {
+  if (!isTransientErrorPage()) return false;
+
+  console.log("[WFC] Detected Threads error page — recovering with backoff");
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const backoff = [3000, 8000, 15000][attempt];
+    await sleep(backoff);
+
+    const buttons = document.querySelectorAll("button, [role='button'], a");
+    let clicked = false;
+    for (const btn of buttons) {
+      const text = (btn.textContent || "").trim();
+      if (RETRY_BUTTON_TEXTS.some((rt) => text.toLowerCase() === rt.toLowerCase()) &&
+          (btn as HTMLElement).offsetHeight > 0) {
+        await humanClick(btn as HTMLElement);
+        console.log("[WFC] Clicked retry button (attempt " + (attempt + 1) + "):", text);
+        clicked = true;
+        break;
+      }
+    }
+
+    if (!clicked) {
+      window.location.reload();
+      console.log("[WFC] No retry button, reloading page (attempt " + (attempt + 1) + ")");
+    }
+
+    await sleep(4000);
+
+    if (!isTransientErrorPage()) {
+      console.log("[WFC] Page recovered after attempt " + (attempt + 1));
+      return true;
+    }
+  }
+
+  console.log("[WFC] Error page persists after 3 recovery attempts");
+  return true;
+}
+
+// ── Verify removal ──
+
+async function verifyRemoval(_username: string): Promise<{ blocked: boolean; reason: string }> {
   const bodyText = (document.body?.innerText || "").toLowerCase();
 
-  // Check for Threads blocking messages
+  // Transient error page = action likely succeeded
+  if (isTransientErrorPage()) {
+    console.log("[WFC] Transient error page after removal — action likely succeeded");
+    await recoverFromErrorPage();
+    return { blocked: false, reason: "" };
+  }
+
   const blockPatterns = [
     /try again later/i,
     /réessayez plus tard/i,
@@ -341,8 +393,6 @@ async function verifyRemoval(username: string): Promise<{ blocked: boolean; reas
     /too many.?(request|action)/i,
     /slow down/i,
     /rate.?limit/i,
-    /something went wrong/i,
-    /un problème est survenu/i,
   ];
 
   for (const pat of blockPatterns) {
@@ -351,18 +401,16 @@ async function verifyRemoval(username: string): Promise<{ blocked: boolean; reas
     }
   }
 
-  // Check for error toast/snackbar
   const toasts = document.querySelectorAll(
-    '[role="alert"], [role="status"], [class*="toast"], [class*="snack"], [class*="error"]'
+    '[role="alert"], [role="status"], [class*="toast"], [class*="snack"]'
   );
   for (const toast of toasts) {
     const text = (toast.textContent || "").toLowerCase();
     if (
-      text.includes("error") ||
-      text.includes("erreur") ||
-      text.includes("problem") ||
-      text.includes("try again") ||
-      text.includes("blocked")
+      text.includes("blocked") ||
+      text.includes("bloqué") ||
+      text.includes("try again later") ||
+      text.includes("réessayez plus tard")
     ) {
       return { blocked: true, reason: `toast: ${text.substring(0, 80)}` };
     }
@@ -374,31 +422,29 @@ async function verifyRemoval(username: string): Promise<{ blocked: boolean; reas
 // ── Pattern matching click helper ──
 
 async function tryClickPatterns(patterns: RegExp[]): Promise<boolean> {
-  // By role
+  // Phase 1: precise selectors
   for (const selector of ['[role="menuitem"]', 'button', '[role="button"]', "a"]) {
     const elements = document.querySelectorAll(selector);
     for (const el of elements) {
       const text = (el.textContent || "").trim();
-      if (
-        patterns.some((p) => p.test(text)) &&
-        (el as HTMLElement).offsetHeight > 0
-      ) {
+      if (patterns.some((p) => p.test(text)) && (el as HTMLElement).offsetHeight > 0) {
         console.log("[WFC] Clicking:", text, "via selector:", selector);
-        (el as HTMLElement).click();
+        await humanClick(el as HTMLElement);
         return true;
       }
     }
   }
 
-  // Broader search with tabindex
-  const candidates = document.querySelectorAll(
-    '[role="menuitem"], [role="button"], button, a, div[tabindex]'
-  );
-  for (const el of candidates) {
-    const t = (el.textContent || "").trim();
-    if (patterns.some((p) => p.test(t)) && (el as HTMLElement).offsetHeight > 0) {
-      console.log("[WFC] Clicking (broad):", t);
-      (el as HTMLElement).click();
+  // Phase 2: broader — all visible elements (catches menus without ARIA roles)
+  const all = document.querySelectorAll("div, span, a, button, [role], div[tabindex]");
+  for (const el of all) {
+    const h = el as HTMLElement;
+    if (h.offsetHeight <= 0 || h.offsetHeight > 80) continue;
+    const text = (h.textContent || "").trim();
+    if (text.length < 3 || text.length > 60) continue;
+    if (patterns.some((p) => p.test(text))) {
+      console.log("[WFC] Clicking (broad):", text);
+      await humanClick(h);
       return true;
     }
   }

@@ -84,7 +84,9 @@ export function preScoreFromMetadata(
   fullName: string | null,
   hasProfilePic: boolean,
   hasBio?: boolean,   // from API biography field (reliable when provided)
-  isVerified?: boolean
+  isVerified?: boolean,
+  followingCount?: number | null,
+  seenByCount?: number
 ): { score: number | null; details: string[] } {
   let score = 0;
   const details: string[] = [];
@@ -141,8 +143,45 @@ export function preScoreFromMetadata(
     details.push("pre:private(<50,!bio) +40");
   }
 
+  // Following/Follower ratio (metadata-level)
+  if (followingCount !== null && followingCount !== undefined) {
+    if (followerCount !== null && followerCount > 0 && followerCount < 10 && followingCount >= 100) {
+      score += 25;
+      details.push(`pre:ratio(<10abn,${followingCount}suivi) +25`);
+    } else if (followerCount === 0 && followingCount >= 50) {
+      score += 25;
+      details.push(`pre:ghost(0abn,${followingCount}suivi) +25`);
+    } else if (followerCount !== null && followerCount > 0) {
+      const ratio = followingCount / followerCount;
+      if (ratio >= 20) {
+        score += 15;
+        details.push(`pre:ratio(${Math.round(ratio)}x) +15`);
+      }
+    }
+  }
+
+  // Cross-user sightings: other WFC2 users manually flagged this account
+  if (seenByCount !== undefined && seenByCount >= 2) {
+    if (seenByCount >= 5) {
+      score += 25;
+      details.push(`pre:cross_users(${seenByCount}) +25`);
+    } else if (seenByCount >= 3) {
+      score += 20;
+      details.push(`pre:cross_users(${seenByCount}) +20`);
+    } else {
+      score += 15;
+      details.push(`pre:cross_users(${seenByCount}) +15`);
+    }
+  }
+
   // Decision: only pre-score obvious fakes. Low scores stay pending for full scan.
   score = Math.max(0, Math.min(100, score));
+
+  // RULE: private + bio → never pre-score as fake, always needs full scan
+  if (isPrivate && hasBio === true && score >= 75) {
+    return { score: null, details }; // Force full scan instead of auto-flagging
+  }
+
   if (score >= 75) return { score, details }; // Obvious fake → mark immediately
 
   return { score: null, details }; // Everything else needs full scan
@@ -153,7 +192,9 @@ export function preScoreFromMetadata(
 export function scoreProfile(
   data: ProfileData,
   threshold = 0,
-  strictPrivate = false
+  strictPrivate = false,
+  followingCount?: number | null,
+  seenByCount?: number
 ): ScoredFollower {
   if (data.notFound) {
     return { score: -1, breakdown: ["Not found"], isFake: false, toReview: false };
@@ -202,7 +243,43 @@ export function scoreProfile(
     details.push("abn? +5");
   }
 
-  // ── Step 2: Posts ──
+  // ── Step 2b: Following/Follower ratio ──
+  if (followingCount !== null && followingCount !== undefined) {
+    if (fc !== null && fc > 0) {
+      const ratio = followingCount / fc;
+      if (fc < 10 && followingCount >= 100) {
+        // < 10 followers + follows 100+ → très suspect (mass-follow bot)
+        score += 30;
+        details.push(`ratio(<10abn,${followingCount}suivi) +30`);
+      } else if (followingCount >= 2000 && fc < 100) {
+        score += 30;
+        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +30`);
+      } else if (followingCount >= 500 && fc < 50) {
+        score += 20;
+        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +20`);
+      } else if (fc < 10 && followingCount >= 50) {
+        // < 10 followers + follows 50+ → suspect
+        score += 20;
+        details.push(`ratio(<10abn,${followingCount}suivi) +20`);
+      } else if (ratio >= 20) {
+        score += 15;
+        details.push(`ratio(${Math.round(ratio)}x) +15`);
+      } else if (ratio >= 10) {
+        score += 10;
+        details.push(`ratio(${Math.round(ratio)}x) +10`);
+      } else if (ratio <= 0.5 && fc >= 200) {
+        // Followed by many, follows few → creator pattern → legit
+        score -= 10;
+        details.push(`ratio(${Math.round(ratio * 10) / 10}x,${fc}abn) -10`);
+      }
+    } else if (fc === 0 && followingCount >= 50) {
+      // 0 followers but follows 50+ → mass-follow bot
+      score += 25;
+      details.push(`ghost_follow(0abn,${followingCount}suivi) +25`);
+    }
+  }
+
+  // ── Step 3: Posts ──
   let hasPosts = false;
   let isSpambot = false;
   const postCountUnknown = data.postCount < 0; // -1 means unknown (metadata-only scan)
@@ -363,23 +440,50 @@ export function scoreProfile(
   }
   // Having a name: no bonus/penalty (was -5 before)
 
-  // ── Step 8: Legitimacy signals (links) ──
+  // ── Step 8: Legitimacy signals (links + media) ──
   if (data.hasLinkInBio) {
     score -= 15;
     details.push("link_bio -15");
   }
   if (data.hasIgLink) {
-    // Only deduct if there's also a bio (real IG link)
-    // An instagram link inside a post should NOT count as legitimacy
     if (data.hasBio || data.hasLinkInBio) {
       score -= 10;
       details.push("ig_link(bio) -10");
     }
-    // else: IG link is from a repost, don't reward it
+  }
+  if (data.hasMedia) {
+    score -= 15;
+    details.push("has_media -15");
   }
 
-  const finalScore = Math.max(0, Math.min(100, score));
+  // ── Step 9: Cross-user sightings ──
+  if (seenByCount !== undefined && seenByCount >= 2) {
+    if (seenByCount >= 5) {
+      score += 25;
+      details.push(`cross_users(${seenByCount}) +25`);
+    } else if (seenByCount >= 3) {
+      score += 20;
+      details.push(`cross_users(${seenByCount}) +20`);
+    } else {
+      score += 15;
+      details.push(`cross_users(${seenByCount}) +15`);
+    }
+  }
+
+  let finalScore = Math.max(0, Math.min(100, score));
   const effectiveThreshold = threshold || 70;
+
+  // RULE: private + bio → toujours "à vérifier", jamais fake direct
+  if (data.isPrivate && data.hasBio && finalScore >= effectiveThreshold) {
+    finalScore = effectiveThreshold - 1;
+    details.push("private+bio → review (cap)");
+  }
+
+  // SETTING: compte privé = toujours à vérifier (jamais fake auto)
+  if (strictPrivate && data.isPrivate && finalScore >= effectiveThreshold) {
+    finalScore = effectiveThreshold - 1;
+    details.push("private → review (setting)");
+  }
 
   return {
     score: finalScore,

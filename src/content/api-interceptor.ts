@@ -75,6 +75,7 @@ function isDefaultPic(url: string): boolean {
 function extractFollowerMeta(u: Record<string, unknown>): ContentFollowerMeta {
   return {
     followerCount: (u.follower_count as number) ?? null,
+    followingCount: (u.following_count as number) ?? null,
     isVerified: !!u.is_verified,
     fullName: ((u.full_name as string) || "").trim(),
     isPrivate: !!u.is_private,
@@ -88,11 +89,44 @@ function extractFollowerMeta(u: Record<string, unknown>): ContentFollowerMeta {
 // ── API calls (routed through MAIN world) ──
 
 function apiHeaders(): Record<string, string> {
+  // The MAIN-world bridge enriches with X-CSRFToken, X-FB-LSD, X-ASBD-ID,
+  // X-IG-WWW-Claim and Accept-Language (which need page context).
   return {
     "X-IG-App-ID": THREADS_API.appId,
-    "Accept": "application/json",
-    "X-Requested-With": "XMLHttpRequest",
+    "Accept": "*/*",
   };
+}
+
+// ── Exponential backoff for transient API errors ──
+// Threads serves 429 sporadically; instead of retrying immediately (which gets
+// us flagged as a bot), we wait with exponentially-growing jitter.
+async function fetchWithBackoff(
+  url: string,
+  headers: Record<string, string>,
+  maxAttempts = 4,
+): Promise<{ status: number; body: unknown; gaveUp: boolean }> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { status, body } = await mainWorldFetch(url, headers);
+
+    if (status !== 429) {
+      return { status, body, gaveUp: false };
+    }
+
+    // Honour Retry-After if the body carries it; otherwise exponential backoff
+    let waitMs = 30_000 * Math.pow(2, attempt) + Math.random() * 5_000;
+    if (body && typeof body === "object") {
+      const retryAfter = (body as Record<string, unknown>).retry_after_seconds;
+      if (typeof retryAfter === "number" && retryAfter > 0 && retryAfter < 1800) {
+        waitMs = retryAfter * 1000 + Math.random() * 5_000;
+      }
+    }
+    waitMs = Math.min(waitMs, 30 * 60 * 1000); // cap at 30 min
+
+    console.log(`[WFC] 429 received (attempt ${attempt + 1}/${maxAttempts}), waiting ${Math.round(waitMs / 1000)}s before retry`);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
+  return { status: 429, body: null, gaveUp: true };
 }
 
 export async function resolveUserId(username: string): Promise<string | null> {
@@ -180,8 +214,8 @@ export async function fetchFollowersPage(
 
   try {
     console.log("[WFC] fetchFollowersPage:", url);
-    const { status, body } = await mainWorldFetch(url, headers);
-    console.log("[WFC] fetchFollowersPage: status", status);
+    const { status, body, gaveUp } = await fetchWithBackoff(url, headers);
+    console.log("[WFC] fetchFollowersPage: status", status, gaveUp ? "(backoff exhausted)" : "");
 
     if (status === 429) return null;
     if (status !== 200) return null;
@@ -209,36 +243,3 @@ export async function fetchFollowersPage(
   }
 }
 
-export async function fetchProfileApi(
-  username: string
-): Promise<Record<string, unknown> | null> {
-  const headers = apiHeaders();
-  try {
-    const url = `${THREADS_API.profileEndpoint}?username=${username}`;
-    const { status, body } = await mainWorldFetch(url, headers);
-
-    if (status === 429) return { error: "429_RATE_LIMIT" };
-    if (status !== 200) return null;
-
-    const j = body as Record<string, unknown>;
-    const u = (j?.data as Record<string, unknown>)?.user || j?.user;
-    if (!u) return null;
-
-    const user = u as Record<string, unknown>;
-    return {
-      username: user.username || username,
-      fullName: user.full_name || "",
-      biography: user.biography || "",
-      bioLinks: ((user.bio_links as Array<{ url?: string }>) || []).map((l: { url?: string }) => l.url || ""),
-      externalUrl: user.external_url || "",
-      followerCount: user.follower_count ?? null,
-      followingCount: user.following_count ?? null,
-      isPrivate: !!user.is_private,
-      isVerified: !!user.is_verified,
-      profilePicUrl: user.profile_pic_url || "",
-      mediaCount: user.media_count ?? null,
-    };
-  } catch {
-    return null;
-  }
-}

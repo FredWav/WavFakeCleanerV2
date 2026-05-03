@@ -1,24 +1,22 @@
 import { useState, useEffect } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import { SAFETY_PROFILES } from "@shared/constants";
-import type { Settings, SafetyProfile } from "@shared/types";
-
-const PROFILE_ORDER: SafetyProfile[] = ["gratuit", "prudent", "normal", "agressif"];
+import type { Settings } from "@shared/types";
 
 export default function SettingsPanel({
   lang,
-  hasLicence,
   onClose,
+  showToast,
 }: {
   lang: string;
-  hasLicence: boolean;
   onClose: () => void;
+  showToast?: (msg: string) => void;
 }) {
   const [form, setForm] = useState<Settings>({
     threadsUsername: "",
     scoreThreshold: 70,
-    safetyProfile: "gratuit",
+    privateAlwaysReview: false,
+    telemetry: false,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -29,17 +27,13 @@ export default function SettingsPanel({
   }, []);
 
   async function save() {
-    // Enforce gratuit for free users
-    const toSave = { ...form };
-    if (!hasLicence && toSave.safetyProfile !== "gratuit") {
-      toSave.safetyProfile = "gratuit";
-    }
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await api.updateSettings(toSave);
+      await api.updateSettings(form);
       setSaved(true);
+      showToast?.(t("toast_settings_saved", lang));
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setError(String(e));
@@ -47,18 +41,6 @@ export default function SettingsPanel({
       setSaving(false);
     }
   }
-
-  function selectProfile(profile: SafetyProfile) {
-    if (profile !== "gratuit" && !hasLicence) return;
-    setForm({ ...form, safetyProfile: profile });
-  }
-
-  const profileLabels: Record<SafetyProfile, string> = {
-    gratuit: t("free", lang),
-    prudent: t("prudent", lang),
-    normal: t("normal", lang),
-    agressif: t("aggressive", lang),
-  };
 
   return (
     <div
@@ -72,7 +54,7 @@ export default function SettingsPanel({
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">{t("settings", lang)}</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">
-            x
+            ×
           </button>
         </div>
 
@@ -101,45 +83,28 @@ export default function SettingsPanel({
                 text-xs text-white w-20 focus:border-purple-500 outline-none"
             />
           </div>
-          {/* Safety Profile */}
-          <div className="py-3 space-y-2">
-            <label className="text-gray-400 text-xs">{t("safety", lang)}</label>
-            <div className="grid grid-cols-2 gap-1.5">
-              {PROFILE_ORDER.map((profile) => {
-                const config = SAFETY_PROFILES[profile];
-                const isSelected = form.safetyProfile === profile;
-                const isLocked = profile !== "gratuit" && !hasLicence;
-
-                return (
-                  <button
-                    key={profile}
-                    onClick={() => selectProfile(profile)}
-                    disabled={isLocked}
-                    className={`relative p-2 rounded-lg border text-left transition-all
-                      ${isSelected
-                        ? "border-purple-500 bg-purple-600/10"
-                        : isLocked
-                          ? "border-gray-800 bg-gray-800/30 opacity-50 cursor-not-allowed"
-                          : "border-gray-700 bg-gray-800/50 hover:border-gray-600"
-                      }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[11px] font-medium ${isSelected ? "text-purple-300" : isLocked ? "text-gray-600" : "text-gray-300"}`}>
-                        {profileLabels[profile]}
-                      </span>
-                      {isLocked && (
-                        <span className="text-[8px] text-gray-600 bg-gray-700/50 px-1 py-0.5 rounded">
-                          {t("pro_only", lang)}
-                        </span>
-                      )}
-                    </div>
-                    <div className={`text-[9px] mt-0.5 ${isLocked ? "text-gray-700" : "text-gray-500"}`}>
-                      {config.limitDay}/{lang === "fr" ? "j" : "d"} · {config.limitHour}/h
-                    </div>
-                  </button>
-                );
-              })}
+          {/* Private = review */}
+          <div className="flex items-center justify-between gap-3 py-2">
+            <label className="text-gray-400">{t("setting_private_review", lang)}</label>
+            <button
+              onClick={() => setForm({ ...form, privateAlwaysReview: !form.privateAlwaysReview })}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${form.privateAlwaysReview ? "bg-purple-600" : "bg-gray-700"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.privateAlwaysReview ? "translate-x-4" : "translate-x-0"}`} />
+            </button>
+          </div>
+          {/* Telemetry opt-in */}
+          <div className="flex items-start justify-between gap-3 py-2">
+            <div className="flex-1">
+              <label className="text-gray-400 block">{t("setting_telemetry", lang)}</label>
+              <p className="text-[10px] text-gray-600 mt-0.5">{t("setting_telemetry_hint", lang)}</p>
             </div>
+            <button
+              onClick={() => setForm({ ...form, telemetry: !form.telemetry })}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 mt-0.5 ${form.telemetry ? "bg-purple-600" : "bg-gray-700"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.telemetry ? "translate-x-4" : "translate-x-0"}`} />
+            </button>
           </div>
         </div>
 

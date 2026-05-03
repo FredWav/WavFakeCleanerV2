@@ -14,9 +14,14 @@ export async function startKeepAlive(): Promise<void> {
       justification: "Keep service worker alive during scan/clean operations",
     });
     active = true;
-  } catch {
-    // Document may already exist
-    active = true;
+  } catch (e) {
+    // "Only a single offscreen document may be created" = déjà existant = OK
+    if (String(e).includes("single offscreen") || String(e).includes("already")) {
+      active = true;
+    } else {
+      // Vrai échec — ne pas mettre active=true, on réessaiera au prochain appel
+      console.error("[WFC] Keepalive creation failed:", e);
+    }
   }
 }
 

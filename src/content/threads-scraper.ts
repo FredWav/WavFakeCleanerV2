@@ -7,6 +7,7 @@
 
 import { SELECTORS, is429 } from "@shared/selectors";
 import type { ContentProfileData } from "@shared/messages";
+import { humanClick } from "./humanize";
 
 // ── Profile data extraction (ported from _JS_EXTRACT_PROFILE) ──
 
@@ -28,6 +29,7 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
     allPostsRecent: false,
     duplicateRatio: 0,
     hasSpamKeywords: false,
+    hasMedia: false,
     error: null,
   };
 
@@ -259,7 +261,7 @@ export function countPosts(): {
 
 // ── Tab navigation ──
 
-export function navigateToTab(tabName: string): boolean {
+export async function navigateToTab(tabName: string): Promise<boolean> {
   // Find clickable tab elements
   const allTabs = document.querySelectorAll(
     'div[role="tablist"] div[role="tab"], div[role="tablist"] a, a[role="tab"]'
@@ -267,7 +269,7 @@ export function navigateToTab(tabName: string): boolean {
   for (const tab of allTabs) {
     const text = (tab.textContent || "").trim().toLowerCase();
     if (text === tabName.toLowerCase()) {
-      (tab as HTMLElement).click();
+      await humanClick(tab as HTMLElement);
       return true;
     }
   }
@@ -285,12 +287,45 @@ export function navigateToTab(tabName: string): boolean {
       rect.height > 10 &&
       rect.height < 60
     ) {
-      (el as HTMLElement).click();
+      await humanClick(el as HTMLElement);
       return true;
     }
   }
 
   return false;
+}
+
+// ── Media checking (runs on the Media tab) ──
+
+export function checkMedia(): { hasMedia: boolean; final: boolean } {
+  const body = document.body?.innerText || "";
+
+  // Check for explicit "no media" messages
+  for (const pat of SELECTORS.profile.noMediaPatterns) {
+    if (pat.test(body)) return { hasMedia: false, final: true };
+  }
+
+  // Look for media items (images/videos in the content area)
+  const articles = document.querySelectorAll("article, [data-pressable-container]");
+  let mediaArticles = 0;
+  for (const a of articles) {
+    const rect = a.getBoundingClientRect();
+    if (rect.top > 300 && rect.height > 30) {
+      mediaArticles++;
+    }
+  }
+  if (mediaArticles > 0) return { hasMedia: true, final: true };
+
+  // Check for image/video elements in content area
+  const mediaEls = document.querySelectorAll("img, video");
+  for (const el of mediaEls) {
+    const rect = el.getBoundingClientRect();
+    if (rect.top > 300 && rect.width > 50 && rect.height > 50) {
+      return { hasMedia: true, final: true };
+    }
+  }
+
+  return { hasMedia: false, final: false };
 }
 
 // ── Reply checking (runs on the Replies tab) ──
@@ -331,27 +366,100 @@ export function checkReplies(_username: string): { hasReplies: boolean; final: b
 
 // ── Scroll-based follower fetching ──
 
-export function markScrollContainer(): { ok: boolean; links: number } {
-  let links = Array.from(
-    document.querySelectorAll(SELECTORS.scroll.dialogLinks)
-  );
-  if (!links.length) {
-    links = Array.from(document.querySelectorAll(SELECTORS.scroll.profileLinks)).filter(
-      (a) => /^\/@[\w.]+$/.test(a.getAttribute("href") || "")
-    );
-  }
-  if (!links.length) return { ok: false, links: 0 };
+export type MarkScrollReason =
+  | "no_links"
+  | "no_scrollable_parent"
+  | "container_too_small";
 
-  let el: HTMLElement | null = links[links.length - 1].parentElement;
-  while (el && el !== document.body) {
-    const oy = window.getComputedStyle(el).overflowY;
-    if ((oy === "scroll" || oy === "auto") && el.scrollHeight > el.clientHeight + 10) {
-      el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
-      return { ok: true, links: links.length };
-    }
-    el = el.parentElement;
+export function markScrollContainer(): {
+  ok: boolean;
+  links: number;
+  reason?: MarkScrollReason;
+  source?: "dialog" | "modal" | "testid" | "page" | "global";
+} {
+  // 1) Try DOM variants for modal/page containers, in order of specificity
+  const onFollowersPage = SELECTORS.scroll.followersUrlPattern.test(location.pathname);
+
+  type Candidate = { source: NonNullable<ReturnType<typeof markScrollContainer>["source"]>; nodes: Element[] };
+  const candidates: Candidate[] = [];
+
+  const dialog = Array.from(document.querySelectorAll(SELECTORS.scroll.dialogLinks));
+  if (dialog.length) candidates.push({ source: "dialog", nodes: dialog });
+
+  const modal = Array.from(document.querySelectorAll(SELECTORS.scroll.modalLinks));
+  if (modal.length) candidates.push({ source: "modal", nodes: modal });
+
+  const testId = Array.from(document.querySelectorAll(SELECTORS.scroll.testIdLinks));
+  if (testId.length) candidates.push({ source: "testid", nodes: testId });
+
+  // Fallback: all profile-shaped links on the page (regex-filtered)
+  const globalLinks = Array.from(
+    document.querySelectorAll(SELECTORS.scroll.profileLinks)
+  ).filter((a) => /^\/@[\w.]+$/.test(a.getAttribute("href") || ""));
+  if (globalLinks.length) {
+    candidates.push({ source: onFollowersPage ? "page" : "global", nodes: globalLinks });
   }
-  return { ok: false, links: links.length };
+
+  if (!candidates.length) {
+    console.log("[WFC] markScrollContainer: no_links (none of dialog/modal/testid/global matched)");
+    return { ok: false, links: 0, reason: "no_links" };
+  }
+
+  // On the dedicated /followers page the document itself is the scroller
+  if (onFollowersPage) {
+    const root = (document.scrollingElement || document.documentElement) as HTMLElement;
+    if (root) {
+      root.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
+      const totalLinks = candidates.reduce((acc, c) => acc + c.nodes.length, 0);
+      console.log(`[WFC] markScrollContainer: ok via dedicated followers page (${totalLinks} links)`);
+      return { ok: true, links: totalLinks, source: "page" };
+    }
+  }
+
+  // 2) For each candidate set, walk up the DOM looking for a scrollable parent
+  let lastLinkCount = 0;
+  let sawTooSmall = false;
+  for (const cand of candidates) {
+    lastLinkCount = cand.nodes.length;
+    const anchor = cand.nodes[cand.nodes.length - 1] as HTMLElement;
+    let el: HTMLElement | null = anchor.parentElement;
+    let depth = 0;
+
+    while (el && el !== document.body && depth < 25) {
+      const cs = window.getComputedStyle(el);
+      const oy = cs.overflowY;
+      const hasOverflowSetting = oy === "scroll" || oy === "auto";
+      const overflowsContent = el.scrollHeight > el.clientHeight + 10;
+
+      if (hasOverflowSetting && overflowsContent) {
+        el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
+        console.log(`[WFC] markScrollContainer: ok via ${cand.source} (${cand.nodes.length} links, depth=${depth})`);
+        return { ok: true, links: cand.nodes.length, source: cand.source };
+      }
+
+      // Relaxed: accept overflow:hidden when the element is large and content
+      // already overflows — common with React virtualized lists where the
+      // outer wrapper has overflow:hidden and an inner spacer drives scroll.
+      if (oy === "hidden" && overflowsContent && el.clientHeight > 200) {
+        el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
+        console.log(`[WFC] markScrollContainer: ok via ${cand.source} relaxed (overflow:hidden, depth=${depth})`);
+        return { ok: true, links: cand.nodes.length, source: cand.source };
+      }
+
+      if (hasOverflowSetting && !overflowsContent && el.clientHeight > 200) {
+        // Overflow is set up but content not (yet) tall enough. Track this so
+        // we report a more specific reason if nothing else works.
+        sawTooSmall = true;
+      }
+
+      el = el.parentElement;
+      depth++;
+    }
+  }
+
+  const reason: MarkScrollReason = sawTooSmall ? "container_too_small" : "no_scrollable_parent";
+  console.log(`[WFC] markScrollContainer: failed (${reason}, links=${lastLinkCount})`);
+  return { ok: false, links: lastLinkCount, reason };
 }
 
 let autoScrollId: ReturnType<typeof setInterval> | null = null;
@@ -373,22 +481,55 @@ export function stopScroll(): void {
 }
 
 export function extractFollowerLinks(): string[] {
-  let links = document.querySelectorAll(SELECTORS.scroll.dialogLinks);
-  if (!links.length) {
-    const scroller = document.querySelector(
-      `[${SELECTORS.scroll.scrollableAttr}="true"]`
-    );
-    if (scroller) links = scroller.querySelectorAll('a[href*="/@"]');
+  // Prefer the marked scroller's subtree (set by markScrollContainer).
+  // Falls back to dialog/modal/global selectors if no marker is present.
+  const scroller = document.querySelector(
+    `[${SELECTORS.scroll.scrollableAttr}="true"]`
+  );
+  let links: NodeListOf<Element> | Element[] | null = null;
+
+  if (scroller) {
+    links = scroller.querySelectorAll('a[href*="/@"]');
   }
-  if (!links.length) links = document.querySelectorAll('a[href*="/@"]');
+  if (!links || !links.length) {
+    links = document.querySelectorAll(SELECTORS.scroll.dialogLinks);
+  }
+  if (!links.length) {
+    links = document.querySelectorAll(SELECTORS.scroll.modalLinks);
+  }
+  if (!links.length) {
+    links = document.querySelectorAll('a[href*="/@"]');
+  }
   return Array.from(links, (a) => a.getAttribute("href") || "");
 }
 
-export function clickFollowersButton(): boolean {
+/**
+ * Wait for the followers list to be reachable: either a dialog/modal opens,
+ * or the URL switches to the dedicated /@user/followers page.
+ * Polls every 200 ms; resolves true on success, false on timeout.
+ */
+export async function waitForFollowersUI(timeoutMs = 8000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (SELECTORS.scroll.followersUrlPattern.test(location.pathname)) return true;
+    if (
+      document.querySelector(SELECTORS.scroll.dialogLinks) ||
+      document.querySelector(SELECTORS.scroll.modalLinks) ||
+      document.querySelector('div[role="dialog"]') ||
+      document.querySelector('[aria-modal="true"]')
+    ) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
+export async function clickFollowersButton(): Promise<boolean> {
   // Method 1: <a> with href containing "followers"
   const link = document.querySelector("a[href*='followers']") as HTMLElement | null;
   if (link && link.offsetHeight > 0) {
-    link.click();
+    await humanClick(link);
     return true;
   }
 
@@ -399,7 +540,7 @@ export function clickFollowersButton(): boolean {
     if (SELECTORS.profile.followersTextPattern.test(t)) {
       const r = el.getBoundingClientRect();
       if (r.height < 50) {
-        (el as HTMLElement).click();
+        await humanClick(el as HTMLElement);
         return true;
       }
     }

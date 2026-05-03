@@ -1,7 +1,122 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import type { FollowerRecord } from "@shared/types";
+import type { FollowerRecord, LicenseInfo } from "@shared/types";
+import { COMMUNITY_LOOKUP_URL } from "@shared/constants";
+import { IconGlobe, IconWarn, IconCheck, IconRefresh, IconChevronDown, IconChevronRight } from "./Icons";
+
+// ── Community lookup (inline — no storage deps, runs in side panel) ──
+
+interface CommunityScore {
+  voteCount: number;
+  fakeRatio: number;      // 0.0–1.0
+  consensusScore: number; // 0–100
+}
+
+async function sha256Hex(str: string): Promise<string> {
+  const data = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function fetchCommunityScores(usernames: string[]): Promise<Map<string, CommunityScore>> {
+  const result = new Map<string, CommunityScore>();
+  if (usernames.length === 0) return result;
+
+  const hashToUser = new Map<string, string>();
+  const hashes: string[] = [];
+  for (const u of usernames) {
+    const h = await sha256Hex(u.toLowerCase());
+    hashToUser.set(h, u);
+    hashes.push(h);
+  }
+
+  try {
+    const res = await fetch(COMMUNITY_LOOKUP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetHashes: hashes }),
+    });
+    if (!res.ok) return result;
+    const data = await res.json() as Record<string, CommunityScore>;
+    for (const [h, score] of Object.entries(data)) {
+      const u = hashToUser.get(h);
+      if (u) result.set(u, score);
+    }
+  } catch { /* community features non-critical */ }
+  return result;
+}
+
+function parseBreakdown(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+// ── Breakdown technique → labels lisibles ──
+
+interface ReadableItem {
+  label: string;
+  suspect: boolean; // true = orange warning, false = green positive
+}
+
+function breakdownToReadable(items: string[], lang: string): ReadableItem[] {
+  const result: ReadableItem[] = [];
+  const rawSet = new Set(items.map((i) => i.trim()));
+
+  // Detect if !bio is in the breakdown — if so, link_bio/ig_link are false positives
+  const hasNoBio = [...rawSet].some((r) => /^!bio\b/.test(r));
+
+  for (const raw of items) {
+    const r = raw.trim();
+
+    // Suspect signals (score positif = +)
+    if (/^0post\b/.test(r)) { result.push({ label: t("bd_no_posts", lang), suspect: true }); continue; }
+    if (/^\d+post\b/.test(r) && r.includes("+")) { result.push({ label: t("bd_few_posts", lang), suspect: true }); continue; }
+    if (/^0rep\b/.test(r)) { result.push({ label: t("bd_no_replies", lang), suspect: true }); continue; }
+    if (/^!bio\b/.test(r)) { result.push({ label: t("bd_no_bio", lang), suspect: true }); continue; }
+    if (/^0abn\b/.test(r) || (/^\d+abn\b/.test(r) && r.includes("+"))) { result.push({ label: t("bd_few_followers", lang), suspect: true }); continue; }
+    if (/^combo\(/.test(r)) { result.push({ label: t("bd_no_activity", lang), suspect: true }); continue; }
+    if (/^spam/.test(r)) { result.push({ label: t("bd_spam", lang), suspect: true }); continue; }
+    if (/^ratio/.test(r)) { result.push({ label: t("bd_ratio", lang), suspect: true }); continue; }
+    if (/^ghost/.test(r)) { result.push({ label: t("bd_ghost", lang), suspect: true }); continue; }
+    if (/^inactive/.test(r)) { result.push({ label: t("bd_inactive", lang), suspect: true }); continue; }
+    if (/^!name\b/.test(r)) { result.push({ label: t("bd_no_name", lang), suspect: true }); continue; }
+    if (/^private/.test(r) && r.includes("+")) { result.push({ label: t("bd_private", lang), suspect: true }); continue; }
+    if (/^@pattern|@digit|@no_letters/.test(r)) { result.push({ label: t("bd_suspect_username", lang), suspect: true }); continue; }
+    if (/^rep_no_post/.test(r) || /^rep_spam/.test(r)) { result.push({ label: t("bd_no_posts", lang), suspect: true }); continue; }
+    if (/^spammer/.test(r)) { result.push({ label: t("bd_spam", lang), suspect: true }); continue; }
+
+    // Legitimacy signals (score négatif = -)
+    if (/^bio\b/.test(r) && r.includes("-")) { result.push({ label: t("bd_has_bio", lang), suspect: false }); continue; }
+    if (/^verified\b/.test(r)) { result.push({ label: t("bd_verified", lang), suspect: false }); continue; }
+    // link_bio: skip if profile has no bio (faux positif du scraper)
+    if (/^link_bio\b/.test(r)) { if (!hasNoBio) result.push({ label: t("bd_link_bio", lang), suspect: false }); continue; }
+    // ig_link: skip si pas de bio (incohérent — le scraper détecte le badge IG natif)
+    if (/^ig_link\b/.test(r)) { if (!hasNoBio) result.push({ label: t("bd_ig_link", lang), suspect: false }); continue; }
+    if (/^has_media\b/.test(r)) { result.push({ label: t("bd_has_media", lang), suspect: false }); continue; }
+    if (/^\d+post\b/.test(r) && r.includes("-")) { result.push({ label: t("bd_has_posts", lang), suspect: false }); continue; }
+    if (/^rep\+posts\b/.test(r)) { result.push({ label: t("bd_has_replies", lang), suspect: false }); continue; }
+    if (/^\d+abn\b/.test(r) && r.includes("-")) { result.push({ label: t("bd_many_followers", lang), suspect: false }); continue; }
+    if (/^private\(legit/.test(r) || /^private\(semi/.test(r)) { result.push({ label: t("bd_private", lang), suspect: false }); continue; }
+
+    // Fallback: skip unknown/neutral items (post? unknown, rep? unknown, etc.)
+  }
+
+  // Deduplicate by label
+  const seen = new Set<string>();
+  return result.filter((item) => {
+    if (seen.has(item.label)) return false;
+    seen.add(item.label);
+    return true;
+  });
+}
 
 const filters = [
   { key: "filter_all", param: "" },
@@ -11,6 +126,25 @@ const filters = [
   { key: "filter_fake", param: "fake" },
   { key: "filter_removed", param: "removed" },
 ];
+
+// ── Réutilise un seul onglet pour naviguer vers les profils ──
+let profileTabId: number | null = null;
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === profileTabId) profileTabId = null;
+});
+
+async function openProfileTab(url: string): Promise<void> {
+  if (profileTabId !== null) {
+    try {
+      await chrome.tabs.update(profileTabId, { url, active: true });
+      return;
+    } catch {
+      profileTabId = null;
+    }
+  }
+  const tab = await chrome.tabs.create({ url, active: true });
+  profileTabId = tab.id ?? null;
+}
 
 function scoreBadge(score: number | null) {
   if (score === null || score === undefined) return null;
@@ -33,31 +167,49 @@ type FollowerWithUrl = FollowerRecord & { profile_url: string };
 
 export default function FollowerTable({
   lang,
+  licence,
+  onShowLicence,
+  showToast,
   refreshTrigger,
 }: {
   lang: string;
+  licence?: LicenseInfo;
+  onShowLicence?: () => void;
+  showToast?: (msg: string) => void;
   refreshTrigger?: number;
 }) {
   const [followers, setFollowers] = useState<FollowerWithUrl[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [communityScores, setCommunityScores] = useState<Map<string, CommunityScore>>(new Map());
+  const [myVotes, setMyVotes] = useState<Map<string, "fake" | "ok">>(new Map());
+  const [voteLoading, setVoteLoading] = useState<string | null>(null);
+  const [licencePrompt, setLicencePrompt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.getFollowers(filter || undefined, 200);
+      const data = await api.getFollowers(filter || undefined, 200, search || undefined);
       setFollowers(data);
+      const scanned = data.filter((f) => f.scanned && !f.removed).map((f) => f.username);
+      if (scanned.length > 0) {
+        fetchCommunityScores(scanned.slice(0, 200))
+          .then((scores) => setCommunityScores(scores))
+          .catch(() => {});
+      }
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, search]);
 
   useEffect(() => {
-    load();
+    const timer = setTimeout(() => load(), search ? 300 : 0);
+    return () => clearTimeout(timer);
   }, [load, refreshTrigger]);
 
   async function handleApprove(e: React.MouseEvent, username: string) {
@@ -66,9 +218,7 @@ export default function FollowerTable({
     try {
       await api.approveFollower(username);
       await load();
-    } catch {
-      // silent
-    } finally {
+    } catch { /* silent */ } finally {
       setActionLoading(null);
     }
   }
@@ -79,16 +229,53 @@ export default function FollowerTable({
     try {
       await api.rejectFollower(username);
       await load();
-    } catch {
-      // silent
-    } finally {
+    } catch { /* silent */ } finally {
       setActionLoading(null);
+    }
+  }
+
+  async function handleVote(e: React.MouseEvent, username: string, verdict: "fake" | "ok", score: number) {
+    e.stopPropagation();
+
+    // Not licensed → upsell
+    if (!licence?.active) {
+      setLicencePrompt(username);
+      return;
+    }
+
+    setVoteLoading(username);
+    try {
+      // Action locale : Fake = rejeter, No Fake = approuver
+      if (verdict === "fake") {
+        await api.rejectFollower(username);
+        showToast?.(t("toast_remove_ok", lang));
+      } else {
+        await api.approveFollower(username);
+      }
+      showToast?.(t("toast_vote_ok", lang));
+      // Vote communautaire (fire-and-forget)
+      api.submitCommunityVote(username, verdict, score).catch(() => {});
+      setMyVotes((prev) => { const next = new Map(prev); next.set(username, verdict); return next; });
+      fetchCommunityScores([username])
+        .then((scores) => {
+          setCommunityScores((prev) => {
+            const next = new Map(prev);
+            const s = scores.get(username);
+            if (s) next.set(username, s);
+            return next;
+          });
+        })
+        .catch(() => {});
+      await load();
+    } catch { /* silent */ } finally {
+      setVoteLoading(null);
     }
   }
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800">
-      <div className="flex gap-1 p-1.5 border-b border-gray-800 flex-wrap">
+      {/* Filter bar */}
+      <div className="flex gap-1 p-1.5 border-b border-gray-800 flex-wrap items-center">
         {filters.map(({ key, param }) => (
           <button
             key={key}
@@ -99,11 +286,20 @@ export default function FollowerTable({
             {t(key, lang)}
           </button>
         ))}
-        <button onClick={load} className="ml-auto text-[10px] text-gray-500 hover:text-gray-300 px-1">
-          refresh
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("search_placeholder", lang)}
+          className="ml-auto px-2 py-0.5 rounded-lg text-[10px] bg-gray-800 border border-gray-700
+            text-gray-300 placeholder-gray-600 outline-none focus:border-purple-500 w-28"
+        />
+        <button onClick={load} className="text-gray-500 hover:text-gray-300 px-1">
+          <IconRefresh />
         </button>
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto max-h-72 overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-gray-900">
@@ -115,68 +311,185 @@ export default function FollowerTable({
           </thead>
           <tbody>
             {loading && followers.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="text-center py-6 text-gray-600">
-                  {t("loading", lang)}
-                </td>
-              </tr>
+              <tr><td colSpan={3} className="text-center py-6 text-gray-600">{t("loading", lang)}</td></tr>
             ) : followers.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="text-center py-6 text-gray-600">
-                  {t("no_data", lang)}
-                </td>
-              </tr>
+              <tr><td colSpan={3} className="text-center py-6 text-gray-600">{t("no_data", lang)}</td></tr>
             ) : (
-              followers.map((f) => (
-                <tr
-                  key={f.username}
-                  onClick={() => setExpanded(expanded === f.username ? null : f.username)}
-                  className="border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors"
-                >
-                  <td className="px-2 py-1.5 font-mono text-gray-300">
-                    <a
-                      href={f.profile_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-purple-400 hover:text-purple-300 hover:underline transition-colors"
-                    >
-                      @{f.username}
-                    </a>
-                    {f.isPrivate && (
-                      <span className="ml-1 text-[10px] text-gray-600" title="Private">
-                        P
-                      </span>
+              followers.map((f, index) => {
+                const isExpanded = expanded === f.username;
+                const breakdown = parseBreakdown(f.scoreBreakdown);
+                const readable = breakdownToReadable(breakdown, lang);
+                const cs = communityScores.get(f.username);
+                const isSpotted = cs && cs.voteCount >= 3 && cs.fakeRatio >= 0.60;
+                const isFakeFilter = filter === "fake";
+                const isBlurred = isFakeFilter && !licence?.active && index >= 5;
+
+                return (
+                  <React.Fragment key={f.username}>
+                    {/* Blur banner for non-licensed users */}
+                    {isFakeFilter && !licence?.active && index === 5 && (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-4 text-center bg-gray-900/90">
+                          <p className="text-xs text-gray-300 mb-2">
+                            {t("blur_banner", lang).replace("{0}", String(followers.length))}
+                          </p>
+                          <button
+                            onClick={() => onShowLicence?.()}
+                            className="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg
+                              hover:bg-purple-500 transition-colors"
+                          >
+                            {t("blur_cta", lang)}
+                          </button>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="text-center px-1 py-1.5">{scoreBadge(f.score)}</td>
-                  <td className="text-center px-1 py-1.5">
-                    <div className="flex items-center justify-center gap-1">
-                      {statusBadge(f, lang)}
-                      {f.toReview && !f.removed && !f.approved && (
-                        <span className="inline-flex gap-0.5 ml-1">
-                          <button
-                            onClick={(e) => handleApprove(e, f.username)}
-                            disabled={actionLoading === f.username}
-                            className="px-1 py-0.5 rounded bg-green-600/30 text-green-400 text-[10px]
-                              hover:bg-green-600/50 transition-colors disabled:opacity-50"
-                          >
-                            {t("approve", lang)}
-                          </button>
-                          <button
-                            onClick={(e) => handleReject(e, f.username)}
-                            disabled={actionLoading === f.username}
-                            className="px-1 py-0.5 rounded bg-red-600/30 text-red-400 text-[10px]
-                              hover:bg-red-600/50 transition-colors disabled:opacity-50"
-                          >
-                            {t("reject", lang)}
-                          </button>
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
+                    {/* Main row */}
+                    <tr
+                      onClick={() => { if (!isBlurred) { setExpanded(isExpanded ? null : f.username); setLicencePrompt(null); } }}
+                      className={`border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors ${isBlurred ? "blur-[4px] select-none pointer-events-none" : ""}`}
+                    >
+                      <td className="px-2 py-1.5 font-mono text-gray-300">
+                        <a
+                          href={f.profile_url}
+                          rel="noopener noreferrer"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openProfileTab(f.profile_url); }}
+                          className="text-purple-400 hover:text-purple-300 hover:underline transition-colors"
+                        >
+                          @{f.username}
+                        </a>
+                        {f.isPrivate && <span className="ml-1 text-[10px] text-gray-600" title="Private">P</span>}
+                        {isSpotted && (
+                          <span className="ml-1 px-1 py-0.5 rounded text-[9px] bg-orange-500/20 text-orange-400 font-medium">
+                            {t("spotted_by_community", lang)}
+                          </span>
+                        )}
+                        <span className="ml-1 text-gray-600">{isExpanded ? <IconChevronDown /> : <IconChevronRight />}</span>
+                      </td>
+                      <td className="text-center px-1 py-1.5">{scoreBadge(f.score)}</td>
+                      <td className="text-center px-1 py-1.5">
+                        <div className="flex items-center justify-center gap-1">
+                          {statusBadge(f, lang)}
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <tr className="bg-gray-800/40">
+                        <td colSpan={3} className="px-3 py-2 space-y-2">
+
+                          {/* Section 1: Infos compte */}
+                          <div className="text-[10px] text-gray-500 flex flex-wrap gap-x-2">
+                            {f.followersCount !== null && (
+                              <span>{f.followersCount} {t("info_followers", lang)}</span>
+                            )}
+                            {f.followingCount !== null && (
+                              <span>{f.followingCount} {t("info_following", lang)}</span>
+                            )}
+                            <span>{f.isPrivate ? t("info_private", lang) : t("info_public", lang)}</span>
+                            {f.scannedAt && <span>{new Date(f.scannedAt).toLocaleDateString()}</span>}
+                          </div>
+
+                          {/* Section 2: Analyse lisible */}
+                          {readable.length > 0 && (
+                            <div>
+                              <div className="text-[9px] text-gray-600 uppercase font-medium mb-0.5">
+                                {t("analysis", lang)}
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {readable.map((item, i) => (
+                                  <span
+                                    key={i}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                      item.suspect
+                                        ? "bg-red-500/15 text-red-400"
+                                        : "bg-green-500/15 text-green-400"
+                                    }`}
+                                  >
+                                    {item.suspect ? <IconWarn /> : <IconCheck />} {item.label}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Section 3: Vote communautaire */}
+                          {f.score !== null && f.score >= 40 && (
+                            <div className="border border-blue-900/40 rounded-lg px-2 py-1.5 bg-blue-950/20">
+                              <div className="text-[9px] text-blue-400/70 uppercase font-semibold mb-1 tracking-wide flex items-center gap-1">
+                                <IconGlobe /> {t("community_vote", lang)}
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {licencePrompt === f.username ? (
+                                  /* Upsell sans licence */
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] text-purple-300">
+                                      {t("vote_licence_required", lang)}
+                                    </span>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); onShowLicence?.(); setLicencePrompt(null); }}
+                                      className="px-2 py-0.5 rounded text-[10px] bg-purple-600 text-white font-medium
+                                        hover:bg-purple-500 transition-colors"
+                                    >
+                                      {t("vote_licence_cta", lang)}
+                                    </button>
+                                  </div>
+                                ) : myVotes.has(f.username) ? (
+                                  /* Déjà voté */
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] text-gray-400">
+                                      {t("vote_submitted", lang)}:{" "}
+                                      <span className={myVotes.get(f.username) === "fake" ? "text-red-400 font-medium" : "text-green-400 font-medium"}>
+                                        {myVotes.get(f.username) === "fake" ? t("vote_fake", lang) : t("vote_not_fake", lang)}
+                                      </span>
+                                    </span>
+                                    <button
+                                      onClick={(e) => handleVote(e, f.username, myVotes.get(f.username) === "fake" ? "ok" : "fake", f.score!)}
+                                      disabled={voteLoading === f.username}
+                                      className="px-1 py-0.5 rounded text-[9px] bg-gray-700/50 text-gray-400
+                                        hover:text-white transition-colors disabled:opacity-50"
+                                    >
+                                      <IconRefresh />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  /* Boutons de vote */
+                                  <>
+                                    <button
+                                      onClick={(e) => handleVote(e, f.username, "fake", f.score!)}
+                                      disabled={voteLoading === f.username}
+                                      className="px-2.5 py-1 rounded text-[11px] bg-red-600/25 text-red-400 font-semibold
+                                        hover:bg-red-600/40 transition-colors disabled:opacity-50 border border-red-900/40"
+                                    >
+                                      Fake
+                                    </button>
+                                    <button
+                                      onClick={(e) => handleVote(e, f.username, "ok", f.score!)}
+                                      disabled={voteLoading === f.username}
+                                      className="px-2.5 py-1 rounded text-[11px] bg-green-600/25 text-green-400 font-semibold
+                                        hover:bg-green-600/40 transition-colors disabled:opacity-50 border border-green-900/40"
+                                    >
+                                      No Fake
+                                    </button>
+                                  </>
+                                )}
+                                {/* Résultat communautaire */}
+                                {cs && cs.voteCount > 0 && (
+                                  <span className="text-[10px] text-gray-500 ml-auto">
+                                    {cs.voteCount} votes · {Math.round(cs.fakeRatio * 100)}% fake
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>

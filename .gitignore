@@ -1,5 +1,8 @@
 # Build output
 dist/
+# Chrome Web Store packaging artifacts
+*.zip
+!design/**/*.zip
 
 # Dependencies
 node_modules/
@@ -19,3 +22,9 @@ Thumbs.db
 
 # Claude
 .claude/
+
+# Licence owner secrets (NEVER commit)
+.wfc-owner-key
+*.owner-key
+wfc-licence-tokens.txt
+.env.licence

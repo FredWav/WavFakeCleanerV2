@@ -66,6 +66,8 @@ npm run build      # build production → dist/
 npm run dev        # build en mode watch (developpement)
 ```
 
-## Auteur
+## Auteur & contact
 
-[Fred Wav](https://www.threads.net/@fredwavoff)
+[Fred Wav](https://www.threads.net/@fredwavoff) — [contact@fredwav.com](mailto:contact@fredwav.com)
+
+Pour tout souci (activation de licence, bug, demande de remboursement, question sur la confidentialite), ecris a `contact@fredwav.com`.

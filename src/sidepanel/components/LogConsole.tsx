@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t } from "../lib/i18n";
 import type { LogEntry } from "@shared/types";
 
@@ -18,6 +18,22 @@ function formatTs(iso: string): string {
   }
 }
 
+function buildReport(logs: LogEntry[], lang: string): string {
+  const version = chrome.runtime?.getManifest?.().version ?? "unknown";
+  const header = [
+    `Wav Fake Cleaner — diagnostic report`,
+    `version: ${version}`,
+    `lang:    ${lang}`,
+    `when:    ${new Date().toISOString()}`,
+    `logs:    ${logs.length}`,
+    `---`,
+  ].join("\n");
+  const body = logs
+    .map((e) => `${e.ts} [${e.level}] (${e.category}) ${e.message}`)
+    .join("\n");
+  return `${header}\n${body || "(no logs)"}\n`;
+}
+
 export default function LogConsole({
   logs,
   connected,
@@ -30,10 +46,30 @@ export default function LogConsole({
   lang: string;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs.length]);
+
+  async function handleCopy() {
+    const text = buildReport(logs, lang);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback for environments without clipboard permission
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+      ta.remove();
+    }
+  }
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 flex flex-col h-48">
@@ -44,12 +80,21 @@ export default function LogConsole({
           />
           <span className="text-xs font-medium">{t("logs", lang)}</span>
         </div>
-        <button
-          onClick={onClear}
-          className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
-        >
-          {t("clear", lang)}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleCopy}
+            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            title={t("copy_report_hint", lang)}
+          >
+            {copied ? t("copied", lang) : t("copy_report", lang)}
+          </button>
+          <button
+            onClick={onClear}
+            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            {t("clear", lang)}
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2 text-[11px] space-y-0.5">
         {logs.length === 0 ? (

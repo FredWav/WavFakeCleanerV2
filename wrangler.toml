@@ -1,0 +1,8 @@
+name = "restless-credit-5e6a"
+main = "stripe-verify-worker.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wfc-community"
+database_id = "bf5c7ebd-ff1c-4529-a1f5-cd6e051baa69"

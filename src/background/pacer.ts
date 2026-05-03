@@ -14,7 +14,7 @@ export class HumanPacer {
   private _actionCount = 0;
   private _sessionLength: number;
 
-  constructor(baseMin = 4, baseMax = 8) {
+  constructor(baseMin = 10, baseMax = 22) {
     this.baseMin = baseMin;
     this.baseMax = baseMax;
     this._sessionLength = Math.floor(randomBetween(12, 25));
@@ -48,6 +48,16 @@ export class HumanPacer {
     }
   }
 
+  /** Artificially advance the action counter to trigger longer pauses sooner. */
+  addFatigue(extra: number): void {
+    this._actionCount = Math.min(this._actionCount + extra, this._sessionLength - 1);
+  }
+
+  /** Reduce fatigue when things stabilize (gradual recovery). */
+  reduceFatigue(amount: number): void {
+    this._actionCount = Math.max(0, this._actionCount - amount);
+  }
+
   /** 8-15s base pauses for scanning, with human variation. */
   nextScanPause(): number {
     this._actionCount++;
@@ -77,9 +87,16 @@ export function sleep(seconds: number, signal?: AbortSignal): Promise<void> {
       return;
     }
     const id = setTimeout(resolve, seconds * 1000);
-    signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(id);
       resolve();
-    });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    // Re-vérifier après l'ajout du listener (ferme la micro-fenêtre de course)
+    if (signal?.aborted) {
+      clearTimeout(id);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }
   });
 }

@@ -8,8 +8,15 @@ export const SELECTORS = {
     followersLink: "a[href*='followers']",
     followersTextPattern: /^\d[\d,.\s\u00a0\u202fKkMm]*\s*(followers|abonnés)$/i,
     profilePic: "img",
-    repliesTabTexts: ["Réponses", "Replies", "réponses", "replies"],
-    threadsTabTexts: ["Threads", "threads"],
+    repliesTabTexts: ["Réponses", "Replies", "réponses", "replies", "Respuestas", "Respostas", "Antworten", "Risposte", "Antwoorden", "返信"],
+    threadsTabTexts: ["Threads", "threads", "スレッド"],
+    mediaTabTexts: ["Médias", "Media", "médias", "media", "Medios", "Mídia", "Medien", "メディア"],
+    noMediaPatterns: [
+      /aucun m[ée]dia/i,
+      /no media yet/i,
+      /nothing here yet/i,
+      /hasn.t posted.*media/i,
+    ],
     noReplyPatterns: [
       /no replies yet/i,
       /pas encore de r[ée]ponse/i,
@@ -41,20 +48,36 @@ export const SELECTORS = {
   },
 
   scroll: {
+    // Primary: classic modal with role="dialog"
     dialogLinks: 'div[role="dialog"] a[href*="/@"]',
+    // Modern variant: aria-modal wrapper without role="dialog"
+    modalLinks: '[aria-modal="true"] a[href*="/@"]',
+    // Test-id variant seen on some rollouts
+    testIdLinks: '[data-testid*="followers" i] a[href*="/@"], [data-testid*="follower-list" i] a[href*="/@"]',
+    // Fallback: all profile links on the page (filtered by regex afterwards)
     profileLinks: 'a[href*="/@"]',
+    // Marker attribute set on the chosen scroll container
     scrollableAttr: "data-autoscroll",
+    // URL pattern for the dedicated followers page (Threads sometimes routes there
+    // instead of opening a modal)
+    followersUrlPattern: /\/@[\w.]+\/followers\/?$/,
   },
 
   menu: {
     removePatterns: [
-      /supprimer follower/i,
-      /remove follower/i,
-      /supprimer l.abonn/i,
+      /supprimer.*follower/i,
+      /remove.*follower/i,
+      /supprimer.*abonn/i,
       /retirer.*abonn/i,
+      /retirer.*follower/i,
       /remove.*follow/i,
+      /eliminar.*seguidor/i,   // ES
+      /remover.*seguidor/i,    // PT
+      /follower.*entfernen/i,  // DE
+      /rimuovi.*follower/i,    // IT
+      /volger.*verwijderen/i,  // NL
     ],
-    blockPatterns: [/^bloquer$/i, /^block$/i],
+    blockPatterns: [/^bloquer$/i, /^block$/i, /^bloquear$/i, /^blockieren$/i, /^blocca$/i, /^blokkeren$/i],
     confirmPatterns: [
       /^supprimer$/i,
       /^remove$/i,

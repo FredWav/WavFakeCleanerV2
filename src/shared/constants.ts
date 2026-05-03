@@ -1,55 +1,6 @@
-import type { SafetyProfile } from "./types";
+// ── Rate limits (fixed, no profiles) ──
 
-// ── Safety profiles (from rate_tracker.py) ──
-
-export interface SafetyProfileConfig {
-  limitDay: number;
-  limitHour: number;
-  pauseMin: number;
-  pauseMax: number;
-  scanBatch: number;
-  cleanBatch: number;
-  antiBotEvery: number;
-}
-
-export const SAFETY_PROFILES: Record<SafetyProfile, SafetyProfileConfig> = {
-  gratuit: {
-    limitDay: 50,
-    limitHour: 15,
-    pauseMin: 20,
-    pauseMax: 35,
-    scanBatch: 200,
-    cleanBatch: 50,
-    antiBotEvery: 10,
-  },
-  prudent: {
-    limitDay: 160,
-    limitHour: 25,
-    pauseMin: 15,
-    pauseMax: 30,
-    scanBatch: 80,
-    cleanBatch: 160,
-    antiBotEvery: 15,
-  },
-  normal: {
-    limitDay: 300,
-    limitHour: 40,
-    pauseMin: 8,
-    pauseMax: 15,
-    scanBatch: 120,
-    cleanBatch: 300,
-    antiBotEvery: 20,
-  },
-  agressif: {
-    limitDay: 500,
-    limitHour: 50,
-    pauseMin: 5,
-    pauseMax: 10,
-    scanBatch: 150,
-    cleanBatch: 500,
-    antiBotEvery: 25,
-  },
-};
+export const RATE_LIMIT_HOUR = 9999; // pas de limite d'actions — le throttle de suppression contrôle le rythme
 
 // ── Error thresholds ──
 
@@ -62,32 +13,40 @@ export const ERROR_RATE_THRESHOLD = 0.6;
 export const DEFAULT_SETTINGS = {
   threadsUsername: "",
   scoreThreshold: 70,
-  safetyProfile: "gratuit" as SafetyProfile,
+  privateAlwaysReview: false,
+  telemetry: false,
 };
 
 // ── Licence (Stripe + Cloudflare Worker) ──
 export const PAYMENT_LINK = "https://buy.stripe.com/7sYdR84WU5z3cPobdKcMM0u";
-// URL du Cloudflare Worker qui vérifie les sessions Stripe
-// ← à remplacer après déploiement du worker (cf. stripe-verify-worker.js)
 export const LICENCE_VERIFY_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/verify";
 export const LICENCE_PRICE = "7,99€";
 
-// ── Autopilot constants ──
+// ── Community voting (Cloudflare Worker + D1) ──
+export const COMMUNITY_VOTE_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/vote";
+export const COMMUNITY_LOOKUP_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/lookup";
+export const COMMUNITY_STATS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/community-stats";
+export const COMMUNITY_REPORT_SIGHTINGS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/report-sightings";
+export const COMMUNITY_CHECK_SIGHTINGS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/check-sightings";
 
-export const AUTOPILOT = {
-  scanBatch: [120, 150] as [number, number],
-  cleanBatch: [18, 30] as [number, number],
-  pauseBetween: [300, 900] as [number, number],
-  pauseScan: [900, 1500] as [number, number],
-  pauseClean: [1500, 2100] as [number, number],
-  cooldownOnErr: [600, 1200] as [number, number],
-  fetchIntervalH: 5,
-};
+// ── Anonymous error telemetry (opt-in via Settings.telemetry) ──
+export const TELEMETRY_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/telemetry";
+
+// ── Cycle constants (scan+remove combined) ──
+
+export const CYCLE_SIZE = 50;
+export const INTER_CYCLE_PAUSE = [300, 900] as [number, number];
+
+// ── Session limits for continuous mode ──
+// After this many hours of continuous operation, take a mandatory long break.
+export const CONTINUOUS_SESSION_MAX_HOURS = 4;
+// Duration of the mandatory break in seconds (2–3 hours, randomized).
+export const CONTINUOUS_LONG_BREAK = [7200, 10800] as [number, number];
+// When a hard 429 is detected (error page persists after retries), pause this long (seconds).
+export const HARD_429_PAUSE = [3600, 5400] as [number, number]; // 1–1.5 hours
 
 // ── Threads API ──
 
-// API paths are relative — the content script runs on the Threads page,
-// so fetch() uses the current origin (threads.net or threads.com).
 export const THREADS_API = {
   appId: "238260118697367",
   followersEndpoint: "/api/v1/friendships/{user_id}/followers/",

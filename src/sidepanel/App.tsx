@@ -9,22 +9,42 @@ import LogConsole from "./components/LogConsole";
 import FollowerTable from "./components/FollowerTable";
 import SettingsPanel from "./components/SettingsPanel";
 import LicencePanel from "./components/LicencePanel";
+import Toast from "./components/Toast";
+import Onboarding from "./components/Onboarding";
 import type { LicenseInfo } from "@shared/types";
 
 export default function App() {
   const [lang, setLang] = useState(getStoredLang);
   const [showSettings, setShowSettings] = useState(false);
   const [showLicence, setShowLicence] = useState(false);
-  const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null });
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
+  const [toast, setToast] = useState<string | null>(null);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
 
   useEffect(() => {
-    api.getLicense().then(setLicence).catch(() => {});
+    api.getSettings().then((s) => {
+      if (!s.threadsUsername && !localStorage.getItem("wav_onboarding_done")) {
+        setShowOnboarding(true);
+      }
+    }).catch(() => {});
+    api.getLicense().then((lic) => {
+      setLicence(lic);
+      // Auto-refresh communityToken pour les licences activees avant le deploiement communautaire
+      if (lic.active && lic.key && !lic.communityToken) {
+        api.activateLicense(lic.key).then((result) => {
+          if (result?.ok) {
+            api.getLicense().then(setLicence).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   }, []);
 
   function toggleLang() {
-    const next = lang === "fr" ? "en" : "fr";
+    const cycle: Record<string, string> = { fr: "en", en: "es", es: "fr" };
+    const next = cycle[lang] || "fr";
     setLang(next);
     setStoredLang(next);
   }
@@ -43,7 +63,7 @@ export default function App() {
           <p className="text-[10px] text-gray-500">
             by{" "}
             <a
-              href="https://www.threads.net/@fredwavoff"
+              href="https://fredwav.com/contact"
               target="_blank"
               rel="noopener noreferrer"
               className="text-purple-400 hover:text-purple-300 transition-colors"
@@ -84,20 +104,26 @@ export default function App() {
       <StatCards stats={stats} lang={lang} />
 
       {/* Controls */}
-      <ControlPanel stats={stats} lang={lang} onRefresh={refresh} />
+      <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} />
 
       {/* Logs */}
       <LogConsole logs={logs} connected={connected} onClear={clearLogs} lang={lang} />
 
       {/* Follower table */}
-      <FollowerTable lang={lang} refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)} />
+      <FollowerTable
+        lang={lang}
+        licence={licence}
+        onShowLicence={() => setShowLicence(true)}
+        showToast={setToast}
+        refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
+      />
 
       {/* Settings modal */}
       {showSettings && (
         <SettingsPanel
           lang={lang}
-          hasLicence={licence.active}
           onClose={() => setShowSettings(false)}
+          showToast={setToast}
         />
       )}
 
@@ -108,8 +134,21 @@ export default function App() {
           licence={licence}
           onUpdate={onLicenceUpdate}
           onClose={() => setShowLicence(false)}
+          showToast={setToast}
         />
       )}
+
+      {/* Onboarding */}
+      {showOnboarding && (
+        <Onboarding
+          lang={lang}
+          onDismiss={() => setShowOnboarding(false)}
+          onOpenSettings={() => { setShowOnboarding(false); setShowSettings(true); }}
+        />
+      )}
+
+      {/* Toast */}
+      <Toast message={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }

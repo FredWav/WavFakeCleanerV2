@@ -53,6 +53,10 @@ function getDb(): Promise<IDBPDatabase> {
           store.createIndex("status", "status");
         }
       },
+    }).catch((err) => {
+      // Connexion échouée — reset pour permettre un nouvel essai au prochain appel
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;
@@ -60,18 +64,18 @@ function getDb(): Promise<IDBPDatabase> {
 
 // ── Follower CRUD ──
 
-export async function upsertFollower(record: FollowerRecord): Promise<void> {
-  const db = await getDb();
-  await db.put("followers", record);
-}
-
 export async function upsertFollowers(records: FollowerRecord[]): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("followers", "readwrite");
-  for (const record of records) {
-    await tx.store.put(record);
+  try {
+    for (const record of records) {
+      await tx.store.put(record);
+    }
+    await tx.done;
+  } catch (e) {
+    try { tx.store.transaction.abort(); } catch { /* already aborted */ }
+    throw e;
   }
-  await tx.done;
 }
 
 export async function getFollower(username: string): Promise<FollowerRecord | undefined> {
@@ -79,9 +83,16 @@ export async function getFollower(username: string): Promise<FollowerRecord | un
   return db.get("followers", username);
 }
 
+export async function getAllFollowerUsernames(): Promise<Set<string>> {
+  const db = await getDb();
+  const keys = await db.getAllKeys("followers");
+  return new Set(keys as string[]);
+}
+
 export async function getFollowers(filter?: {
   status?: string;
   limit?: number;
+  search?: string;
 }): Promise<FollowerRecord[]> {
   const db = await getDb();
   let results: FollowerRecord[];
@@ -106,6 +117,14 @@ export async function getFollowers(filter?: {
     results = await db.getAll("followers");
   }
 
+  // Search filter (before sort/limit so we search the full DB)
+  if (filter?.search) {
+    const q = filter.search.toLowerCase();
+    results = results.filter(
+      (f) => f.username.toLowerCase().includes(q) || (f.fullName || "").toLowerCase().includes(q)
+    );
+  }
+
   // Sort by score descending (nulls last)
   results.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
 
@@ -121,10 +140,12 @@ export async function updateFollower(
   updates: Partial<FollowerRecord>
 ): Promise<void> {
   const db = await getDb();
-  const existing = await db.get("followers", username);
+  const tx = db.transaction("followers", "readwrite");
+  const existing = await tx.store.get(username);
   if (existing) {
-    await db.put("followers", { ...existing, ...updates });
+    await tx.store.put({ ...existing, ...updates });
   }
+  await tx.done;
 }
 
 export async function getFollowersPending(limit: number): Promise<FollowerRecord[]> {
@@ -157,12 +178,6 @@ export async function resetScannedFollowers(): Promise<number> {
   }
   await tx.done;
   return count;
-}
-
-export async function getFollowersFake(): Promise<FollowerRecord[]> {
-  const db = await getDb();
-  const all = await db.getAll("followers");
-  return all.filter((f) => f.isFake && !f.removed && !f.approved);
 }
 
 // ── Action log ──
@@ -205,6 +220,10 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
   const toReview = all.filter((f) => f.toReview && !f.removed && !f.approved).length;
   const removed = all.filter((f) => f.removed).length;
 
+  // Surface the pipeline's last user-facing error so the side panel can show it.
+  const pipelineState = await getPipelineState();
+  const lastError = pipelineState?.lastError ?? null;
+
   return {
     totalFollowers,
     pending,
@@ -213,6 +232,7 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
     toReview,
     removed,
     isRunning,
+    lastError,
     rate: rateStats,
   };
 }
@@ -231,17 +251,9 @@ export async function saveSettings(settings: Partial<Settings>): Promise<Setting
   return updated;
 }
 
-export async function getPipelineState(): Promise<PipelineState> {
+export async function getPipelineState(): Promise<PipelineState | null> {
   const result = await chrome.storage.local.get("pipelineState");
-  return (
-    result.pipelineState || {
-      stage: "idle",
-      sessionId: null,
-      progress: 0,
-      total: 0,
-      lastError: null,
-    }
-  );
+  return result.pipelineState || null;
 }
 
 export async function savePipelineState(state: PipelineState): Promise<void> {
@@ -252,9 +264,7 @@ export async function savePipelineState(state: PipelineState): Promise<void> {
 
 export interface RateState {
   hourlyCount: number;
-  dailyCount: number;
   hourKey: string;
-  dayKey: string;
   consecutiveErrors: number;
   recentResults: boolean[];
 }
@@ -264,9 +274,7 @@ export async function getRateState(): Promise<RateState> {
   return (
     result.rateState || {
       hourlyCount: 0,
-      dailyCount: 0,
       hourKey: "",
-      dayKey: "",
       consecutiveErrors: 0,
       recentResults: [],
     }
@@ -283,7 +291,13 @@ import type { LicenseInfo } from "@shared/types";
 
 export async function getLicense(): Promise<LicenseInfo> {
   const result = await chrome.storage.local.get("license");
-  return result.license || { active: false, key: null, activatedAt: null };
+  const lic = result.license || {};
+  return {
+    active: lic.active ?? false,
+    key: lic.key ?? null,
+    activatedAt: lic.activatedAt ?? null,
+    communityToken: lic.communityToken ?? null,
+  };
 }
 
 export async function saveLicense(license: LicenseInfo): Promise<void> {
@@ -294,8 +308,7 @@ export async function saveLicense(license: LicenseInfo): Promise<void> {
 
 interface DailyUsage {
   dayKey: string;
-  scans: number;
-  removals: number;
+  cycles: number;
 }
 
 export async function getDailyUsage(): Promise<DailyUsage> {
@@ -303,13 +316,13 @@ export async function getDailyUsage(): Promise<DailyUsage> {
   const today = new Date().toISOString().slice(0, 10);
   const usage = result.dailyUsage as DailyUsage | undefined;
   if (!usage || usage.dayKey !== today) {
-    return { dayKey: today, scans: 0, removals: 0 };
+    return { dayKey: today, cycles: 0 };
   }
   return usage;
 }
 
 export async function incrementDailyUsage(
-  field: "scans" | "removals",
+  field: "cycles",
   count = 1
 ): Promise<DailyUsage> {
   const usage = await getDailyUsage();

@@ -11,17 +11,17 @@ import type {
 // Messages FROM sidepanel/popup TO service worker
 export type RequestMessage =
   | { type: "GET_STATS" }
-  | { type: "GET_FOLLOWERS"; payload: { filter?: string; limit?: number } }
+  | { type: "GET_FOLLOWERS"; payload: { filter?: string; limit?: number; search?: string } }
   | { type: "GET_SETTINGS" }
   | { type: "UPDATE_SETTINGS"; payload: Partial<Settings> }
   | { type: "START_FETCH" }
-  | { type: "START_SCAN"; payload?: { batchSize?: number } }
-  | { type: "START_CLEAN"; payload?: { batchSize?: number } }
-  | { type: "START_AUTOPILOT" }
+  | { type: "START_CLEAN" }
+  | { type: "START_CONTINUOUS" }
   | { type: "STOP" }
   | { type: "RESET_SCANNED" }
   | { type: "APPROVE_FOLLOWER"; payload: { username: string } }
   | { type: "REJECT_FOLLOWER"; payload: { username: string } }
+  | { type: "SUBMIT_COMMUNITY_VOTE"; payload: { username: string; verdict: "fake" | "ok"; score: number } }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
   | { type: "KEEPALIVE_PING" };
@@ -34,25 +34,27 @@ export type BroadcastMessage =
 
 // Messages FROM content script TO service worker
 export type ContentMessage =
-  | { type: "FOLLOWERS_DATA"; payload: { users: Record<string, ContentFollowerMeta> } }
-  | { type: "PROFILE_DATA"; payload: ContentProfileData }
-  | { type: "ACTION_RESULT"; payload: { username: string; action: string; success: boolean; error?: string } }
   | { type: "CONTENT_READY" }
   | { type: "RATE_LIMIT_DETECTED" }
   | { type: "LOG_FROM_CONTENT"; payload: { level: string; category: string; message: string } }
-  | { type: "FETCH_PROGRESS"; payload: { page: number; total: number } };
+  | { type: "FETCH_PROGRESS"; payload: { page: number; total: number } }
+  // Sent after every page of followers is fetched, so the background can persist
+  // incrementally and never lose progress when the user clicks Stop.
+  | { type: "FOLLOWERS_PAGE"; payload: { users: Record<string, ContentFollowerMeta> } };
 
 // Messages FROM service worker TO content script
 export type ContentCommand =
-  | { type: "FETCH_FOLLOWERS"; payload: { username: string } }
+  | { type: "FETCH_FOLLOWERS"; payload: { username: string; knownUsernames?: string[] } }
   | { type: "SCAN_PROFILE"; payload: { username: string } }
   | { type: "REMOVE_FOLLOWER"; payload: { username: string } }
-  | { type: "FETCH_PROFILE_API"; payload: { username: string } }
-  | { type: "PING" };
+  | { type: "CHECK_PAGE" }
+  | { type: "PING" }
+  | { type: "STOP_CONTENT" };
 
 // Content script follower metadata
 export interface ContentFollowerMeta {
   followerCount: number | null;
+  followingCount: number | null;
   isVerified: boolean;
   fullName: string;
   isPrivate: boolean;
@@ -80,5 +82,6 @@ export interface ContentProfileData {
   allPostsRecent: boolean;
   duplicateRatio: number;
   hasSpamKeywords: boolean;
+  hasMedia: boolean;
   error: string | null;
 }
