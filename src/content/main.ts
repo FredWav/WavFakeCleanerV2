@@ -33,7 +33,7 @@ if (!_alreadyLoaded) {
 
 // ── Now safe to import other modules ──
 
-import { resolveUserId, fetchFollowersPage, injectMainWorldBridge } from "./api-interceptor";
+import { resolveUserProfile, fetchFollowersPage, injectMainWorldBridge } from "./api-interceptor";
 import { SELECTORS } from "@shared/selectors";
 import {
   extractProfileFromDom,
@@ -49,6 +49,23 @@ import {
   waitForFollowersUI,
 } from "./threads-scraper";
 import { performRemoveFollower, recoverFromErrorPage, isTransientErrorPage } from "./threads-actions";
+import { onDrift } from "@shared/selector-strategies";
+
+// ── Selector drift telemetry ──
+// Fires when a non-primary selector strategy succeeds — signal that Threads
+// has changed its DOM and the primary needs updating. Routed through the
+// existing message channel; the service worker forwards to telemetry if
+// the user opted in.
+onDrift((event) => {
+  send({
+    type: "LOG_FROM_CONTENT",
+    payload: {
+      level: "WARNING",
+      category: "drift",
+      message: `Selector drift detected: ${event.lookup} → ${event.winningStrategy} (rank ${event.rank})`,
+    },
+  });
+});
 
 // ── Send message to service worker ──
 
@@ -113,15 +130,30 @@ async function handleFetchFollowers(
   const hasKnown = knownSet.size > 0;
 
   // Try API first
-  const userId = await resolveUserId(username);
+  const profile = await resolveUserProfile(username);
+  const userId = profile?.userId;
+  // Total followers reported by Threads. 0 means "unknown" — when unknown,
+  // we MUST disable the early-stop heuristic (else we risk stopping after a few
+  // pages on a partial DB). Acts as a safety check below.
+  const totalFollowers = profile?.followerCount || 0;
   if (userId) {
-    console.log("[WFC] User ID resolved:", userId, hasKnown ? `(${knownSet.size} known followers)` : "(first fetch)");
+    console.log(
+      "[WFC] User ID resolved:",
+      userId,
+      hasKnown ? `(${knownSet.size} known followers)` : "(first fetch)",
+      `[total reported by Threads: ${totalFollowers || "unknown"}]`,
+    );
 
     const collected: Record<string, ContentFollowerMeta> = {};
     let maxId: string | null = null;
     let page = 0;
     let errors = 0;
-    let consecutiveKnownPages = 0;
+    // Pages d'affilee ou aucun follower n'est nouveau. On stoppe quand ce
+    // compteur atteint un seuil suffisamment robuste pour qu'on soit sur
+    // d'avoir tout vu au-dessus du tail "known". Tolere les nouveaux follows
+    // intercales avec des anciens (rare mais possible cote Threads).
+    let pagesWithoutNew = 0;
+    const STOP_AFTER_NO_NEW_PAGES = 3;
 
     const first = await fetchFollowersPage(userId);
     if (first && Object.keys(first.users).length > 0) {
@@ -152,21 +184,27 @@ async function handleFetchFollowers(
         // Hand off the new page to the background for incremental persistence
         send({ type: "FOLLOWERS_PAGE", payload: { users: result.users } } as ContentMessage);
 
-        // Early stop: if we already have these followers in the DB,
-        // no need to keep paginating — we've reached the "old" part of the list.
+        // Early stop incremental: si on a deja un cache local (hasKnown), on
+        // arrete des qu'on observe N pages CONSECUTIVES sans aucun nouveau
+        // follower. Ca capture l'integralite du delta sans jamais re-fetcher
+        // la liste complete — exactement ce que l'utilisateur veut quand il
+        // a pris quelques centaines d'abonnes depuis le dernier scan.
         if (hasKnown && pageUsernames.length > 0) {
-          const knownInPage = pageUsernames.filter((u) => knownSet.has(u)).length;
-          const knownRatio = knownInPage / pageUsernames.length;
-          if (knownRatio >= 0.8) {
-            consecutiveKnownPages++;
-            console.log(`[WFC] Page ${page}: ${Math.round(knownRatio * 100)}% already known (${consecutiveKnownPages}/3)`);
-            if (consecutiveKnownPages >= 3) {
-              console.log("[WFC] 3 consecutive pages with 80%+ known followers — stopping early");
-              send({ type: "FETCH_PROGRESS", payload: { page, total: Object.keys(collected).length } } as ContentMessage);
+          const newInPage = pageUsernames.filter((u) => !knownSet.has(u)).length;
+          if (newInPage === 0) {
+            pagesWithoutNew++;
+            console.log(`[WFC] Page ${page}: 0 new followers (${pagesWithoutNew}/${STOP_AFTER_NO_NEW_PAGES})`);
+            if (pagesWithoutNew >= STOP_AFTER_NO_NEW_PAGES) {
+              const collectedSoFar = Object.keys(collected).length;
+              console.log(
+                `[WFC] Early stop: ${STOP_AFTER_NO_NEW_PAGES} pages d'affilee sans nouveau follower — fini.`,
+              );
+              send({ type: "FETCH_PROGRESS", payload: { page, total: collectedSoFar } } as ContentMessage);
               break;
             }
           } else {
-            consecutiveKnownPages = 0;
+            // Au moins 1 nouveau sur cette page — reset du compteur.
+            pagesWithoutNew = 0;
           }
         }
 
@@ -253,8 +291,18 @@ async function scrollFetch(
 
     const hrefs = extractFollowerLinks();
     for (const href of hrefs) {
-      const pseudo = href.split("/@").pop()?.replace("/", "") || "";
-      if (pseudo && !pseudo.includes("?") && !pseudo.includes("/") && pseudo !== username) {
+      // CRITICAL: do NOT strip the slash. A href like "/@fredwav/media" must
+      // be REJECTED (it's the owner's own profile sub-page, not a follower),
+      // not coerced into "fredwavmedia". Strip query string, then require
+      // the result to be a clean alpha-num username with no path segments.
+      const tail = href.split("/@").pop() || "";
+      const pseudo = tail.split("?")[0]; // drop ?query but keep / so the guard below catches sub-pages
+      if (
+        pseudo &&
+        !pseudo.includes("/") &&         // sub-page (replies, media, followers…) → reject
+        !pseudo.includes("?") &&         // safety belt — shouldn't happen after split above
+        pseudo !== username              // owner's own profile → reject
+      ) {
         pseudos.add(pseudo);
       }
     }

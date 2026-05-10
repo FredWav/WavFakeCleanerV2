@@ -6,7 +6,7 @@ export const SELECTORS = {
   profile: {
     loadedCheck: "header,main,h1,[data-pressable-container]",
     followersLink: "a[href*='followers']",
-    followersTextPattern: /^\d[\d,.\s\u00a0\u202fKkMm]*\s*(followers|abonnés)$/i,
+    followersTextPattern: /^\d[\d,.\s\u00a0\u202fKkMm]*\s*(followers?|abonn[eé]s?|seguidor(?:es)?|abonnent(?:en)?|volgers?|フォロワー|粉丝|追蹤者)$/iu,
     profilePic: "img",
     repliesTabTexts: ["Réponses", "Replies", "réponses", "replies", "Respuestas", "Respostas", "Antworten", "Risposte", "Antwoorden", "返信"],
     threadsTabTexts: ["Threads", "threads", "スレッド"],
@@ -40,10 +40,39 @@ export const SELECTORS = {
       /page isn.t available/i,
       /page introuvable/i,
     ],
+    // Phrases displayed in Threads' private-profile banner. We try to match
+    // both common wordings per locale. Strict-ish to limit false positives
+    // from user-generated bios containing the word "private".
     privatePatterns: [
+      // EN
+      /this account is private/i,
+      /this is a private account/i,
       /account is private/i,
-      /compte est priv/i,
+      // FR
+      /ce compte est priv/i,
+      /cette page est priv/i,
       /profil priv/i,
+      /compte priv[ée]/i,
+      // ES
+      /esta cuenta es privada/i,
+      /cuenta privada/i,
+      // PT
+      /esta conta [eé] privada/i,
+      /conta privada/i,
+      // DE
+      /dieses konto ist privat/i,
+      /privates konto/i,
+      // IT
+      /questo account [eè] privato/i,
+      /account privato/i,
+      // NL
+      /dit account is priv[ée]/i,
+      /priv[ée] account/i,
+      // JP / ZH
+      /非公開アカウント/,
+      /このアカウントは非公開/,
+      /此[帳账]户不公开/,
+      /私人[帳账]户/,
     ],
   },
 
@@ -126,13 +155,34 @@ export const SELECTORS = {
 };
 
 // ── 429 detection ──
+// Locale-aware: Threads localizes the rate-limit interstitial. We accept
+// either the literal "429" + a "page not working"-style sentence, OR the
+// universal "too many requests" phrase regardless of locale.
+
+const PAGE_NOT_WORKING_SNIPPETS = [
+  "cette page ne fonctionne pas",     // FR
+  "this page isn't working",          // EN
+  "esta página no funciona",          // ES
+  "esta pagina nao funciona",         // PT (no diacritics — scrap might strip)
+  "esta página não funciona",         // PT
+  "diese seite funktioniert nicht",   // DE
+  "questa pagina non funziona",       // IT
+  "deze pagina werkt niet",           // NL
+];
+
+const TOO_MANY_REQUESTS_SNIPPETS = [
+  "too many requests",                // EN
+  "trop de requêtes",                 // FR
+  "demasiadas solicitudes",           // ES
+  "demasiadas solicitações",          // PT
+  "zu viele anfragen",                // DE
+  "troppe richieste",                 // IT
+  "te veel verzoeken",                // NL
+];
 
 export function is429(body: string): boolean {
   const lo = body.toLowerCase();
-  return (
-    (body.includes("429") &&
-      (lo.includes("cette page ne fonctionne pas") ||
-        lo.includes("this page isn't working"))) ||
-    lo.includes("too many requests")
-  );
+  if (TOO_MANY_REQUESTS_SNIPPETS.some((s) => lo.includes(s))) return true;
+  if (body.includes("429") && PAGE_NOT_WORKING_SNIPPETS.some((s) => lo.includes(s))) return true;
+  return false;
 }

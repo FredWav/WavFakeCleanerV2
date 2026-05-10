@@ -9,7 +9,53 @@ import { SELECTORS, is429 } from "@shared/selectors";
 import type { ContentProfileData } from "@shared/messages";
 import { humanClick } from "./humanize";
 
+// ── Private profile detection ──
+// Threads renders the "this account is private" banner as a heading or a
+// strong element near the top of the profile. We scan headings + aria
+// labels first (highest precision), then fall back to the full body text.
+function detectIsPrivate(bodyText: string): boolean {
+  const patterns = SELECTORS.profile.privatePatterns;
+
+  // 1) Headings — Threads always uses h1/h2/h3 for the private banner.
+  //    Tightest match, lowest false-positive rate.
+  const headings = document.querySelectorAll("h1, h2, h3, h4, [role='heading']");
+  for (const el of headings) {
+    const t = ((el as HTMLElement).innerText || el.textContent || "").trim();
+    if (!t) continue;
+    if (patterns.some((p) => p.test(t))) return true;
+  }
+
+  // 2) ARIA labels & titles often carry the localised "private" wording.
+  const labeled = document.querySelectorAll("[aria-label], [title]");
+  for (const el of labeled) {
+    const al = (el as HTMLElement).getAttribute("aria-label") || "";
+    const ti = (el as HTMLElement).getAttribute("title") || "";
+    if (patterns.some((p) => p.test(al) || p.test(ti))) return true;
+  }
+
+  // 3) Body-text fallback (case-insensitive — patterns already use /i flag).
+  if (patterns.some((p) => p.test(bodyText))) return true;
+
+  return false;
+}
+
 // ── Profile data extraction (ported from _JS_EXTRACT_PROFILE) ──
+
+/**
+ * Scope expensive querySelectorAll calls to the profile container instead
+ * of the whole document. Threads renders a feed below the profile that can
+ * contain hundreds of <a>/<img>/<span> nodes; scoping cuts the search space
+ * to ~5 % of the DOM and eliminates most reflow-causing reads.
+ *
+ * Falls back to document.body when the expected wrappers aren't present
+ * (rare, but keeps the scraper resilient against future Threads layouts).
+ */
+function getProfileScope(): Element {
+  // Prefer <main> (the document landmark) — Threads always wraps the
+  // profile content in it. <header> contains the avatar/name/bio block,
+  // which is where most signals live.
+  return document.querySelector("main") || document.body;
+}
 
 export function extractProfileFromDom(username: string): Partial<ContentProfileData> {
   const result: Partial<ContentProfileData> = {
@@ -48,12 +94,16 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
     return result;
   }
 
-  // Private?
-  result.isPrivate = SELECTORS.profile.privatePatterns.some((p) => p.test(bodyText));
+  // Private? — multi-source detection to minimise false negatives.
+  result.isPrivate = detectIsPrivate(bodyText);
+
+  const scope = getProfileScope();
 
   // ── Follower count ──
   try {
-    const allEls = document.querySelectorAll("span, a, div, p");
+    // Scope to the profile area; Threads also renders feed posts with
+    // "X followers" mentions that would otherwise poison the match.
+    const allEls = scope.querySelectorAll("span, a, div, p");
     for (const el of allEls) {
       if (el.children.length > 3) continue;
       const t = (el.textContent || "").trim();
@@ -81,7 +131,7 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
 
   // ── Profile picture ──
   try {
-    const imgs = document.querySelectorAll("img");
+    const imgs = scope.querySelectorAll("img");
     for (const img of imgs) {
       const src = img.src || "";
       const alt = (img.alt || "").toLowerCase();
@@ -102,8 +152,9 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
       }
     }
     if (!result.hasRealPic) {
-      const headerImgs = document.querySelectorAll('img[width], img[style*="width"]');
+      const headerImgs = scope.querySelectorAll('img[width], img[style*="width"]');
       for (const img of headerImgs) {
+        // Read the rect once; never read it again on this element.
         const r = img.getBoundingClientRect();
         if (r.width >= 60 && r.width <= 200 && r.top < 400) {
           const src = (img as HTMLImageElement).src || "";
@@ -131,7 +182,7 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
       }
     }
     if (!result.hasFullName) {
-      const headings = document.querySelectorAll('h1, h2, [role="heading"], span[dir="auto"]');
+      const headings = scope.querySelectorAll('h1, h2, [role="heading"], span[dir="auto"]');
       for (const h of headings) {
         const t = (h.textContent || "").trim();
         if (t.length >= 3 && t.length < 60 && t !== username && !/^\d/.test(t)) {
@@ -165,7 +216,9 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
 
   // ── Link in bio ──
   try {
-    const allLinks = document.querySelectorAll("a[href]");
+    // Scope to header/profile area: Threads renders dozens of feed-card
+    // links below the bio that would otherwise count as "links in bio".
+    const allLinks = scope.querySelectorAll("a[href]");
     for (const a of allLinks) {
       const href = ((a as HTMLAnchorElement).href || "").toLowerCase();
       const text = (a.textContent || "").trim();
@@ -262,26 +315,32 @@ export function countPosts(): {
 // ── Tab navigation ──
 
 export async function navigateToTab(tabName: string): Promise<boolean> {
-  // Find clickable tab elements
+  const target = tabName.toLowerCase();
+
+  // Find clickable tab elements (the canonical, role-based selector path)
   const allTabs = document.querySelectorAll(
     'div[role="tablist"] div[role="tab"], div[role="tablist"] a, a[role="tab"]'
   );
   for (const tab of allTabs) {
     const text = (tab.textContent || "").trim().toLowerCase();
-    if (text === tabName.toLowerCase()) {
+    if (text === target) {
       await humanClick(tab as HTMLElement);
       return true;
     }
   }
 
-  // Fallback: find by text content in common containers
-  const candidates = document.querySelectorAll('a, div[role="tab"], span');
+  // Fallback: find by text in the profile scope only, not the entire feed.
+  // The previous version queried `'a, div[role="tab"], span'` document-wide
+  // and forced a getBoundingClientRect read per candidate — on a populated
+  // feed this was 2-3 ms × hundreds of nodes. Scoping cuts the candidate
+  // set dramatically and the rect read short-circuits on text mismatch.
+  const scope = getProfileScope();
+  const candidates = scope.querySelectorAll('a, div[role="tab"], span');
   for (const el of candidates) {
     const text = (el.textContent || "").trim().toLowerCase();
+    if (text !== target) continue; // cheap text check before forcing a reflow
     const rect = el.getBoundingClientRect();
-    // Tab-like element: within profile area, reasonable size
     if (
-      text === tabName.toLowerCase() &&
       rect.top > 150 &&
       rect.top < 500 &&
       rect.height > 10 &&

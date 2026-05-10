@@ -1,6 +1,8 @@
-// ── Rate limits (fixed, no profiles) ──
-
-export const RATE_LIMIT_HOUR = 9999; // pas de limite d'actions — le throttle de suppression contrôle le rythme
+// ── Rate limits ──
+// Intentionally very high: pacing is enforced by HumanPacer's randomized
+// delays between actions, not by a hard hourly cap. This counter exists for
+// telemetry/UI display.
+export const RATE_LIMIT_HOUR = 9999;
 
 // ── Error thresholds ──
 

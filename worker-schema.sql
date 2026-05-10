@@ -1,5 +1,10 @@
--- WFC Community — D1 schema (v2)
+-- WFC Community — D1 schema (v3)
 -- Deploy: npx wrangler d1 execute wfc-community --remote --file worker-schema.sql
+--
+-- Version history:
+--   v1: tokens, votes, sightings, nonces
+--   v2: rate_limits, telemetry
+--   v3: licenses (short product codes WFC-XXXX-XXXX, generated at payment)
 --
 -- All target/token identifiers are stored as HMAC-SHA256(env.HMAC_SALT, ...)
 -- — never as raw values nor as plain SHA-256. Even a full DB dump cannot be
@@ -68,3 +73,17 @@ CREATE TABLE IF NOT EXISTS telemetry (
 CREATE INDEX IF NOT EXISTS idx_telemetry_error ON telemetry(error_code);
 CREATE INDEX IF NOT EXISTS idx_telemetry_anon ON telemetry(anon_hash);
 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry(created_at);
+
+-- Short product codes issued at Stripe payment confirmation.
+-- The code (WFC-XXXX-XXXX) is the user-facing licence identifier.
+-- session_id_hash links it back to the original Stripe checkout session
+-- so re-verification can be done if needed. revoked=1 disables a code
+-- without deleting the row (chargebacks, etc.).
+CREATE TABLE IF NOT EXISTS licenses (
+  code             TEXT PRIMARY KEY,                 -- WFC-XXXX-XXXX
+  session_id_hash  TEXT NOT NULL UNIQUE,             -- HMAC(SALT, cs_live_xxx)
+  created_at       INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  revoked          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_licenses_session ON licenses(session_id_hash);

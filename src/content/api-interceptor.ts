@@ -14,6 +14,13 @@ import type { ContentFollowerMeta } from "@shared/messages";
 const WFC_REQUEST = "WFC_API_REQUEST";
 const WFC_RESPONSE = "WFC_API_RESPONSE";
 
+// Per-instance shared secret. Generated once at module load, embedded in
+// the bridge script's dataset before injection, and validated on every
+// inbound response. Stops other scripts on the page from impersonating the
+// bridge or reading our responses (defense-in-depth — the page can already
+// see the data, but the bridge shouldn't make it trivially exfiltratable).
+const WFC_SECRET = crypto.randomUUID();
+
 let requestId = 0;
 const pendingRequests = new Map<number, {
   resolve: (value: { status: number; body: unknown }) => void;
@@ -24,6 +31,9 @@ const pendingRequests = new Map<number, {
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== WFC_RESPONSE) return;
+  // Reject responses lacking the secret — prevents foreign scripts from
+  // satisfying our pending requests with attacker-controlled bodies.
+  if (event.data.secret !== WFC_SECRET) return;
 
   const { id, status, body, error } = event.data;
   const pending = pendingRequests.get(id);
@@ -51,7 +61,10 @@ async function mainWorldFetch(url: string, headers?: Record<string, string>): Pr
       reject: (err) => { clearTimeout(timeout); reject(err); },
     });
 
-    window.postMessage({ type: WFC_REQUEST, id, url, headers }, "*");
+    window.postMessage(
+      { type: WFC_REQUEST, id, url, headers, secret: WFC_SECRET },
+      "*",
+    );
   });
 }
 
@@ -60,6 +73,10 @@ async function mainWorldFetch(url: string, headers?: Record<string, string>): Pr
 export function injectMainWorldBridge(): void {
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("main-world-bridge.js");
+  // Hand the per-instance secret to the bridge before it executes. The
+  // bridge reads document.currentScript.dataset.wfcSecret synchronously at
+  // script init; isolated-world dataset writes are not visible to the page.
+  script.dataset.wfcSecret = WFC_SECRET;
   (document.head || document.documentElement).appendChild(script);
   script.onload = () => script.remove();
   console.log("[WFC] Injecting main world bridge script");
@@ -129,7 +146,17 @@ async function fetchWithBackoff(
   return { status: 429, body: null, gaveUp: true };
 }
 
+export interface UserProfile {
+  userId: string;
+  followerCount: number; // 0 if unknown — caller MUST treat 0 as "do not trust"
+}
+
 export async function resolveUserId(username: string): Promise<string | null> {
+  const profile = await resolveUserProfile(username);
+  return profile?.userId ?? null;
+}
+
+export async function resolveUserProfile(username: string): Promise<UserProfile | null> {
   const headers = apiHeaders();
 
   const endpoints = [
@@ -139,67 +166,67 @@ export async function resolveUserId(username: string): Promise<string | null> {
 
   for (const url of endpoints) {
     try {
-      console.log("[WFC] resolveUserId: trying (MAIN world)", url);
+      console.log("[WFC] resolveUserProfile: trying (MAIN world)", url);
       const { status, body } = await mainWorldFetch(url, headers);
-      console.log("[WFC] resolveUserId: status", status, "for", url);
+      console.log("[WFC] resolveUserProfile: status", status, "for", url);
 
       if (status !== 200) {
-        console.log("[WFC] resolveUserId: non-200, body =", JSON.stringify(body).substring(0, 300));
+        console.log("[WFC] resolveUserProfile: non-200, body =", JSON.stringify(body).substring(0, 300));
         continue;
       }
 
       const j = body as Record<string, unknown>;
-      console.log("[WFC] resolveUserId: response keys =", Object.keys(j));
+      console.log("[WFC] resolveUserProfile: response keys =", Object.keys(j));
 
-      const uid =
-        (j?.data as Record<string, unknown>)?.user &&
-        ((j.data as Record<string, unknown>).user as Record<string, unknown>)?.id ||
-        (j?.data as Record<string, unknown>)?.user &&
-        ((j.data as Record<string, unknown>).user as Record<string, unknown>)?.pk ||
-        (j?.user as Record<string, unknown>)?.pk ||
-        (j?.user as Record<string, unknown>)?.id ||
-        (j?.data as Record<string, unknown>)?.user &&
-        ((j.data as Record<string, unknown>).user as Record<string, unknown>)?.pk_id;
+      const userObj =
+        ((j?.data as Record<string, unknown>)?.user as Record<string, unknown>) ||
+        (j?.user as Record<string, unknown>);
 
-      if (uid) {
-        console.log("[WFC] resolveUserId: found uid =", uid);
-        return String(uid);
+      if (userObj) {
+        const uid = userObj.id || userObj.pk || userObj.pk_id;
+        const fc = Number(userObj.follower_count ?? 0);
+        if (uid) {
+          console.log("[WFC] resolveUserProfile: uid=", uid, "followerCount=", fc);
+          return { userId: String(uid), followerCount: fc };
+        }
       }
 
       const users = (j?.users as Array<Record<string, unknown>>) || [];
       const match = users.find((u) => u.username === username);
       if (match) {
-        console.log("[WFC] resolveUserId: found via search =", match.pk || match.id);
-        return String(match.pk || match.id);
+        const uid = match.pk || match.id;
+        const fc = Number(match.follower_count ?? 0);
+        console.log("[WFC] resolveUserProfile: via search uid=", uid, "followerCount=", fc);
+        return { userId: String(uid), followerCount: fc };
       }
 
-      console.log("[WFC] resolveUserId: no uid in response =", JSON.stringify(j).substring(0, 500));
+      console.log("[WFC] resolveUserProfile: no uid in response =", JSON.stringify(j).substring(0, 500));
     } catch (e) {
-      console.log("[WFC] resolveUserId: error for", url, e);
+      console.log("[WFC] resolveUserProfile: error for", url, e);
     }
   }
 
-  // Fallback: check page scripts for embedded data
+  // Fallback: check page scripts for embedded data (no follower count available here)
   try {
     const scripts = document.querySelectorAll('script[type="application/json"]');
-    console.log("[WFC] resolveUserId: checking", scripts.length, "script tags");
+    console.log("[WFC] resolveUserProfile: checking", scripts.length, "script tags");
     for (const s of scripts) {
       const text = s.textContent || "";
       if (text.includes(username)) {
         const pkM = text.match(/"pk":"?(\d+)"?/);
         if (pkM) {
-          console.log("[WFC] resolveUserId: found pk in script tag:", pkM[1]);
-          return pkM[1];
+          console.log("[WFC] resolveUserProfile: found pk in script tag:", pkM[1]);
+          return { userId: pkM[1], followerCount: 0 };
         }
         const idM = text.match(/"user_id":"?(\d+)"?/);
-        if (idM) return idM[1];
+        if (idM) return { userId: idM[1], followerCount: 0 };
       }
     }
   } catch {
     // ignore
   }
 
-  console.log("[WFC] resolveUserId: FAILED for", username);
+  console.log("[WFC] resolveUserProfile: FAILED for", username);
   return null;
 }
 

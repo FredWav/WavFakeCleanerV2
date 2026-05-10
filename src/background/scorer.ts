@@ -3,9 +3,25 @@
  *
  * Ported from backend/engine/scorer.py with identical logic.
  * Zero network deps — 100% unit-testable.
+ *
+ * Tuneable thresholds and weights live in @shared/scoring-config; this file
+ * intentionally avoids hardcoded magic numbers for any signal that might be
+ * adjusted for false-positive/false-negative tuning.
  */
 
 import type { ProfileData, ScoredFollower } from "@shared/types";
+import {
+  DECISION,
+  USERNAME,
+  FC_BANDS,
+  SIGHTINGS,
+  RATIO,
+  PRE_SCORE,
+  WEIGHTS,
+  POSTS,
+  COMBOS,
+  PRIVATE_ACCOUNT,
+} from "@shared/scoring-config";
 
 // ── Username pattern detection ──
 
@@ -59,20 +75,20 @@ export function scoreUsername(username: string): { bonus: number; details: strin
 
   // Digit ratio: if >50% of username is digits
   const digitCount = [...username].filter((c) => /\d/.test(c)).length;
-  if (username.length > 4 && digitCount / username.length > 0.5) {
-    bonus += 15;
-    details.push(`@digit_ratio(${digitCount}/${username.length}) +15`);
+  if (username.length > USERNAME.minLength && digitCount / username.length > USERNAME.digitRatioCutoff) {
+    bonus += USERNAME.digitRatioBonus;
+    details.push(`@digit_ratio(${digitCount}/${username.length}) +${USERNAME.digitRatioBonus}`);
   }
 
   // Special char ratio: dots, underscores make up most of the non-digit portion
   const specialCount = [...username].filter((c) => /[._\-]/.test(c)).length;
   const nonLetterRatio = (digitCount + specialCount) / username.length;
-  if (username.length > 4 && nonLetterRatio > 0.8) {
-    bonus += 10;
-    details.push(`@no_letters(${Math.round(nonLetterRatio * 100)}%) +10`);
+  if (username.length > USERNAME.minLength && nonLetterRatio > USERNAME.nonLetterRatioCutoff) {
+    bonus += USERNAME.nonLetterBonus;
+    details.push(`@no_letters(${Math.round(nonLetterRatio * 100)}%) +${USERNAME.nonLetterBonus}`);
   }
 
-  return { bonus: Math.min(bonus, 45), details }; // Cap at +45 (was 30)
+  return { bonus: Math.min(bonus, DECISION.usernameBonusCap), details };
 }
 
 // ── Pre-scoring from metadata ──
@@ -93,8 +109,8 @@ export function preScoreFromMetadata(
 
   // Verified badge — strong legitimacy signal
   if (isVerified) {
-    score -= 25;
-    details.push("pre:verified -25");
+    score += PRE_SCORE.verifiedBonus;
+    details.push(`pre:verified ${PRE_SCORE.verifiedBonus}`);
   }
 
   // Username patterns
@@ -104,73 +120,83 @@ export function preScoreFromMetadata(
 
   // Follower count
   if (followerCount !== null) {
-    if (followerCount === 0) {
-      score += 15;
-      details.push("pre:0abn +15");
-    } else if (followerCount <= 10) {
-      score += 10;
-      details.push(`pre:${followerCount}abn +10`);
-    } else if (followerCount >= 500) {
-      score -= 15;
-      details.push(`pre:${followerCount}abn -15`);
-    } else if (followerCount >= 100) {
-      score -= 10;
-      details.push(`pre:${followerCount}abn -10`);
+    if (followerCount === FC_BANDS.zero) {
+      score += PRE_SCORE.fcZeroBonus;
+      details.push(`pre:0abn +${PRE_SCORE.fcZeroBonus}`);
+    } else if (followerCount <= FC_BANDS.veryLow) {
+      score += PRE_SCORE.fcVeryLowBonus;
+      details.push(`pre:${followerCount}abn +${PRE_SCORE.fcVeryLowBonus}`);
+    } else if (followerCount >= FC_BANDS.high) {
+      score += PRE_SCORE.fcHighPenalty;
+      details.push(`pre:${followerCount}abn ${PRE_SCORE.fcHighPenalty}`);
+    } else if (followerCount >= FC_BANDS.medium) {
+      score += PRE_SCORE.fcMediumPenalty;
+      details.push(`pre:${followerCount}abn ${PRE_SCORE.fcMediumPenalty}`);
     }
   }
 
   // No profile pic
   if (!hasProfilePic) {
-    score += 20;
-    details.push("pre:!pic +20");
+    score += PRE_SCORE.noPicBonus;
+    details.push(`pre:!pic +${PRE_SCORE.noPicBonus}`);
   }
 
   // Full name
   if (!fullName) {
-    score += 10;
-    details.push("pre:!name +10");
+    score += PRE_SCORE.noFullNameBonus;
+    details.push(`pre:!name +${PRE_SCORE.noFullNameBonus}`);
   }
 
   // Private with no name and no pic → suspicious
   if (isPrivate && !fullName && !hasProfilePic) {
-    score += 15;
-    details.push("pre:private(!name,!pic) +15");
+    score += PRE_SCORE.privateAnonymousBonus;
+    details.push(`pre:private(!name,!pic) +${PRE_SCORE.privateAnonymousBonus}`);
   }
 
-  // Private + < 50 followers + no bio = fake (API biography field is reliable)
-  if (isPrivate && hasBio === false && followerCount !== null && followerCount < 50) {
-    score += 40;
-    details.push("pre:private(<50,!bio) +40");
+  // Private + < N followers + no bio = fake (API biography field is reliable)
+  if (
+    isPrivate &&
+    hasBio === false &&
+    followerCount !== null &&
+    followerCount < PRE_SCORE.privateLowFollowersNoBio.maxFc
+  ) {
+    score += PRE_SCORE.privateLowFollowersNoBio.bonus;
+    details.push(`pre:private(<${PRE_SCORE.privateLowFollowersNoBio.maxFc},!bio) +${PRE_SCORE.privateLowFollowersNoBio.bonus}`);
   }
 
   // Following/Follower ratio (metadata-level)
   if (followingCount !== null && followingCount !== undefined) {
-    if (followerCount !== null && followerCount > 0 && followerCount < 10 && followingCount >= 100) {
-      score += 25;
-      details.push(`pre:ratio(<10abn,${followingCount}suivi) +25`);
-    } else if (followerCount === 0 && followingCount >= 50) {
-      score += 25;
-      details.push(`pre:ghost(0abn,${followingCount}suivi) +25`);
+    if (
+      followerCount !== null &&
+      followerCount > 0 &&
+      followerCount < PRE_SCORE.massFollow.maxFc &&
+      followingCount >= PRE_SCORE.massFollow.minFollowing
+    ) {
+      score += PRE_SCORE.massFollow.bonus;
+      details.push(`pre:ratio(<${PRE_SCORE.massFollow.maxFc}abn,${followingCount}suivi) +${PRE_SCORE.massFollow.bonus}`);
+    } else if (followerCount === 0 && followingCount >= PRE_SCORE.ghostFollow.minFollowing) {
+      score += PRE_SCORE.ghostFollow.bonus;
+      details.push(`pre:ghost(0abn,${followingCount}suivi) +${PRE_SCORE.ghostFollow.bonus}`);
     } else if (followerCount !== null && followerCount > 0) {
       const ratio = followingCount / followerCount;
-      if (ratio >= 20) {
-        score += 15;
-        details.push(`pre:ratio(${Math.round(ratio)}x) +15`);
+      if (ratio >= PRE_SCORE.highRatio.minRatio) {
+        score += PRE_SCORE.highRatio.bonus;
+        details.push(`pre:ratio(${Math.round(ratio)}x) +${PRE_SCORE.highRatio.bonus}`);
       }
     }
   }
 
   // Cross-user sightings: other WFC2 users manually flagged this account
-  if (seenByCount !== undefined && seenByCount >= 2) {
-    if (seenByCount >= 5) {
-      score += 25;
-      details.push(`pre:cross_users(${seenByCount}) +25`);
-    } else if (seenByCount >= 3) {
-      score += 20;
-      details.push(`pre:cross_users(${seenByCount}) +20`);
+  if (seenByCount !== undefined && seenByCount >= SIGHTINGS.thresholdLow) {
+    if (seenByCount >= SIGHTINGS.thresholdHigh) {
+      score += SIGHTINGS.bonusHigh;
+      details.push(`pre:cross_users(${seenByCount}) +${SIGHTINGS.bonusHigh}`);
+    } else if (seenByCount >= SIGHTINGS.thresholdMid) {
+      score += SIGHTINGS.bonusMid;
+      details.push(`pre:cross_users(${seenByCount}) +${SIGHTINGS.bonusMid}`);
     } else {
-      score += 15;
-      details.push(`pre:cross_users(${seenByCount}) +15`);
+      score += SIGHTINGS.bonusLow;
+      details.push(`pre:cross_users(${seenByCount}) +${SIGHTINGS.bonusLow}`);
     }
   }
 
@@ -178,11 +204,11 @@ export function preScoreFromMetadata(
   score = Math.max(0, Math.min(100, score));
 
   // RULE: private + bio → never pre-score as fake, always needs full scan
-  if (isPrivate && hasBio === true && score >= 75) {
+  if (isPrivate && hasBio === true && score >= DECISION.preScoreFakeMin) {
     return { score: null, details }; // Force full scan instead of auto-flagging
   }
 
-  if (score >= 75) return { score, details }; // Obvious fake → mark immediately
+  if (score >= DECISION.preScoreFakeMin) return { score, details }; // Obvious fake → mark immediately
 
   return { score: null, details }; // Everything else needs full scan
 }
@@ -209,8 +235,8 @@ export function scoreProfile(
 
   // ── Step 0: Verified badge (strong legitimacy signal, but not automatic OK) ──
   if (data.isVerified) {
-    score -= 25;
-    details.push("verified -25");
+    score += WEIGHTS.verified;
+    details.push(`verified ${WEIGHTS.verified}`);
   }
 
   // ── Step 1: Username pattern ──
@@ -222,60 +248,59 @@ export function scoreProfile(
 
   // ── Step 2: Follower count ──
   if (fc !== null) {
-    if (fc === 0) {
-      score += 15;
-      details.push("0abn +15");
-    } else if (fc <= 10) {
-      score += 10;
-      details.push(`${fc}abn +10`);
-    } else if (fc <= 50) {
-      score += 5;
-      details.push(`${fc}abn +5`);
-    } else if (fc >= 500) {
-      score -= 10;
-      details.push(`${fc}abn -10`);
-    } else if (fc >= 100) {
-      score -= 5;
-      details.push(`${fc}abn -5`);
+    if (fc === FC_BANDS.zero) {
+      score += WEIGHTS.fcZero;
+      details.push(`0abn +${WEIGHTS.fcZero}`);
+    } else if (fc <= FC_BANDS.veryLow) {
+      score += WEIGHTS.fcVeryLow;
+      details.push(`${fc}abn +${WEIGHTS.fcVeryLow}`);
+    } else if (fc <= FC_BANDS.low) {
+      score += WEIGHTS.fcLow;
+      details.push(`${fc}abn +${WEIGHTS.fcLow}`);
+    } else if (fc >= FC_BANDS.high) {
+      score += WEIGHTS.fcHigh;
+      details.push(`${fc}abn ${WEIGHTS.fcHigh}`);
+    } else if (fc >= FC_BANDS.medium) {
+      score += WEIGHTS.fcMedium;
+      details.push(`${fc}abn ${WEIGHTS.fcMedium}`);
     }
   } else {
-    score += 5;
-    details.push("abn? +5");
+    score += WEIGHTS.fcUnknown;
+    details.push(`abn? +${WEIGHTS.fcUnknown}`);
   }
 
   // ── Step 2b: Following/Follower ratio ──
   if (followingCount !== null && followingCount !== undefined) {
     if (fc !== null && fc > 0) {
       const ratio = followingCount / fc;
-      if (fc < 10 && followingCount >= 100) {
-        // < 10 followers + follows 100+ → très suspect (mass-follow bot)
-        score += 30;
-        details.push(`ratio(<10abn,${followingCount}suivi) +30`);
-      } else if (followingCount >= 2000 && fc < 100) {
-        score += 30;
-        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +30`);
-      } else if (followingCount >= 500 && fc < 50) {
-        score += 20;
-        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +20`);
-      } else if (fc < 10 && followingCount >= 50) {
-        // < 10 followers + follows 50+ → suspect
-        score += 20;
-        details.push(`ratio(<10abn,${followingCount}suivi) +20`);
-      } else if (ratio >= 20) {
-        score += 15;
-        details.push(`ratio(${Math.round(ratio)}x) +15`);
-      } else if (ratio >= 10) {
-        score += 10;
-        details.push(`ratio(${Math.round(ratio)}x) +10`);
-      } else if (ratio <= 0.5 && fc >= 200) {
+      if (fc < RATIO.massFollowVeryHigh.maxFc && followingCount >= RATIO.massFollowVeryHigh.minFollowing) {
+        // Very low followers + many following → mass-follow bot
+        score += RATIO.massFollowVeryHigh.bonus;
+        details.push(`ratio(<${RATIO.massFollowVeryHigh.maxFc}abn,${followingCount}suivi) +${RATIO.massFollowVeryHigh.bonus}`);
+      } else if (followingCount >= RATIO.extremeRatio.minFollowing && fc < RATIO.extremeRatio.maxFc) {
+        score += RATIO.extremeRatio.bonus;
+        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +${RATIO.extremeRatio.bonus}`);
+      } else if (followingCount >= RATIO.highRatio.minFollowing && fc < RATIO.highRatio.maxFc) {
+        score += RATIO.highRatio.bonus;
+        details.push(`ratio(${followingCount}/${fc}=${Math.round(ratio)}x) +${RATIO.highRatio.bonus}`);
+      } else if (fc < RATIO.massFollowSmall.maxFc && followingCount >= RATIO.massFollowSmall.minFollowing) {
+        score += RATIO.massFollowSmall.bonus;
+        details.push(`ratio(<${RATIO.massFollowSmall.maxFc}abn,${followingCount}suivi) +${RATIO.massFollowSmall.bonus}`);
+      } else if (ratio >= RATIO.suspicious.minRatio) {
+        score += RATIO.suspicious.bonus;
+        details.push(`ratio(${Math.round(ratio)}x) +${RATIO.suspicious.bonus}`);
+      } else if (ratio >= RATIO.elevated.minRatio) {
+        score += RATIO.elevated.bonus;
+        details.push(`ratio(${Math.round(ratio)}x) +${RATIO.elevated.bonus}`);
+      } else if (ratio <= RATIO.creator.maxRatio && fc >= RATIO.creator.minFc) {
         // Followed by many, follows few → creator pattern → legit
-        score -= 10;
-        details.push(`ratio(${Math.round(ratio * 10) / 10}x,${fc}abn) -10`);
+        score += RATIO.creator.bonus;
+        details.push(`ratio(${Math.round(ratio * 10) / 10}x,${fc}abn) ${RATIO.creator.bonus}`);
       }
-    } else if (fc === 0 && followingCount >= 50) {
-      // 0 followers but follows 50+ → mass-follow bot
-      score += 25;
-      details.push(`ghost_follow(0abn,${followingCount}suivi) +25`);
+    } else if (fc === 0 && followingCount >= RATIO.ghost.minFollowing) {
+      // 0 followers but follows many → mass-follow bot
+      score += RATIO.ghost.bonus;
+      details.push(`ghost_follow(0abn,${followingCount}suivi) +${RATIO.ghost.bonus}`);
     }
   }
 
@@ -290,42 +315,42 @@ export function scoreProfile(
       // This keeps the score neutral for posts, letting other signals decide
       details.push("post? (unknown)");
     } else if (data.postCount === 0) {
-      score += 35;
-      details.push("0post +35");
-    } else if (data.postCount <= 2) {
-      score += 25;
-      details.push(`${data.postCount}post +25`);
+      score += WEIGHTS.zeroPosts;
+      details.push(`0post +${WEIGHTS.zeroPosts}`);
+    } else if (data.postCount <= POSTS.fewPostsMax) {
+      score += WEIGHTS.fewPosts;
+      details.push(`${data.postCount}post +${WEIGHTS.fewPosts}`);
       if (data.allPostsRecent) {
-        score += 20;
-        details.push("spam(<72h) +20");
+        score += WEIGHTS.spamRecent;
+        details.push(`spam(<72h) +${WEIGHTS.spamRecent}`);
       }
-    } else if (data.postCount <= 4) {
-      score += 15;
-      details.push(`${data.postCount}post +15`);
+    } else if (data.postCount <= POSTS.somePostsMax) {
+      score += WEIGHTS.somePosts;
+      details.push(`${data.postCount}post +${WEIGHTS.somePosts}`);
       if (data.allPostsRecent) {
-        score += 20;
-        details.push("spam(<72h) +20");
+        score += WEIGHTS.spamRecent;
+        details.push(`spam(<72h) +${WEIGHTS.spamRecent}`);
       }
-    } else if (data.postCount >= 5) {
+    } else if (data.postCount >= POSTS.activePostsMin) {
       hasPosts = true;
-      score -= 15;
-      details.push(`${data.postCount}post -15`);
+      score += WEIGHTS.activePosts;
+      details.push(`${data.postCount}post ${WEIGHTS.activePosts}`);
     }
 
     // Step 2b: Spam detection (only when post count is known)
-    if (!postCountUnknown && data.duplicateRatio >= 0.5 && data.postCount >= 3) {
+    if (!postCountUnknown && data.duplicateRatio >= POSTS.duplicateRatioMin && data.postCount >= POSTS.duplicateMinPosts) {
       isSpambot = true;
       if (hasPosts) {
-        score += 15;
+        score += WEIGHTS.cancelDupePostBonus;
         details.push("dupes! cancel post");
       }
-      score += 40;
-      details.push(`spam_dupes(${Math.round(data.duplicateRatio * 100)}%) +40`);
+      score += WEIGHTS.duplicatePosts;
+      details.push(`spam_dupes(${Math.round(data.duplicateRatio * 100)}%) +${WEIGHTS.duplicatePosts}`);
     }
 
     if (data.hasSpamKeywords) {
-      score += 25;
-      details.push("spam_keywords +25");
+      score += WEIGHTS.spamKeywords;
+      details.push(`spam_keywords +${WEIGHTS.spamKeywords}`);
       isSpambot = true;
     }
   }
@@ -336,39 +361,49 @@ export function scoreProfile(
       // Replies status is also unknown in metadata-only scan — skip
       details.push("rep? (unknown)");
     } else if (!data.hasReplies) {
-      score += 25;
-      details.push("0rep +25");
+      score += WEIGHTS.noReplies;
+      details.push(`0rep +${WEIGHTS.noReplies}`);
     } else if (isSpambot) {
-      score += 10;
-      details.push("rep_spam +10");
+      score += WEIGHTS.repliesSpam;
+      details.push(`rep_spam +${WEIGHTS.repliesSpam}`);
     } else if (hasPosts) {
-      score -= 15;
-      details.push("rep+posts -15");
+      score += WEIGHTS.repliesActive;
+      details.push(`rep+posts ${WEIGHTS.repliesActive}`);
     } else {
-      score += 10;
-      details.push("rep_no_post +10");
+      score += WEIGHTS.repliesNoPosts;
+      details.push(`rep_no_post +${WEIGHTS.repliesNoPosts}`);
     }
   }
 
   // ── Step 4: Combos ──
   if (!data.isPrivate && !postCountUnknown) {
     if (data.postCount === 0 && !data.hasReplies) {
-      score += 20;
-      details.push("combo(0p+0r) +20");
+      score += WEIGHTS.zeroPostsZeroReplies;
+      details.push(`combo(0p+0r) +${WEIGHTS.zeroPostsZeroReplies}`);
     }
     if (data.postCount === 0 && data.hasReplies) {
-      score += 10;
-      details.push("spammer(0p+rep) +10");
+      score += WEIGHTS.zeroPostsHasReplies;
+      details.push(`spammer(0p+rep) +${WEIGHTS.zeroPostsHasReplies}`);
     }
     // Inactive: few posts, no replies, no bio → strong fake indicator
-    if (data.postCount >= 1 && data.postCount <= 4 && !data.hasReplies && !data.hasBio) {
-      score += 15;
-      details.push("inactive +15");
+    if (
+      data.postCount >= COMBOS.inactiveMinPosts &&
+      data.postCount <= COMBOS.inactiveMaxPosts &&
+      !data.hasReplies &&
+      !data.hasBio
+    ) {
+      score += WEIGHTS.inactiveProfile;
+      details.push(`inactive +${WEIGHTS.inactiveProfile}`);
     }
     // Low followers + very few posts + no replies = ghost account
-    if (fc !== null && fc <= 50 && data.postCount <= 2 && !data.hasReplies) {
-      score += 10;
-      details.push("ghost(<50abn,<3post,0rep) +10");
+    if (
+      fc !== null &&
+      fc <= COMBOS.ghostMaxFollowers &&
+      data.postCount <= COMBOS.ghostMaxPosts &&
+      !data.hasReplies
+    ) {
+      score += WEIGHTS.ghostAccount;
+      details.push(`ghost(<${COMBOS.ghostMaxFollowers}abn,<${COMBOS.ghostMaxPosts + 1}post,0rep) +${WEIGHTS.ghostAccount}`);
     }
   }
 
@@ -376,58 +411,58 @@ export function scoreProfile(
   const zeroActivity = data.postCount === 0 && !data.hasReplies && !data.isPrivate;
   if (data.hasBio) {
     if (zeroActivity) {
-      score -= 5;
-      details.push("bio(inactive) -5");
+      score += WEIGHTS.bioInactive;
+      details.push(`bio(inactive) ${WEIGHTS.bioInactive}`);
     } else {
-      score -= 10;
-      details.push("bio -10");
+      score += WEIGHTS.bio;
+      details.push(`bio ${WEIGHTS.bio}`);
     }
   } else {
-    score += 20;
-    details.push("!bio +20");
+    score += WEIGHTS.noBio;
+    details.push(`!bio +${WEIGHTS.noBio}`);
   }
 
   // ── Step 6: Private ──
   if (data.isPrivate) {
     if (strictPrivate) {
-      score += 10;
-      details.push("private +10");
+      score += PRIVATE_ACCOUNT.strictBonus;
+      details.push(`private +${PRIVATE_ACCOUNT.strictBonus}`);
     } else {
       // Count legitimacy signals
       const legit = [data.hasBio, data.hasLinkInBio, data.hasRealPic, data.hasIgLink].filter(
         Boolean
       ).length;
-      if (legit >= 3) {
-        score -= 15;
-        details.push(`private(legit:${legit}sig) -15`);
-      } else if (legit >= 2) {
-        score -= 5;
-        details.push(`private(semi:${legit}sig) -5`);
-      } else if (fc !== null && fc < 10) {
-        score += 40;
-        details.push("private(<10abn) +40");
-      } else if (fc !== null && fc < 30) {
+      if (legit >= PRIVATE_ACCOUNT.legitSignalsHigh.min) {
+        score += PRIVATE_ACCOUNT.legitSignalsHigh.bonus;
+        details.push(`private(legit:${legit}sig) ${PRIVATE_ACCOUNT.legitSignalsHigh.bonus}`);
+      } else if (legit >= PRIVATE_ACCOUNT.legitSignalsMid.min) {
+        score += PRIVATE_ACCOUNT.legitSignalsMid.bonus;
+        details.push(`private(semi:${legit}sig) ${PRIVATE_ACCOUNT.legitSignalsMid.bonus}`);
+      } else if (fc !== null && fc < PRIVATE_ACCOUNT.veryLowFollowers.maxFc) {
+        score += PRIVATE_ACCOUNT.veryLowFollowers.bonus;
+        details.push(`private(<${PRIVATE_ACCOUNT.veryLowFollowers.maxFc}abn) +${PRIVATE_ACCOUNT.veryLowFollowers.bonus}`);
+      } else if (fc !== null && fc < PRIVATE_ACCOUNT.lowFollowersAnon.maxFc) {
         if (!data.hasBio && !data.hasRealPic) {
-          score += 30;
-          details.push("private(<30,!bio,!pic) +30");
+          score += PRIVATE_ACCOUNT.lowFollowersAnon.bonus;
+          details.push(`private(<${PRIVATE_ACCOUNT.lowFollowersAnon.maxFc},!bio,!pic) +${PRIVATE_ACCOUNT.lowFollowersAnon.bonus}`);
         } else if (!data.hasBio || !data.hasRealPic) {
-          score += 20;
-          details.push("private(<30,partial) +20");
+          score += PRIVATE_ACCOUNT.lowFollowersPartial.bonus;
+          details.push(`private(<${PRIVATE_ACCOUNT.lowFollowersPartial.maxFc},partial) +${PRIVATE_ACCOUNT.lowFollowersPartial.bonus}`);
         } else {
-          score += 5;
-          details.push("private(<30,bio+pic) +5");
+          score += PRIVATE_ACCOUNT.lowFollowersOk.bonus;
+          details.push(`private(<${PRIVATE_ACCOUNT.lowFollowersOk.maxFc},bio+pic) +${PRIVATE_ACCOUNT.lowFollowersOk.bonus}`);
         }
       } else {
-        score += 5;
-        details.push("private(30+) +5");
+        score += PRIVATE_ACCOUNT.standard.bonus;
+        details.push(`private(${PRIVATE_ACCOUNT.lowFollowersOk.maxFc}+) +${PRIVATE_ACCOUNT.standard.bonus}`);
       }
 
       // ── Private combo rules (additive, applied after base private scoring) ──
-      // Rule 1: private + < 50 followers + no bio = fake
+      // Rule 1: private + < N followers + no bio = fake
       // (real users who bother following you usually have at least a bio)
-      if (!data.hasBio && fc !== null && fc < 50) {
-        score += 40;
-        details.push("private(<50,!bio) +40");
+      if (!data.hasBio && fc !== null && fc < PRIVATE_ACCOUNT.noBioLowFollowers.maxFc) {
+        score += PRIVATE_ACCOUNT.noBioLowFollowers.bonus;
+        details.push(`private(<${PRIVATE_ACCOUNT.noBioLowFollowers.maxFc},!bio) +${PRIVATE_ACCOUNT.noBioLowFollowers.bonus}`);
       }
     }
   }
@@ -435,45 +470,45 @@ export function scoreProfile(
   // ── Step 7: Full name ──
   // IMPORTANT: Having a name is NOT a strong legitimacy signal (fakes often have realistic names)
   if (!data.hasFullName) {
-    score += 5;
-    details.push("!name +5");
+    score += WEIGHTS.noFullName;
+    details.push(`!name +${WEIGHTS.noFullName}`);
   }
   // Having a name: no bonus/penalty (was -5 before)
 
   // ── Step 8: Legitimacy signals (links + media) ──
   if (data.hasLinkInBio) {
-    score -= 15;
-    details.push("link_bio -15");
+    score += WEIGHTS.linkInBio;
+    details.push(`link_bio ${WEIGHTS.linkInBio}`);
   }
   if (data.hasIgLink) {
     if (data.hasBio || data.hasLinkInBio) {
-      score -= 10;
-      details.push("ig_link(bio) -10");
+      score += WEIGHTS.igLinkWithBio;
+      details.push(`ig_link(bio) ${WEIGHTS.igLinkWithBio}`);
     }
   }
   if (data.hasMedia) {
-    score -= 15;
-    details.push("has_media -15");
+    score += WEIGHTS.hasMedia;
+    details.push(`has_media ${WEIGHTS.hasMedia}`);
   }
 
   // ── Step 9: Cross-user sightings ──
-  if (seenByCount !== undefined && seenByCount >= 2) {
-    if (seenByCount >= 5) {
-      score += 25;
-      details.push(`cross_users(${seenByCount}) +25`);
-    } else if (seenByCount >= 3) {
-      score += 20;
-      details.push(`cross_users(${seenByCount}) +20`);
+  if (seenByCount !== undefined && seenByCount >= SIGHTINGS.thresholdLow) {
+    if (seenByCount >= SIGHTINGS.thresholdHigh) {
+      score += SIGHTINGS.bonusHigh;
+      details.push(`cross_users(${seenByCount}) +${SIGHTINGS.bonusHigh}`);
+    } else if (seenByCount >= SIGHTINGS.thresholdMid) {
+      score += SIGHTINGS.bonusMid;
+      details.push(`cross_users(${seenByCount}) +${SIGHTINGS.bonusMid}`);
     } else {
-      score += 15;
-      details.push(`cross_users(${seenByCount}) +15`);
+      score += SIGHTINGS.bonusLow;
+      details.push(`cross_users(${seenByCount}) +${SIGHTINGS.bonusLow}`);
     }
   }
 
   let finalScore = Math.max(0, Math.min(100, score));
-  const effectiveThreshold = threshold || 70;
+  const effectiveThreshold = threshold || DECISION.defaultFakeMin;
 
-  // RULE: private + bio → toujours "à vérifier", jamais fake direct
+  // RULE: private + bio → always "to review", never auto-fake
   if (data.isPrivate && data.hasBio && finalScore >= effectiveThreshold) {
     finalScore = effectiveThreshold - 1;
     details.push("private+bio → review (cap)");
@@ -489,6 +524,6 @@ export function scoreProfile(
     score: finalScore,
     breakdown: details,
     isFake: finalScore >= effectiveThreshold,
-    toReview: finalScore >= effectiveThreshold - 20 && finalScore < effectiveThreshold,
+    toReview: finalScore >= effectiveThreshold - DECISION.reviewWindow && finalScore < effectiveThreshold,
   };
 }

@@ -1,7 +1,13 @@
 /**
  * RateTracker — monitors action frequency and error rates.
  *
- * Fixed rate: 50 actions/hour max. No daily limit. No profiles.
+ * No hard hourly cap (RATE_LIMIT_HOUR is intentionally set very high in
+ * @shared/constants); pacing is enforced via the HumanPacer's randomized
+ * delays between actions. The hourly counter exists for telemetry/UI display
+ * and to back a future rate-limit toggle.
+ *
+ * The error-rate logic (consecutive errors + sliding window) is the actual
+ * runtime brake — see shouldStop().
  */
 
 import type { Stats } from "@shared/types";

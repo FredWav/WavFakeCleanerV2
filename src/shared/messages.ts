@@ -24,6 +24,8 @@ export type RequestMessage =
   | { type: "SUBMIT_COMMUNITY_VOTE"; payload: { username: string; verdict: "fake" | "ok"; score: number } }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
+  | { type: "EXPORT_LICENSE" }
+  | { type: "IMPORT_LICENSE"; payload: { backup: unknown } }
   | { type: "KEEPALIVE_PING" };
 
 // Messages FROM service worker TO sidepanel (broadcast)

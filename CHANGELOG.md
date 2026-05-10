@@ -9,6 +9,293 @@ Chrome Web Store.
 
 ---
 
+## [2.2.2] — 2026-05-10
+
+### Fixed
+- **Early-stop du fetch reformule** (annule et remplace 2.2.1) : la version
+  precedente exigeait 85% de couverture de la liste totale avant de
+  s'arreter, ce qui forcait un re-fetch quasi-complet a chaque cycle.
+  Mauvais compromis : l'utilisateur ne veut pas re-paginer ses 10000
+  followers chaque fois qu'il en a 500 nouveaux.
+
+  La nouvelle heuristique stoppe quand on observe **3 pages consecutives
+  sans aucun nouveau follower** (vs. anciennes pages connues a 80%+). Plus
+  robuste car :
+  - Tolere un follower nouveau intercale dans une page sinon "tail"
+    (Threads ne garantit pas un ordre strictement chronologique).
+  - Capture l'integralite du delta meme avec plusieurs centaines de
+    nouveaux abonnes (le tail "0 nouveau" arrive forcement apres tous les
+    nouveaux).
+  - Ne re-fetch jamais inutilement la liste complete.
+  - Reste correct sur un fetch initial (DB vide) puisque la branche est
+    gardee par `if (hasKnown && ...)`.
+
+### Removed
+- Garde-fou de couverture (`coverage >= 0.85`) introduit en 2.2.1, devenu
+  inutile avec la nouvelle heuristique.
+
+---
+
+## [2.2.1] — 2026-05-07
+
+### Fixed
+- **Recuperation des followers s'arretait trop tot apres un fetch partiel**
+  — l'early-stop dans `handleFetchFollowers` se declenchait des que 3 pages
+  consecutives presentaient ≥80% de followers deja en DB, en supposant
+  qu'un fetch precedent avait collecte la liste complete. Apres un fetch
+  partiel (clic Stop, 429 long, crash mid-fetch), la DB ne contenait que
+  les followers les plus recents et le re-fetch s'arretait a la page 3 en
+  ratant 80-90% des anciens.
+
+  Le garde-fou ajoute exige desormais une couverture ≥85% du nombre total
+  de followers annonce par Threads (champ `follower_count` du profil) avant
+  d'autoriser l'early-stop. Si le total est inconnu (0), l'early-stop est
+  desactive et la pagination va jusqu'au bout naturel (`max_id === null`).
+
+### Added
+- **`resolveUserProfile()`** dans `api-interceptor.ts` — fonction qui
+  remplace `resolveUserId()` (toujours expose pour compat) en renvoyant
+  `{ userId, followerCount }`. Utilise le meme endpoint
+  `/api/v1/users/web_profile_info/`, parse `follower_count` du payload.
+
+### Changed
+- `handleFetchFollowers` log desormais le pourcentage de couverture quand
+  l'early-stop est saute, pour debogage.
+
+---
+
+## [2.2.0] — 2026-05-07
+
+### Added
+- **Codes de licence courts `WFC-XXXX-XXXX`** — fini les `cs_live_xxx` de
+  70 caracteres tires d'un ID Stripe interne. Apres paiement, le worker
+  emet un code court (12 caracteres utiles, alphabet sans 0/O/1/I/L pour
+  eviter la confusion). Le code apparait en gros sur la page de succes
+  Stripe avec un bouton "Cliquer pour copier" ; le client le tape dans
+  l'extension et c'est fini.
+  - **Format** : `WFC-XXXX-XXXX` ou X = `[A-Z2-9]`. Entropie 31^8 ≈ 8.5×10^11.
+  - **Genere cote Worker** via `getOrCreateLicenseCode()` : idempotent par
+    session Stripe (re-utilise le meme code si la meme session est verifiee
+    deux fois), avec retry sur collision.
+  - **Stocke en D1** dans la nouvelle table `licenses` avec
+    `session_id_hash` UNIQUE pour empecher les doubles emissions.
+  - **Re-verifiable a vie** via `GET /verify?code=WFC-XXXX-XXXX`.
+- **Migration automatique des anciens clients** — les licences activees
+  avec `cs_live_xxx` (avant 2.2) recoivent leur code court a la prochaine
+  re-verification. La cle stockee dans `chrome.storage` est upgradee
+  automatiquement vers `WFC-XXXX-XXXX`. Aucune action requise du client.
+- **Page de succes Stripe redessinee** — affiche le code en grand caractere
+  monospace, avec bouton copier + bloc d'instructions pas-a-pas pour
+  l'activation manuelle. Fallback gracieux si la generation echoue (continue
+  d'afficher l'ID Stripe pour debogage).
+
+### Changed
+- `LICENCE_VERIFY_URL` accepte desormais `?code=WFC-...` en plus du
+  `?session_id=cs_...` historique. Les deux formats coexistent : pas de
+  breaking change pour les anciens deploiements.
+- `ACTIVATE_LICENSE` dans le service worker detecte le format de l'input
+  (Stripe / WFC code / Ed25519 owner token) et route automatiquement.
+  Placeholder du champ d'activation passe a `WFC-XXXX-XXXX` (FR/EN/ES).
+- `licence-activator.ts` lit `data-license-code` du DOM en priorite (depuis
+  la nouvelle page de succes) et fallback sur `?session_id=` pour la
+  retro-compatibilite.
+
+### Schema D1 (v3)
+- Nouvelle table `licenses(code PK, session_id_hash UNIQUE, created_at, revoked)`.
+- Index sur `session_id_hash` pour la lookup d'idempotence.
+- Deploy : `npx wrangler d1 execute wfc-community --remote --file worker-schema.sql`
+
+### Migration recommandee
+1. Deploye le worker mis a jour (`npx wrangler deploy` apres le SQL ci-dessus).
+2. Publie l'extension 2.2.0 sur le Chrome Web Store.
+3. Les anciens clients activeront automatiquement leur code court a la
+   prochaine ouverture du panel licence (re-verif silencieuse via le hook
+   d'auto-refresh communityToken existant).
+
+---
+
+## [2.1.1] — 2026-05-07
+
+### Fixed
+- **Followers fantomes ("owner sub-pages")** — le DOM scrape fallback
+  ingerait `/@user/media` comme username `usermedia` (le slash etait
+  strippe avant le garde-fou). Corrige dans `main.ts` ; un nettoyage
+  one-shot tourne au boot du SW (`purgeOwnerSubPageFakes`) pour purger
+  les entrees historiques matchant `<owner><tab>` (media/replies/tagged
+  /reposts/saved/followers/following/liked).
+
+### Added
+- **Persistance licence cross-device** — chaque `saveLicense` mirror
+  desormais vers `chrome.storage.sync` (~100 KB, synchronise via Google
+  account). `getLicense` restaure automatiquement depuis sync si
+  `chrome.storage.local` est vide. Une desinstallation + reinstallation
+  du navigateur ne perd plus la licence tant que l'utilisateur reste
+  connecte au meme compte Chrome.
+- **Backup / restore licence par fichier** — nouveau bouton
+  "Telecharger ma licence" dans le panel Licence : telecharge un
+  `wfc-license-YYYY-MM-DD.json` portable. Bouton "Restaurer depuis un
+  fichier" (visible meme licence inactive) le re-importe et relance la
+  verification (Stripe ou Ed25519). Le `recoveryToken` est preserve a
+  l'activation pour que le round-trip fonctionne pour les licences
+  owner (`wfc_lic_*`) qui obfusquaient avant le token original.
+
+### Changed
+- **`LicenseInfo.recoveryToken`** — nouveau champ optionnel sur le type
+  partage. Stocke le token d'activation original (cs_live_… ou wfc_lic_…)
+  pour que l'export inclue ce qu'il faut pour re-activer ailleurs.
+
+---
+
+## [2.1.0] — 2026-05-06
+
+Release de fondation : refactor structurel + durcissements + resilience MV3.
+Aucun changement fonctionnel cote UI ; le scoring, le fetch et le clean
+cycle se comportent identiquement a 2.0.4.
+
+### Changed
+- **Refactor pipeline** — `src/background/pipeline.ts` (1234 lignes, 539 lignes
+  pour `runCleanCycleInternal`) decompose en sous-modules dedies :
+  - `pipeline/i18n.ts` : table MSG + helpers `m()` / `loadLang()` /
+    `fetchErrorToUserMessage()` (140 lignes extraites)
+  - `pipeline/state.ts` : `log()`, `broadcast()`, `broadcastStats()`,
+    `updateState()` (avec providers injectes pour rester decouple du runtime)
+  - `pipeline/tab-manager.ts` : cycle de vie de l'onglet arriere-plan
+    (`getOrCreateBackgroundTab`, `closeBackgroundTab`, `waitForTabLoad`,
+    `findThreadsTab`, `tearDownBackgroundTab`)
+  - `pipeline/messenger.ts` : `ensureContentScript`, `sendToContentScript`,
+    discriminateurs typés `isChannelLostError` / `isTabGoneError`
+  - `pipeline/follower-updater.ts` : helpers `markFake` / `markToReview` /
+    `markOk` / `markRemoved` / `markNotFound` / `markScanError` qui dedupent
+    les 5 blocs `updateFollower(...)` quasi-identiques (prevenait la derive
+    quand un nouveau champ etait ajoute a un seul des 3 chemins de scoring)
+  - `pipeline/timings.ts` : magic numbers du pacing (TAB.\*, PROFILE_VISIT.\*,
+    COOLDOWN.\*, PACER.\*) regroupes en un seul fichier
+  - `pipeline.ts` reduit a **922 lignes (-25 %)**
+- **Centralisation seuils scoring** — `src/shared/scoring-config.ts` regroupe
+  tous les seuils tuneables (DECISION, USERNAME, FC_BANDS, SIGHTINGS, RATIO,
+  PRE_SCORE, WEIGHTS, POSTS, COMBOS, PRIVATE_ACCOUNT). `scorer.ts` les importe
+  au lieu de hardcoder. Le calcul est strictement equivalent — les noms
+  remplacent les literaux. Rend possible un override A/B sans rebuild.
+- **Commentaire RATE_LIMIT clarifie** — `rate-tracker.ts` indiquait "50/h max"
+  alors que `RATE_LIMIT_HOUR = 9999`. Doc alignee : la cadence est imposee
+  par `HumanPacer`, le compteur horaire sert a la telemetrie/UI uniquement.
+- **Sidepanel `useEffect`** — `App.tsx` decoupe en trois effets distincts
+  (settings/onboarding, licence load, communityToken auto-refresh) avec
+  cleanup `cancelled` flag pour eviter les setState apres unmount. L'effet
+  d'auto-refresh re-reagit maintenant correctement quand la cle de licence
+  change (avant : ne s'executait qu'une fois, ratait les nouvelles licences).
+
+### Added
+- **Resilience MV3** — l'ID de l'onglet arriere-plan est mirrore dans
+  `chrome.storage.session` apres chaque mutation. Au boot du service worker
+  (qui se termine apres ~30 s d'inactivite en MV3), `restoreSessionState()`
+  reseed le cache memoire si la tab existe encore — sinon nettoie l'etat
+  obsolete. Plus de doublons d'onglet apres recyclage du SW.
+- **Hook upgrade IndexedDB** — `DB_VERSION` passe a 2 avec un `upgrade(db,
+  oldVersion)` qui chaine les migrations (v0→v1 reproduit l'init existant,
+  v1→v2 no-op). Pose le pattern pour les futurs ajouts de champs/index sans
+  casser les utilisateurs existants.
+- **`chrome.runtime.onSuspend` handler** — marque le pipeline comme avorte
+  (`lastError: "service_worker_suspended"`) si le SW s'eteint en plein
+  cycle. Le sidepanel affiche l'etat correct au prochain ouverture au lieu
+  d'un "running" fantome.
+- **Bridge MAIN-world durci** — `main-world-bridge.ts` lit un secret
+  per-instance (UUID v4) via `dataset.wfcSecret` au chargement du script.
+  Toute requete sans le secret matchant est ignoree ; les responses
+  l'incluent pour que `api-interceptor.ts` puisse rejeter les messages
+  forges. Bloque l'eavesdropping/spoofing par scripts tiers sur la page
+  Threads (defense-in-depth — la page voit deja les donnees, mais le
+  bridge n'est plus un canal trivialement exploitable).
+- **Allowlist endpoints bridge** — le bridge refuse desormais toute URL
+  ne matchant pas `^https://(?:www\.)?threads\.(?:net|com)/api/`. Ferme
+  un risque SSRF theorique si un script malveillant prenait le contrele
+  du content script isolated.
+- **Queue communauté persistee** — votes et sightings qui echouent
+  (offline, 5xx, SW restart) sont mis en queue `chrome.storage.local`
+  (cap 500 entrees, max 5 attempts par item). Une alarme Chrome de
+  15 min replay la queue : 4xx droppes (auth invalide, rate-limited),
+  2xx removes, 5xx/network re-tentes. Avant : `.catch(() => {})`
+  silencieusement perdait les votes en cas d'indispo Worker.
+- **Drift telemetry** — `src/shared/selector-strategies.ts` introduit un
+  pattern de chaine de fallbacks ordonnee + callback `onDrift`.
+  `main.ts` route les drift events vers le service worker comme log
+  category `"drift"` ; `App.tsx` affiche un toast "Threads a change son
+  interface — l'extension s'adapte" la premiere fois par session.
+  Foundation prete pour migrer les selecteurs critiques (modal,
+  followers count, menu) au pattern strategies dans une release suivante.
+- **`is429()` multi-locale** — etend la detection 429 de FR/EN aux
+  ES/PT/DE/IT/NL (page-not-working et too-many-requests dans 7 langues).
+  Reduit le risque qu'un utilisateur non-anglophone voie ses cycles
+  echouer silencieusement faute de detection du rate-limit.
+
+### Performance
+- **Scraper DOM scoping** — `extractProfileFromDom()` dans
+  `threads-scraper.ts` utilise un nouveau helper `getProfileScope()` (=
+  `<main>` ou fallback `<body>`) au lieu de querySelectorAll
+  document-wide pour follower count, profile pic, full name, link-in-bio.
+  Reduit le nombre de noeuds scannes de ~hundreds (feed inclus) a
+  ~dizaines, et evite les faux-positifs (mentions "X followers" dans des
+  posts du feed qui poisonnaient la detection).
+- **`navigateToTab` early-exit** — verifie le texte avant de forcer un
+  reflow via `getBoundingClientRect()`. Sur un feed populated, gain
+  ~ms-mesurables (avant : reflow par candidat, ~hundreds de candidats).
+
+### Security
+- **Worker rate-limit atomique** — `checkAndBumpRateLimit` dans
+  `stripe-verify-worker.js` remplace le SELECT-puis-INSERT race-condition
+  par un `INSERT ... ON CONFLICT DO UPDATE ... RETURNING count` atomique.
+  Avant : N requetes concurrentes pouvaient toutes voir count<limit et
+  bumper au-dessus. Maintenant : la requete qui pousse count > limit est
+  la premiere rejetee.
+- **Erreurs worker opaquifiees** — le top-level catch et `/verify`
+  retournaient `String(e)` au client (potentiellement stack traces ou
+  details infra Stripe/Cloudflare). Remplace par `{error: "internal_error"}`
+  ou `{error: "verify_failed"}` ; vraie erreur loggee cote worker
+  uniquement (visible operateur, jamais client).
+
+### Internal
+- Build vite produit toujours les 6 bundles MV3 attendus (service-worker.js,
+  content.js, main-world-bridge.js, licence-activator.js, sidepanel-\*.js,
+  popup-\*.js).
+- Aucun fichier `.test.ts` ajoute dans cette release — le backlog 2.2 prevoit
+  Vitest sur `scorer.ts`, `pacer.ts`, `pipeline/follower-updater.ts`,
+  `pipeline/messenger.ts`, et la queue communaute.
+
+### Verification manuelle recommandee avant release
+1. Build clean : `npm run build` — 0 warning TS.
+2. Fetch complet sur compte de test (~100 followers) : pages incrementales
+   sauvegardees, pas de duplication.
+3. Clean cycle 50 followers en mode free : pas de regression du scoring,
+   suppression OK.
+4. Mode continu 30+ min : SW se recycle au moins 1× ; reprise sans
+   creation d'onglet duplique.
+5. Couper le wifi 30s pendant un cycle clean : votes mis en queue, replay
+   automatique a la reconnexion (visible dans logs SW).
+6. Verifier dans DevTools console de la page Threads que le bridge accepte
+   bien des URLs `/api/v1/...` mais refuse une URL forgee (ex.
+   `attacker.com`) — devrait retourner `error: "url_not_allowed"`.
+
+---
+
+## [2.0.4] — 2026-05-01
+
+### Fixed
+- **Detection des comptes prives plus fiable** — deux problemes combines :
+  1. `selectors.ts` ne couvrait que 3 regex EN/FR partielles. Ajout des
+     phrases banner pour ES, PT, DE, IT, NL, JP et ZH (variantes courantes
+     incluses, ex. "this is a private account" qui n'etait pas matche).
+  2. `pipeline.ts` utilisait `??` pour fusionner `profileData.isPrivate` et
+     `follower.isPrivate`. `false` n'etant pas nullish, un DOM scan rate
+     ecrasait le booleen correct venu de l'API followers. Remplace par `||`
+     (priorite a "prive" si l'une des deux sources le voit).
+- **Detection DOM precise** — `extractProfileFromDom` cherche maintenant
+  d'abord dans les headings (`h1`/`h2`/`h3`/`[role=heading]`) et les
+  attributs `aria-label`/`title`, puis fallback sur `bodyText`. Reduit les
+  faux positifs venant de bios contenant le mot "private" et augmente le
+  taux de detection sur les variantes de markup Threads.
+
+---
+
 ## [2.0.3] — 2026-05-01
 
 ### Fixed

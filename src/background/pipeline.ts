@@ -7,11 +7,8 @@
 
 import type {
   FollowerRecord,
-  PipelineState,
-  Settings,
-  LogEntry,
 } from "@shared/types";
-import type { ContentFollowerMeta, ContentProfileData, BroadcastMessage } from "@shared/messages";
+import type { ContentFollowerMeta, ContentProfileData } from "@shared/messages";
 import {
   CYCLE_SIZE,
   INTER_CYCLE_PAUSE,
@@ -28,9 +25,6 @@ import {
   getFollowersPending,
   getAllFollowerUsernames,
   getSettings,
-  savePipelineState,
-  getPipelineState,
-  computeStats,
   addActionLog,
   createScanSession,
   updateScanSession,
@@ -43,119 +37,46 @@ import { HumanPacer, sleep } from "./pacer";
 import { startKeepAlive, stopKeepAlive } from "./keepalive";
 import { submitVote, checkSightings, reportSightings } from "./community";
 import { reportTelemetry } from "./telemetry";
+// ── Pipeline sub-modules (extracted for v2.1) ──
+import { loadLang, m, fetchErrorToUserMessage } from "./pipeline/i18n";
+import {
+  configureStateProviders,
+  log,
+  broadcastStats,
+  updateState,
+} from "./pipeline/state";
+import {
+  getOrCreateBackgroundTab,
+  closeBackgroundTab,
+  waitForTabLoad,
+  clearBackgroundTabId,
+  getBackgroundTabId,
+  tearDownBackgroundTab,
+} from "./pipeline/tab-manager";
+import {
+  ensureContentScript,
+  isChannelLostError,
+  isTabGoneError,
+} from "./pipeline/messenger";
+import {
+  markFake,
+  markToReview,
+  markOk,
+  markRemoved,
+  markNotFound,
+  markScanError,
+} from "./pipeline/follower-updater";
+import { PROFILE_VISIT, COOLDOWN, PACER } from "./pipeline/timings";
 
-// ── Pipeline i18n (service worker has no localStorage, use chrome.storage) ──
-
-let currentLang = "fr";
-
-async function loadLang(): Promise<void> {
-  try {
-    const result = await chrome.storage.local.get("wav_lang");
-    currentLang = result.wav_lang || "fr";
-  } catch {
-    currentLang = "fr";
-  }
-}
-
-const MSG: Record<string, Record<string, string>> = {
-  no_username:          { fr: "Aucun nom d'utilisateur configuré", en: "No username configured" },
-  fetch_start:          { fr: "Récupération de tes followers (@{0})…", en: "Fetching your followers list (@{0})…" },
-  fetch_found:          { fr: "{0} followers trouvés, sauvegarde…", en: "{0} followers found, saving…" },
-  fetch_done:           { fr: "Terminé : {0} followers récupérés, {1} nouveaux — clique Nettoyer pour les scanner", en: "Done: {0} followers fetched, {1} new — click Clean to analyze them" },
-  fetch_error:          { fr: "Erreur récupération : {0}", en: "Fetch error: {0}" },
-  fetch_failed:         { fr: "Échec récupération : {0}", en: "Fetch failed: {0}" },
-  fetch_retry_fail:     { fr: "Échec après 3 tentatives — canal de messages instable", en: "Fetch failed after 3 retries — message channel keeps closing" },
-  msg_channel_err:      { fr: "Erreur canal (tentative {0}/3), réinjection…", en: "Message channel error (attempt {0}/3), re-injecting…" },
-  bg_tab_created:       { fr: "Onglet arrière-plan créé (id={0})", en: "Background tab created (id={0})" },
-  bg_tab_closed:        { fr: "Onglet arrière-plan fermé", en: "Background tab closed" },
-  cs_injected:          { fr: "Script injecté avec succès (onglet {0})", en: "Content script injected successfully on tab {0}" },
-  cs_inject_fail:       { fr: "Échec injection script : {0}", en: "Failed to inject content script: {0}" },
-  cs_active:            { fr: "Script déjà actif (onglet {0})", en: "Content script already active on tab {0}" },
-  threads_tab:          { fr: "Onglet Threads trouvé : id={0}", en: "Found Threads tab: id={0}" },
-  send_fail:            { fr: "Envoi message échoué : {0}", en: "sendMessage failed: {0}" },
-  scan_not_found:       { fr: "@{0} : INTROUVABLE → score=100 FAKE", en: "@{0}: NOT FOUND → score=100 FAKE" },
-  scan_result:          { fr: "@{0} : score={1} {2}", en: "@{0}: score={1} {2}" },
-  scan_error:           { fr: "@{0} : {1}", en: "@{0}: {1}" },
-  scan_no_data:         { fr: "@{0} : aucune donnée retournée", en: "@{0}: no data returned" },
-  scan_done:            { fr: "Analyse terminée : {0} profils analysés, {1} fakes détectés", en: "Analysis complete: {0} profiles analyzed, {1} fakes detected" },
-  scan_rate_limit:      { fr: "@{0} : limite 429 (blocages : {1})", en: "@{0}: 429 rate limit (blocked: {1})" },
-  scan_tab_lost:        { fr: "@{0} : onglet perdu ({1}), recréation…", en: "@{0}: tab lost ({1}), will recreate…" },
-  scan_slowdown:        { fr: "Threads semble nous ralentir. Pause de 5 minutes…", en: "Threads seems to be slowing us down. Pausing for 5 minutes…" },
-  rate_limited:         { fr: "Limité — {0}/{1} par heure — pause", en: "Rate limited — {0}/{1} per hour — pausing" },
-  auto_stop:            { fr: "Arrêt auto : {0}", en: "Auto-stop: {0}" },
-  no_fakes:             { fr: "Aucun faux follower à supprimer.", en: "No fake followers to remove." },
-  clean_start:          { fr: "Suppression de {0} faux followers…", en: "Removing {0} fake followers…" },
-  clean_removed:        { fr: "@{0} supprimé", en: "@{0} removed" },
-  clean_blocked:        { fr: "Threads bloque temporairement les suppressions. Attends 30 minutes.", en: "Threads is temporarily blocking removals. Please wait 30 minutes." },
-  clean_wait:           { fr: "Attente 60s avant nouvelle tentative…", en: "Waiting 60s before retrying…" },
-  clean_fail:           { fr: "@{0} : échec — {1}", en: "@{0}: failed — {1}" },
-  clean_blocked_user:   { fr: "@{0} : bloqué par Threads", en: "@{0}: blocked by Threads" },
-  clean_done:           { fr: "Suppression terminée : {0} supprimés{1}", en: "Clean done: {0} removed{1}" },
-  clean_stopped:        { fr: " (ARRÊTÉ : blocage Threads détecté)", en: " (STOPPED: Threads blocking detected)" },
-  rate_limited_clean:   { fr: "Limité — arrêt suppression", en: "Rate limited — stopping clean" },
-  cs_injecting:         { fr: "Script non trouvé sur l'onglet {0}, injection en cours…", en: "Content script not found on tab {0}, injecting dynamically…" },
-  tab_recreated:        { fr: "Onglet arrière-plan {0} perdu, recréation…", en: "Background tab {0} lost, recreating…" },
-  cycle_start:          { fr: "Nettoyage : {0} profils à traiter…", en: "Cleaning: {0} profiles to process…" },
-  cycle_start_wait:     { fr: "Démarrage dans {0}s…", en: "Starting in {0}s…" },
-  cycle_visit:          { fr: "@{0} : visite du profil…", en: "@{0}: visiting profile…" },
-  cycle_fake_removed:   { fr: "@{0} : score={1} FAKE → supprimé", en: "@{0}: score={1} FAKE → removed" },
-  cycle_fake_fail:      { fr: "@{0} : score={1} FAKE → échec suppression ({2})", en: "@{0}: score={1} FAKE → removal failed ({2})" },
-  cycle_review:         { fr: "@{0} : score={1} → à vérifier", en: "@{0}: score={1} → to review" },
-  cycle_ok:             { fr: "@{0} : score={1} → OK", en: "@{0}: score={1} → OK" },
-  cycle_not_found:      { fr: "@{0} : INTROUVABLE → supprimé", en: "@{0}: NOT FOUND → removed" },
-  cycle_done:           { fr: "Cycle terminé : {0} vérifiés, {1} supprimés, {2} à vérifier", en: "Cycle done: {0} checked, {1} removed, {2} to review" },
-  cycle_limit:          { fr: "Limite quotidienne atteinte (1 cycle/jour). Passe en licence pour le mode continu.", en: "Daily limit reached (1 cycle/day). Upgrade to license for continuous mode." },
-  cycle_no_pending:     { fr: "Aucun follower en attente. Lance d'abord une récupération.", en: "No pending followers. Run a fetch first." },
-  continuous_start:     { fr: "Mode continu démarré", en: "Continuous mode started" },
-  continuous_stop:      { fr: "Mode continu arrêté", en: "Continuous mode stopped" },
-  continuous_pause:     { fr: "Pause {0}s avant le prochain cycle…", en: "Pause {0}s before next cycle…" },
-  continuous_fetch:     { fr: "Re-récupération des followers…", en: "Re-fetching followers…" },
-  cycle_auto_skip:     { fr: "{0} profil(s) résolus automatiquement (pré-score)", en: "{0} profile(s) auto-resolved (pre-score)" },
-  cycle_remove_only:   { fr: "{0} profil(s) déjà scorés fake — suppression directe (sans re-scan)", en: "{0} profile(s) already scored fake — removing directly (no re-scan)" },
-  scan_channel_lost:   { fr: "@{0} : canal perdu (page Threads crashée ?), re-navigation…", en: "@{0}: channel lost (Threads page crashed?), re-navigating…" },
-  threads_error_page:  { fr: "@{0} : page d'erreur Threads — pause {1}s…", en: "@{0}: Threads error page — pausing {1}s…" },
-  threads_error_page_skip: { fr: "@{0} : page d'erreur persistante, skip → retry prochain cycle", en: "@{0}: persistent error page, skip → retry next cycle" },
-  threads_hard_429:    { fr: "429 massif détecté — pause longue de {0} minutes", en: "Hard 429 detected — long pause of {0} minutes" },
-  continuous_session_break: { fr: "Session de {1} cycles — pause obligatoire de {0} min pour éviter le 429", en: "Session of {1} cycles — mandatory {0} min break to avoid 429" },
-  continuous_session_resume: { fr: "Reprise après pause obligatoire", en: "Resuming after mandatory break" },
-  cycle_remove_retry:  { fr: "@{0} : menu introuvable, retry {1}/2…", en: "@{0}: menu not found, retry {1}/2…" },
-  cycle_remove_retry_nav: { fr: "@{0} : re-navigation vers le profil (dernier essai)…", en: "@{0}: re-navigating to profile (last attempt)…" },
-  notification_fakes_found: { fr: "Wav Fake Cleaner a detecte {0} faux followers", en: "Wav Fake Cleaner detected {0} fake followers" },
-  // User-facing mappings of internal fetch error codes (shown in the side panel)
-  err_no_username:           { fr: "Aucun nom d'utilisateur configuré dans les paramètres.", en: "No username configured in settings." },
-  err_followers_button:      { fr: "Bouton « Followers » introuvable. Vérifie que tu es connecté(e) et que ton profil est bien public.", en: "“Followers” button not found. Check that you're logged in and your profile is public." },
-  err_no_container:          { fr: "Liste des followers non détectée. Recharge la page Threads (Ctrl+Shift+R) et réessaie. Si ça persiste, ferme et rouvre Threads.", en: "Followers list not detected. Reload the Threads page (Ctrl+Shift+R) and try again. If it persists, close and reopen Threads." },
-  err_no_container_no_links: { fr: "Threads n'a pas chargé la liste des followers à temps. Recharge la page et réessaie.", en: "Threads didn't load the followers list in time. Reload the page and try again." },
-  err_no_container_too_small:{ fr: "Trop peu de followers visibles pour scroller. Réessaie après avoir attendu quelques secondes sur la page.", en: "Too few followers visible to scroll. Wait a few seconds on the page and retry." },
-  err_msg_channel:           { fr: "Communication interrompue avec Threads (3 tentatives). Recharge la page et réessaie.", en: "Communication with Threads interrupted (3 retries). Reload the page and try again." },
-  err_generic:               { fr: "Erreur inattendue : {0}", en: "Unexpected error: {0}" },
-};
-
-/**
- * Map internal fetch error code (and optional reason) to a user-friendly
- * message. Falls back to the raw code if no specific mapping exists.
- */
-function fetchErrorToUserMessage(code: string, reason?: string): string {
-  switch (code) {
-    case "no_username":
-      return m("err_no_username");
-    case "followers_button_not_found":
-      return m("err_followers_button");
-    case "scroll_container_not_found":
-      if (reason === "no_links") return m("err_no_container_no_links");
-      if (reason === "container_too_small") return m("err_no_container_too_small");
-      return m("err_no_container");
-    case "message_channel_closed":
-      return m("err_msg_channel");
-    default:
-      return m("err_generic", code);
-  }
-}
-
-function m(key: string, ...args: (string | number)[]): string {
-  const tpl = MSG[key]?.[currentLang] || MSG[key]?.fr || key;
-  return tpl.replace(/\{(\d+)\}/g, (_, i) => String(args[Number(i)] ?? ""));
-}
+// ── Pipeline i18n / state / tab-mgmt / messenger / follower-updater ──
+// All extracted to ./pipeline/* sub-modules in v2.1.
+// Imports above expose: loadLang, m, fetchErrorToUserMessage,
+// log, broadcastStats, updateState, configureStateProviders,
+// getOrCreateBackgroundTab, closeBackgroundTab, waitForTabLoad,
+// clearBackgroundTabId, getBackgroundTabId, tearDownBackgroundTab,
+// ensureContentScript, isChannelLostError, isTabGoneError,
+// markFake, markToReview, markOk, markRemoved, markNotFound, markScanError,
+// PROFILE_VISIT, COOLDOWN, PACER timings.
 
 // ── Pipeline singleton ──
 
@@ -241,208 +162,21 @@ export async function persistFollowerPage(
 export function stopPipeline(): void {
   abortController?.abort();
   abortController = null;
-  // Tell the content script to abort its loops too
-  if (backgroundTabId !== null) {
-    chrome.tabs.sendMessage(backgroundTabId, { type: "STOP_CONTENT" }).catch(() => {});
-    chrome.tabs.remove(backgroundTabId).catch(() => {});
-    backgroundTabId = null;
-  }
+  // tab-manager handles STOP_CONTENT broadcast + remove + state clear
+  void tearDownBackgroundTab();
 }
 
-function broadcast(msg: BroadcastMessage): void {
-  chrome.runtime.sendMessage(msg).catch(() => {
-    // sidepanel may not be open
-  });
-}
-
-function log(level: LogEntry["level"], category: string, message: string): void {
-  const entry: LogEntry = {
-    ts: new Date().toISOString(),
-    level,
-    category,
-    message,
-  };
-  broadcast({ type: "LOG_EVENT", payload: entry });
-}
-
-async function broadcastStats(): Promise<void> {
-  const stats = await computeStats(isRunning(), rateTracker.getStats());
-  broadcast({ type: "STATS_UPDATED", payload: stats });
-}
-
-async function updateState(state: Partial<PipelineState>): Promise<void> {
-  // Merge over the existing persisted state so partial updates don't silently
-  // clear other fields. (Previously, calling updateState({ stage: "idle" })
-  // in a finally{} block was wiping the lastError set by the error branch
-  // immediately before it.)
-  const current = (await getPipelineState()) || {
-    stage: "idle" as const,
-    sessionId: null,
-    progress: 0,
-    total: 0,
-    lastError: null,
-  };
-  const full: PipelineState = { ...current, ...state };
-  await savePipelineState(full);
-  broadcast({ type: "PIPELINE_STATE", payload: full });
-}
-
-// ── Send command to content script in the active Threads tab ──
-
-async function findThreadsTab(): Promise<chrome.tabs.Tab> {
-  const patterns = [
-    "https://www.threads.net/*",
-    "https://threads.net/*",
-    "https://www.threads.com/*",
-    "https://threads.com/*",
-  ];
-  const allTabs: chrome.tabs.Tab[] = [];
-  for (const url of patterns) {
-    const tabs = await chrome.tabs.query({ url });
-    allTabs.push(...tabs);
-  }
-  if (allTabs.length === 0) {
-    throw new Error("No Threads tab open — open threads.net or threads.com first");
-  }
-  // Prefer the active tab, then any tab with a profile URL
-  const active = allTabs.find((t) => t.active);
-  if (active) return active;
-  const profile = allTabs.find((t) => t.url?.includes("/@"));
-  if (profile) return profile;
-  return allTabs[0];
-}
-
-// ── Background tab management ──
-
-let backgroundTabId: number | null = null;
-
-// ── Nettoyage quand l'onglet arrière-plan est fermé manuellement ──
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === backgroundTabId) {
-    console.log("[WFC] Background tab", tabId, "was closed externally");
-    backgroundTabId = null;
-  }
+// Configure the providers used by pipeline/state.ts to compute live stats.
+// Done once at module load so log/broadcastStats can reach back into the
+// running pipeline for current rate stats.
+configureStateProviders({
+  isRunning,
+  rateStats: () => rateTracker.getStats(),
 });
 
-async function getOrCreateBackgroundTab(): Promise<number> {
-  // Reuse existing background tab if still open
-  if (backgroundTabId !== null) {
-    try {
-      const tab = await chrome.tabs.get(backgroundTabId);
-      if (tab) return backgroundTabId;
-    } catch {
-      backgroundTabId = null;
-    }
-  }
-
-  // Create a new background tab (active: false = doesn't steal focus)
-  const tab = await chrome.tabs.create({
-    url: "https://www.threads.com/",
-    active: false,
-  });
-
-  backgroundTabId = tab.id!;
-  log("INFO", "pipeline", m("bg_tab_created", backgroundTabId));
-
-  // Wait for initial load
-  await waitForTabLoad(backgroundTabId);
-  await new Promise((r) => setTimeout(r, 2000));
-
-  return backgroundTabId;
-}
-
-async function closeBackgroundTab(): Promise<void> {
-  if (backgroundTabId !== null) {
-    try {
-      await chrome.tabs.remove(backgroundTabId);
-      log("INFO", "pipeline", m("bg_tab_closed"));
-    } catch {
-      // already closed
-    }
-    backgroundTabId = null;
-  }
-}
-
-async function waitForTabLoad(tabId: number, signal?: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let abortHandler: (() => void) | null = null;
-
-    function cleanup(): void {
-      clearTimeout(timeout);
-      chrome.tabs.onUpdated.removeListener(listener);
-      if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
-    }
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, 15000);
-
-    if (signal) {
-      abortHandler = () => {
-        cleanup();
-        reject(new Error("aborted"));
-      };
-      signal.addEventListener("abort", abortHandler);
-    }
-
-    const listener = (
-      updatedTabId: number,
-      changeInfo: chrome.tabs.TabChangeInfo
-    ) => {
-      if (updatedTabId === tabId && changeInfo.status === "complete") {
-        cleanup();
-        resolve();
-      }
-    };
-
-    chrome.tabs.onUpdated.addListener(listener);
-  });
-}
-
-async function ensureContentScript(tabId: number): Promise<void> {
-  try {
-    // PING avec timeout de 3s pour éviter un blocage indéfini
-    await Promise.race([
-      chrome.tabs.sendMessage(tabId, { type: "PING" }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("PING timeout")), 3000)
-      ),
-    ]);
-    log("INFO", "pipeline", m("cs_active", tabId));
-  } catch {
-    // Content script not loaded — inject it dynamically
-    log("WARNING", "pipeline", m("cs_injecting", tabId));
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ["content.js"],
-      });
-      // Wait for it to initialize
-      await new Promise((r) => setTimeout(r, 500));
-      log("INFO", "pipeline", m("cs_injected", tabId));
-    } catch (injectErr) {
-      log("ERROR", "pipeline", m("cs_inject_fail", String(injectErr)));
-      throw new Error(`Cannot inject content script: ${injectErr}`);
-    }
-  }
-}
-
-async function sendToContentScript<T>(command: unknown): Promise<T> {
-  const tab = await findThreadsTab();
-  log("INFO", "pipeline", m("threads_tab", tab.id ?? 0));
-
-  // Ensure content script is loaded (inject if needed)
-  await ensureContentScript(tab.id!);
-
-  try {
-    const response = await chrome.tabs.sendMessage(tab.id!, command);
-    return response as T;
-  } catch (err) {
-    log("ERROR", "pipeline", m("send_fail", String(err)));
-    throw err;
-  }
-}
+// ── Background tab management ──
+// All extracted to ./pipeline/tab-manager.ts (state owner) and
+// ./pipeline/messenger.ts (content-script comms) in v2.1.
 
 // ── Fetch phase ──
 
@@ -537,17 +271,24 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 
     let result: FetchAny = await sendFetch();
 
-    // Fallback: if the modal-based scroll container detection failed, retry once
-    // on the dedicated /@user/followers page (Threads sometimes routes there
-    // instead of opening a modal, and the page-level scroller works reliably).
+    // Fallback: if the modal-based detection failed (either the Followers
+    // button couldn't be clicked, or the scroll container never appeared after
+    // clicking), retry once on the dedicated /@user/followers page. Threads
+    // sometimes routes there instead of opening a modal, and the page-level
+    // scroller works reliably without needing the click step at all.
     if (
       result &&
       "error" in result &&
-      result.error === "scroll_container_not_found" &&
+      (result.error === "scroll_container_not_found" ||
+        result.error === "followers_button_not_found") &&
       !signal.aborted
     ) {
       const followersUrl = `https://www.threads.com/@${encodeURIComponent(username)}/followers`;
-      log("WARNING", "pipeline", `scroll_container_not_found (reason=${result.reason ?? "unknown"}, links=${result.linksFound ?? 0}) — retrying on dedicated /followers page`);
+      const detail =
+        result.error === "scroll_container_not_found"
+          ? `scroll_container_not_found (reason=${result.reason ?? "unknown"}, links=${result.linksFound ?? 0})`
+          : "followers_button_not_found";
+      log("WARNING", "pipeline", `${detail} — retrying on dedicated /followers page`);
       await chrome.tabs.update(tabId, { url: followersUrl });
       await waitForTabLoad(tabId, signal);
       await sleep(3, signal);
@@ -800,7 +541,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       } catch {
         log("WARNING", "pipeline", m("tab_recreated", tabId));
         tabId = null;
-        backgroundTabId = null;
+        clearBackgroundTabId();
       }
     }
     tabId = await getOrCreateBackgroundTab();
@@ -861,7 +602,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
             consecutiveErrorPages = 0;
             // Recreate tab and retry this follower
             tabId = null;
-            backgroundTabId = null;
+            clearBackgroundTabId();
             const freshTabId = await ensureTab();
             await chrome.tabs.update(freshTabId, { url: profileUrl });
             await waitForTabLoad(freshTabId, signal);
@@ -928,16 +669,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       // 3. Handle not found (404)
       if (profileData.notFound) {
         // Remove not-found profile directly
-        await updateFollower(follower.username, {
-          score: 100,
-          scoreBreakdown: JSON.stringify(["not_found"]),
-          isFake: true,
-          scanned: true,
-          removed: true,
-          status: "removed",
-          scannedAt: Date.now(),
-          removedAt: Date.now(),
-        });
+        await markNotFound(follower.username);
         scanned++;
         removed++;
         log("INFO", "clean", m("cycle_not_found", follower.username));
@@ -959,15 +691,8 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
         }
 
         if (scored.isFake) {
-          // FAKE — remove immediately
-          await updateFollower(follower.username, {
-            score, scoreBreakdown: JSON.stringify(scored.breakdown),
-            isFake: true, scanned: true, status: "fake", scannedAt: Date.now(),
-            followersCount: profileData.followerCount ?? follower.followersCount,
-            fullName: profileData.fullName || follower.fullName,
-            isPrivate: profileData.isPrivate ?? follower.isPrivate,
-            isVerified: profileData.isVerified ?? follower.isVerified,
-          });
+          // FAKE — mark scanned then remove immediately
+          await markFake(follower, scored, profileData);
 
           // Simule la réflexion humaine avant de cliquer supprimer (3-8s)
           await sleep(3 + Math.random() * 5, signal);
@@ -1007,9 +732,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
           }
 
           if (removeResult!.success) {
-            await updateFollower(follower.username, {
-              removed: true, status: "removed", removedAt: Date.now(),
-            });
+            await markRemoved(follower.username);
             removed++;
             log("INFO", "clean", m("cycle_fake_removed", follower.username, score));
             await addActionLog({
@@ -1032,27 +755,13 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
           scanned++;
         } else if (scored.toReview) {
           // TO REVIEW
-          await updateFollower(follower.username, {
-            score, scoreBreakdown: JSON.stringify(scored.breakdown),
-            isFake: false, toReview: true, scanned: true, status: "scanned", scannedAt: Date.now(),
-            followersCount: profileData.followerCount ?? follower.followersCount,
-            fullName: profileData.fullName || follower.fullName,
-            isPrivate: profileData.isPrivate ?? follower.isPrivate,
-            isVerified: profileData.isVerified ?? follower.isVerified,
-          });
+          await markToReview(follower, scored, profileData);
           scanned++;
           reviewed++;
           log("INFO", "clean", m("cycle_review", follower.username, score));
         } else {
           // OK
-          await updateFollower(follower.username, {
-            score, scoreBreakdown: JSON.stringify(scored.breakdown),
-            isFake: false, toReview: false, scanned: true, status: "scanned", scannedAt: Date.now(),
-            followersCount: profileData.followerCount ?? follower.followersCount,
-            fullName: profileData.fullName || follower.fullName,
-            isPrivate: profileData.isPrivate ?? follower.isPrivate,
-            isVerified: profileData.isVerified ?? follower.isVerified,
-          });
+          await markOk(follower, scored, profileData);
           scanned++;
           log("INFO", "clean", m("cycle_ok", follower.username, score));
         }
@@ -1072,24 +781,19 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
 
-      if (errMsg.includes("No tab with id") || errMsg.includes("Cannot inject")) {
+      if (isTabGoneError(e)) {
         // Tab was closed externally
         log("WARNING", "clean", m("scan_tab_lost", follower.username, errMsg));
         tabId = null;
-        backgroundTabId = null;
-        await updateFollower(follower.username, { scanError: "tab_lost", status: "pending" });
-      } else if (
-        errMsg.includes("message channel closed") ||
-        errMsg.includes("Receiving end does not exist") ||
-        errMsg.includes("Could not establish connection") ||
-        errMsg.includes("listener indicated an asynchronous response")
-      ) {
+        clearBackgroundTabId();
+        await markScanError(follower.username, "tab_lost");
+      } else if (isChannelLostError(e)) {
         // Content script died mid-operation (Threads error page, navigation, reload).
         // The tab still exists but the content script context is gone.
         // Re-navigate, re-inject, and leave this follower as pending for retry.
         log("WARNING", "clean", m("scan_channel_lost", follower.username));
         try {
-          const tid = tabId ?? backgroundTabId;
+          const tid = tabId ?? getBackgroundTabId();
           if (tid !== null) {
             await chrome.tabs.update(tid, { url: `https://www.threads.com/@${encodeURIComponent(follower.username)}` });
             await waitForTabLoad(tid, signal);
@@ -1099,9 +803,9 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
         } catch {
           // Tab might be gone too — will be recreated on next iteration
           tabId = null;
-          backgroundTabId = null;
+          clearBackgroundTabId();
         }
-        await updateFollower(follower.username, { scanError: "channel_lost", status: "pending" });
+        await markScanError(follower.username, "channel_lost");
       } else {
         consecutiveBlocked++;
         await rateTracker.recordError();

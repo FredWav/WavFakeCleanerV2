@@ -51,4 +51,10 @@ export const api = {
 
   activateLicense: (key: string) =>
     send<{ ok: boolean; error?: string }>({ type: "ACTIVATE_LICENSE", payload: { key } }),
+
+  exportLicense: () =>
+    send<{ ok: boolean; backup?: unknown; error?: string }>({ type: "EXPORT_LICENSE" }),
+
+  importLicense: (backup: unknown) =>
+    send<{ ok: boolean; error?: string }>({ type: "IMPORT_LICENSE", payload: { backup } }),
 };

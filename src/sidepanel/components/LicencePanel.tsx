@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import { PAYMENT_LINK, COMMUNITY_STATS_URL } from "@shared/constants";
@@ -22,6 +22,7 @@ export default function LicencePanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch(COMMUNITY_STATS_URL)
@@ -48,6 +49,72 @@ export default function LicencePanel({
       }
     } catch {
       setError(t("licence_network_error", lang));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Download the licence as a JSON file the user can keep safe.
+  async function exportLicence() {
+    try {
+      const result = await api.exportLicense();
+      if (!result.ok || !result.backup) {
+        showToast?.(t("licence_export_empty", lang));
+        return;
+      }
+      const blob = new Blob([JSON.stringify(result.backup, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `wfc-license-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast?.(t("licence_export_ok", lang));
+    } catch {
+      showToast?.(t("licence_export_failed", lang));
+    }
+  }
+
+  // Read a user-supplied JSON file and re-activate from it.
+  function triggerImport() {
+    fileInputRef.current?.click();
+  }
+
+  async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        setError(t("licence_import_malformed", lang));
+        setLoading(false);
+        return;
+      }
+      const result = await api.importLicense(parsed);
+      if (result.ok) {
+        const updated = await api.getLicense();
+        onUpdate(updated);
+        showToast?.(t("licence_import_ok", lang));
+      } else {
+        const errKey =
+          result.error === "invalid_backup" ? "licence_import_malformed" :
+          result.error === "network_error" ? "licence_network_error" :
+          "licence_invalid";
+        setError(t(errKey, lang));
+      }
+    } catch {
+      setError(t("licence_import_malformed", lang));
     } finally {
       setLoading(false);
     }
@@ -84,6 +151,35 @@ export default function LicencePanel({
               </span>
             </div>
             <p className="text-xs text-gray-400">{t("licence_pro_limits", lang)}</p>
+
+            {/* Backup / restore — saves the user from losing access on browser reinstall */}
+            <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-2">
+              <p className="text-[10px] text-gray-400">{t("licence_backup_hint", lang)}</p>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={exportLicence}
+                  className="flex-1 px-2 py-1.5 rounded-lg bg-gray-700 text-white text-[11px]
+                    font-medium hover:bg-gray-600 transition-colors"
+                >
+                  {t("licence_export", lang)}
+                </button>
+                <button
+                  onClick={triggerImport}
+                  disabled={loading}
+                  className="flex-1 px-2 py-1.5 rounded-lg bg-gray-700 text-white text-[11px]
+                    font-medium hover:bg-gray-600 transition-colors disabled:opacity-50"
+                >
+                  {t("licence_import", lang)}
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={onFileChosen}
+                style={{ display: "none" }}
+              />
+            </div>
           </div>
         ) : (
           <div className="space-y-3">
@@ -154,6 +250,25 @@ export default function LicencePanel({
                 </button>
               </div>
               {error && <p className="text-red-400 text-[10px]">{error}</p>}
+
+              {/* Restore from a previously-saved backup file */}
+              <div className="pt-1 text-center">
+                <button
+                  onClick={triggerImport}
+                  disabled={loading}
+                  className="text-[10px] text-purple-400 hover:text-purple-300 underline
+                    disabled:opacity-50"
+                >
+                  {t("licence_import_link", lang)}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={onFileChosen}
+                  style={{ display: "none" }}
+                />
+              </div>
             </div>
           </div>
         )}

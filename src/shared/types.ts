@@ -134,6 +134,14 @@ export interface LicenseInfo {
   key: string | null;
   activatedAt: number | null;
   communityToken: string | null; // HMAC token issued by the Worker on activation
+  /**
+   * The raw activation token (cs_live_… for Stripe, wfc_lic_…. for owner
+   * tokens). Stored for backup / re-activation flows. For Stripe, this is
+   * identical to `key`. For owner-issued tokens, `key` is an obfuscated
+   * "owner-<userId>" handle for display, while recoveryToken keeps the
+   * original signed token so an export → import round-trip works.
+   */
+  recoveryToken?: string | null;
 }
 
 // ── Free tier limits ──

@@ -71,6 +71,61 @@ function json(body, status = 200, request = null) {
 const STRIPE_RE = /^cs_(live|test)_[A-Za-z0-9]{20,80}$/;
 const HEX64_RE = /^[a-f0-9]{64}$/;
 
+// Short licence codes issued to customers after payment.
+// Alphabet excludes 0/O/1/I/L to avoid dictation/typing confusion.
+// 8 useful chars from a 31-char alphabet → 31^8 ≈ 8.5 × 10^11 codes.
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const CODE_RE = /^WFC-[A-Z2-9]{4}-[A-Z2-9]{4}$/;
+
+function generateLicenseCode() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  let chars = "";
+  for (const b of bytes) chars += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return `WFC-${chars.slice(0, 4)}-${chars.slice(4, 8)}`;
+}
+
+// Idempotent: returns the existing code if this Stripe session was already
+// turned into a licence. Otherwise generates a fresh code (with collision
+// retry) and registers its HMAC as a community-vote token.
+async function getOrCreateLicenseCode(env, sessionId) {
+  const sessionIdHash = await hmacHex(env.HMAC_SALT, sessionId);
+
+  const existing = await env.DB.prepare(
+    "SELECT code FROM licenses WHERE session_id_hash = ? AND revoked = 0"
+  ).bind(sessionIdHash).first();
+  if (existing) return existing.code;
+
+  // Generate and insert. The PK constraint on `code` makes collisions
+  // visible as INSERT failures; retry up to 5 times (collisions are
+  // astronomically rare given the entropy, but be defensive).
+  let lastErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateLicenseCode();
+    try {
+      await env.DB.prepare(
+        "INSERT INTO licenses (code, session_id_hash, created_at) VALUES (?, ?, ?)"
+      ).bind(code, sessionIdHash, Date.now()).run();
+      // Register the code's HMAC as a community-vote token so /vote works
+      // immediately for the new licensee.
+      const tokenHash = await hmacHex(env.HMAC_SALT, code);
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO tokens (token_hash, created_at) VALUES (?, ?)"
+      ).bind(tokenHash, Date.now()).run();
+      return code;
+    } catch (e) {
+      lastErr = e;
+      // The UNIQUE on session_id_hash means a concurrent /verify for the
+      // same payment may have inserted; re-check.
+      const raced = await env.DB.prepare(
+        "SELECT code FROM licenses WHERE session_id_hash = ?"
+      ).bind(sessionIdHash).first();
+      if (raced) return raced.code;
+    }
+  }
+  throw lastErr || new Error("code_generation_failed");
+}
+
 // ── Rate limiting ──
 
 const RATE_LIMITS = {
@@ -83,18 +138,19 @@ async function checkAndBumpRateLimit(env, tokenHash, endpoint) {
   const bucket = Math.floor(Date.now() / 3_600_000);
   const limit = RATE_LIMITS[endpoint] ?? 100;
 
-  const row = await env.DB.prepare(
-    "SELECT count FROM rate_limits WHERE token_hash = ? AND hour_bucket = ? AND endpoint = ?"
+  // Atomic increment-and-read: prevents the SELECT-then-INSERT race where
+  // N concurrent requests all see count < limit and each bumps past it.
+  // The request that pushes count past `limit` is the first one rejected;
+  // earlier ones within the window were already counted and allowed.
+  const result = await env.DB.prepare(
+    "INSERT INTO rate_limits (token_hash, hour_bucket, endpoint, count) VALUES (?, ?, ?, 1) " +
+    "ON CONFLICT (token_hash, hour_bucket, endpoint) DO UPDATE SET count = count + 1 " +
+    "RETURNING count"
   ).bind(tokenHash, bucket, endpoint).first();
 
-  if (row && row.count >= limit) {
+  if (result && result.count > limit) {
     return { allowed: false, retryAfter: 3600 - (Math.floor(Date.now() / 1000) % 3600) };
   }
-
-  await env.DB.prepare(
-    "INSERT INTO rate_limits (token_hash, hour_bucket, endpoint, count) VALUES (?, ?, ?, 1) " +
-    "ON CONFLICT (token_hash, hour_bucket, endpoint) DO UPDATE SET count = count + 1"
-  ).bind(tokenHash, bucket, endpoint).run();
 
   return { allowed: true };
 }
@@ -140,7 +196,7 @@ export default {
 
     try {
       if (url.pathname === "/verify") return handleVerify(request, env, url);
-      if (url.pathname === "/success") return handleSuccess(url);
+      if (url.pathname === "/success") return handleSuccess(request, env, url);
       if (url.pathname === "/vote" && request.method === "POST") return handleVote(request, env);
       if (url.pathname === "/lookup" && request.method === "POST") return handleLookup(request, env);
       if (url.pathname === "/community-stats") return handleCommunityStats(request, env);
@@ -149,7 +205,10 @@ export default {
       if (url.pathname === "/telemetry" && request.method === "POST") return handleTelemetry(request, env);
       return json({ error: "not_found" }, 404, request);
     } catch (e) {
-      return json({ error: "internal_error", detail: String(e) }, 500, request);
+      // Log the real error to worker logs (visible only to the operator);
+      // never leak stack traces or internal IDs to the client.
+      console.error("[worker] internal_error:", e);
+      return json({ error: "internal_error" }, 500, request);
     }
   },
 };
@@ -157,12 +216,38 @@ export default {
 // ── /verify ──
 
 async function handleVerify(request, env, url) {
+  if (!env.HMAC_SALT) {
+    return json({ valid: false, error: "server_misconfigured" }, 500, request);
+  }
+
+  // ── Path A : lookup by short licence code (post-2.2 customers) ──
+  const code = url.searchParams.get("code");
+  if (code) {
+    if (!CODE_RE.test(code)) {
+      return json({ valid: false, error: "invalid_code" }, 200, request);
+    }
+    if (!env.DB) {
+      return json({ valid: false, error: "db_not_configured" }, 503, request);
+    }
+    try {
+      const row = await env.DB.prepare(
+        "SELECT code, revoked FROM licenses WHERE code = ?"
+      ).bind(code).first();
+      if (!row || row.revoked) {
+        return json({ valid: false }, 200, request);
+      }
+      // The code IS the community token (HMAC stored at creation time).
+      return json({ valid: true, code, communityToken: code }, 200, request);
+    } catch (e) {
+      console.error("[worker] /verify (code) failed:", e);
+      return json({ valid: false, error: "verify_failed" }, 200, request);
+    }
+  }
+
+  // ── Path B : verify Stripe session, issue (or reuse) a short code ──
   const sessionId = url.searchParams.get("session_id");
   if (!sessionId || !STRIPE_RE.test(sessionId)) {
     return json({ valid: false, error: "invalid_session_id" }, 200, request);
-  }
-  if (!env.HMAC_SALT) {
-    return json({ valid: false, error: "server_misconfigured" }, 500, request);
   }
 
   try {
@@ -175,29 +260,64 @@ async function handleVerify(request, env, url) {
 
     if (!valid) return json({ valid: false }, 200, request);
 
-    // Use the session ID itself as the community token; only its HMAC ever lands in DB.
-    const communityToken = sessionId;
-    const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
+    // No DB → fall back to the legacy behavior (session ID as community token).
+    if (!env.DB) {
+      return json({ valid: true, communityToken: sessionId }, 200, request);
+    }
 
-    // Register token in D1 (idempotent)
-    if (env.DB) {
+    // Generate or retrieve the short code; use it as the community token.
+    let issuedCode;
+    try {
+      issuedCode = await getOrCreateLicenseCode(env, sessionId);
+    } catch (e) {
+      console.error("[worker] code issuance failed, falling back to session_id:", e);
+      // Last-resort: legacy behavior (session ID as token) so the user
+      // is never blocked from activating.
+      const tokenHash = await hmacHex(env.HMAC_SALT, sessionId);
       await env.DB.prepare(
         "INSERT OR IGNORE INTO tokens (token_hash, created_at) VALUES (?, ?)"
       ).bind(tokenHash, Date.now()).run();
+      return json({ valid: true, communityToken: sessionId }, 200, request);
     }
 
-    return json({ valid: true, communityToken }, 200, request);
+    return json(
+      { valid: true, code: issuedCode, communityToken: issuedCode },
+      200,
+      request,
+    );
   } catch (e) {
-    return json({ valid: false, error: String(e) }, 200, request);
+    console.error("[worker] /verify failed:", e);
+    return json({ valid: false, error: "verify_failed" }, 200, request);
   }
 }
 
 // ── /success ──
 
-function handleSuccess(url) {
+async function handleSuccess(request, env, url) {
   const sessionId = url.searchParams.get("session_id") || "";
-  // Escape any quotes in the sessionId (defensive — Stripe IDs are alphanum, but no harm)
-  const safeId = sessionId.replace(/[<>"'&]/g, "");
+  // Defensive: only render strings that pass the strict Stripe ID format.
+  // Anything else gets blanked out — never reflected back to the page.
+  const safeSessionId = STRIPE_RE.test(sessionId) ? sessionId : "";
+
+  // Issue the licence code server-side so it's ready to display BEFORE the
+  // page renders. If anything fails (Stripe down, DB down, etc.), we fall
+  // back to showing the session ID so the user is never stuck.
+  let licenseCode = "";
+  if (safeSessionId && env.HMAC_SALT && env.DB && env.STRIPE_SECRET_KEY) {
+    try {
+      const r = await fetch(
+        `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(safeSessionId)}`,
+        { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } },
+      );
+      const session = await r.json();
+      if (session.payment_status === "paid") {
+        licenseCode = await getOrCreateLicenseCode(env, safeSessionId);
+      }
+    } catch (e) {
+      console.error("[worker] /success code issuance failed:", e);
+    }
+  }
+
   const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -208,34 +328,69 @@ function handleSuccess(url) {
     body { font-family: system-ui, sans-serif; background: #0f0f11; color: #e5e7eb;
            display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     .card { background: #1a1a2e; border: 1px solid #2d2d40; border-radius: 16px;
-            padding: 32px; max-width: 440px; width: 90%; text-align: center; }
-    h1 { color: #a855f7; margin: 0 0 16px; font-size: 1.4rem; }
-    p { font-size: .9rem; color: #9ca3af; margin: 8px 0; }
+            padding: 32px; max-width: 480px; width: 90%; text-align: center; }
+    h1 { color: #a855f7; margin: 0 0 8px; font-size: 1.4rem; }
+    .sub { font-size: .85rem; color: #9ca3af; margin: 0 0 18px; }
+    .code-box { font-family: ui-monospace, "Courier New", monospace;
+                font-size: 1.6rem; font-weight: 700; letter-spacing: .08em;
+                color: #c084fc; background: #0f0f11; border: 1px solid #3b3b52;
+                border-radius: 12px; padding: 18px 12px; margin: 14px 0;
+                cursor: pointer; user-select: all; }
+    .code-box:hover { border-color: #6d4aff; }
+    .copy-hint { font-size: .7rem; color: #6b7280; margin-top: 6px; }
+    .steps { text-align: left; font-size: .8rem; color: #9ca3af;
+             background: #15152a; border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
+    .steps ol { margin: 6px 0 0; padding-left: 22px; }
+    .steps li { margin: 4px 0; }
     #wfc-status { margin-top: 16px; }
-    .fallback-hint { font-size: .75rem; color: #6b7280; margin-top: 24px; }
+    .fallback-hint { font-size: .75rem; color: #6b7280; margin-top: 22px; }
+    .auto-msg { color: #34d399; font-size: .85rem; margin-top: 12px; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Paiement confirme</h1>
-    <div id="wfc-status" data-state="loading" data-session-id="${safeId}">
-      <p style="color:#9ca3af">Activation de ta licence en cours…</p>
+    <p class="sub">Voici ta licence Wav Fake Cleaner :</p>
+
+    ${licenseCode
+      ? `<div class="code-box" id="wfc-code"
+              onclick="navigator.clipboard.writeText('${licenseCode}').then(function(){
+                document.getElementById('copy-hint').textContent = 'Copie !';
+              })">${licenseCode}</div>
+         <div class="copy-hint" id="copy-hint">Clique pour copier</div>`
+      : `<div class="code-box" style="color:#fbbf24;font-size:1rem">
+            Code temporairement indisponible — utilise l'ID Stripe ci-dessous
+         </div>
+         <div class="code-box" style="font-size:.8rem">${safeSessionId}</div>
+         <div class="copy-hint">Recharge la page pour obtenir un code plus court</div>`}
+
+    <div id="wfc-status"
+         data-state="loading"
+         data-session-id="${safeSessionId}"
+         data-license-code="${licenseCode}">
+      <p style="color:#9ca3af;font-size:.85rem">Tentative d'activation automatique…</p>
     </div>
-    <p class="fallback-hint">Probleme ? Ecris a <a href="mailto:contact@fredwav.com" style="color:#a855f7">contact@fredwav.com</a></p>
+
+    <div class="steps">
+      <strong>Activation manuelle :</strong>
+      <ol>
+        <li>Clique sur l'icone de l'extension Wav Fake Cleaner dans Chrome</li>
+        <li>Clique sur le bouton <strong>Licence</strong> en haut a droite</li>
+        <li>Colle le code ci-dessus dans le champ d'activation</li>
+        <li>Clique <strong>Activer</strong> — le statut passe en vert</li>
+      </ol>
+    </div>
+
+    <p class="fallback-hint">Probleme ? Ecris a <a href="mailto:contact@fredwav.com" style="color:#a855f7">contact@fredwav.com</a> en mentionnant ton code.</p>
   </div>
   <script>
-    // Si apres 3s l'activator n'a pas modifie data-state, c'est que l'extension
-    // n'est pas installee/active dans ce navigateur. On affiche alors l'ID a coller.
+    // After 3s, if the in-extension activator hasn't taken over, switch to
+    // the "manual" message. The activator updates data-state when it runs.
     setTimeout(function () {
       var el = document.getElementById('wfc-status');
       if (el && el.dataset.state === 'loading') {
         el.dataset.state = 'no-extension';
-        var sid = el.getAttribute('data-session-id') || '';
-        el.innerHTML =
-          '<div style="color:#fbbf24">Extension non detectee dans ce navigateur.</div>' +
-          '<div style="color:#9ca3af;font-size:.8rem;margin-top:10px">Copie cet ID dans le champ d\\'activation de l\\'extension :</div>' +
-          '<div style="background:#0f0f11;border:1px solid #3b3b52;border-radius:8px;padding:10px;font-family:monospace;color:#c084fc;word-break:break-all;margin-top:6px;cursor:pointer" onclick="navigator.clipboard.writeText(\\'' + sid + '\\')">' + sid + '</div>' +
-          '<div style="color:#6b7280;font-size:.75rem;margin-top:4px">Clique pour copier</div>';
+        el.innerHTML = '<div style="color:#fbbf24;font-size:.85rem">Extension non detectee dans ce navigateur — copie le code ci-dessus et colle-le manuellement.</div>';
       }
     }, 3000);
   </script>

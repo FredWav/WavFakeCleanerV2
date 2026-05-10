@@ -2,10 +2,35 @@
  * MAIN world bridge — runs in the page's JavaScript context.
  * Makes API calls with the page's full auth headers/cookies/session.
  * Communicates with the ISOLATED world content script via window.postMessage.
+ *
+ * Defense-in-depth (v2.1):
+ *   - Per-instance shared secret read from the script element's dataset at
+ *     load time. Responses include the secret so foreign scripts on the
+ *     page can't impersonate the bridge or read its responses.
+ *   - URL allowlist: only Threads API endpoints (and the resolution helpers)
+ *     are honored. Arbitrary URLs are rejected to prevent the bridge from
+ *     becoming an open SSRF for malicious code in the isolated world.
  */
 
 const WFC_REQUEST = "WFC_API_REQUEST";
 const WFC_RESPONSE = "WFC_API_RESPONSE";
+
+// Read the per-instance secret synchronously at script init.
+// document.currentScript is non-null only during top-level synchronous
+// execution; capturing it once in closure is the simplest reliable handoff
+// from the isolated world that doesn't expose the secret to the page.
+const WFC_SECRET = (() => {
+  const cs = document.currentScript;
+  if (cs instanceof HTMLScriptElement) {
+    return cs.dataset.wfcSecret || null;
+  }
+  return null;
+})();
+
+// Only Threads API endpoints are allowed. Anything else is rejected so the
+// bridge can never be coerced into fetching attacker-controlled URLs with
+// the user's auth cookies attached.
+const ALLOWED_URL_PATTERN = /^https:\/\/(?:www\.)?threads\.(?:net|com)\/api\//;
 
 // ── Lazy header enrichment (auth tokens visible only from MAIN world) ──
 
@@ -100,7 +125,21 @@ window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== WFC_REQUEST) return;
 
+  // Reject messages that don't carry the matching secret. Without this
+  // check, any script on the page can submit requests through the bridge
+  // and read the responses (which contain the user's session-scoped data).
+  if (!WFC_SECRET || event.data.secret !== WFC_SECRET) return;
+
   const { id, url, headers } = event.data;
+
+  // URL allowlist: refuse non-Threads-API URLs outright.
+  if (typeof url !== "string" || !ALLOWED_URL_PATTERN.test(url)) {
+    window.postMessage(
+      { type: WFC_RESPONSE, id, status: 0, body: null, error: "url_not_allowed", secret: WFC_SECRET },
+      "*",
+    );
+    return;
+  }
 
   try {
     const enriched = enrichHeaders(headers || {});
@@ -121,9 +160,15 @@ window.addEventListener("message", async (event) => {
       body = await response.text().catch(() => null);
     }
 
-    window.postMessage({ type: WFC_RESPONSE, id, status, body, error: null }, "*");
+    window.postMessage(
+      { type: WFC_RESPONSE, id, status, body, error: null, secret: WFC_SECRET },
+      "*",
+    );
   } catch (e) {
-    window.postMessage({ type: WFC_RESPONSE, id, status: 0, body: null, error: String(e) }, "*");
+    window.postMessage(
+      { type: WFC_RESPONSE, id, status: 0, body: null, error: String(e), secret: WFC_SECRET },
+      "*",
+    );
   }
 });
 

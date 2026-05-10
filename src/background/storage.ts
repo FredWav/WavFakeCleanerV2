@@ -17,40 +17,55 @@ import type {
 import { DEFAULT_SETTINGS } from "@shared/constants";
 
 // ── IndexedDB schema ──
+//
+// Schema versioning convention (since v2.1):
+//   - Each bump adds a case to upgrade(); never modify a past case.
+//   - Stores and indexes are created idempotently (existence checks).
+//   - Field additions don't need a version bump (just default in code) UNLESS
+//     a new index is required.
+//
+// Version history:
+//   v1: initial — followers, actionLog, scanSessions stores
+//   v2: no schema change; placeholder establishing the upgrade chain so
+//       future migrations have an obvious template to extend.
 
 const DB_NAME = "wavfakecleaner";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function getDb(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        // Followers store
-        if (!db.objectStoreNames.contains("followers")) {
-          const store = db.createObjectStore("followers", { keyPath: "username" });
-          store.createIndex("status", "status");
-          store.createIndex("score", "score");
-          store.createIndex("scanned", "scanned");
-          store.createIndex("isFake", "isFake");
+      upgrade(db, oldVersion) {
+        // v0 → v1: initial stores
+        if (oldVersion < 1) {
+          if (!db.objectStoreNames.contains("followers")) {
+            const store = db.createObjectStore("followers", { keyPath: "username" });
+            store.createIndex("status", "status");
+            store.createIndex("score", "score");
+            store.createIndex("scanned", "scanned");
+            store.createIndex("isFake", "isFake");
+          }
+          if (!db.objectStoreNames.contains("actionLog")) {
+            const store = db.createObjectStore("actionLog", {
+              keyPath: "id",
+              autoIncrement: true,
+            });
+            store.createIndex("createdAt", "createdAt");
+            store.createIndex("actionType", "actionType");
+          }
+          if (!db.objectStoreNames.contains("scanSessions")) {
+            const store = db.createObjectStore("scanSessions", {
+              keyPath: "id",
+              autoIncrement: true,
+            });
+            store.createIndex("status", "status");
+          }
         }
-        // Action log store
-        if (!db.objectStoreNames.contains("actionLog")) {
-          const store = db.createObjectStore("actionLog", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          store.createIndex("createdAt", "createdAt");
-          store.createIndex("actionType", "actionType");
-        }
-        // Scan sessions store
-        if (!db.objectStoreNames.contains("scanSessions")) {
-          const store = db.createObjectStore("scanSessions", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          store.createIndex("status", "status");
+        // v1 → v2: schema unchanged; reserved for future field/index additions.
+        if (oldVersion < 2) {
+          // No-op for now. Add new indexes or stores here when needed.
         }
       },
     }).catch((err) => {
@@ -152,6 +167,36 @@ export async function getFollowersPending(limit: number): Promise<FollowerRecord
   const db = await getDb();
   const all = await db.getAllFromIndex("followers", "status", "pending");
   return all.slice(0, limit);
+}
+
+/**
+ * One-shot cleanup for the historical "owner-sub-page" bug (≤ 2.1.0):
+ * the DOM fetch fallback used to ingest links like /@user/media as the
+ * username "usermedia" because the slash was stripped before the
+ * sub-page guard. Removes any persisted entry whose username matches
+ * the pattern owner+<tab-suffix> (or the owner itself). Safe no-op when
+ * no junk is present.
+ */
+export async function purgeOwnerSubPageFakes(ownerUsername: string): Promise<number> {
+  if (!ownerUsername) return 0;
+  const owner = ownerUsername.toLowerCase();
+  const tabSuffixes = [
+    "media", "replies", "tagged", "reposts", "saved",
+    "followers", "following", "liked",
+  ];
+  const db = await getDb();
+  const all = await db.getAll("followers");
+  const tx = db.transaction("followers", "readwrite");
+  let removed = 0;
+  for (const f of all) {
+    const u = (f.username || "").toLowerCase();
+    if (u === owner || tabSuffixes.some((sfx) => u === owner + sfx)) {
+      await tx.store.delete(f.username);
+      removed++;
+    }
+  }
+  await tx.done;
+  return removed;
 }
 
 export async function resetScannedFollowers(): Promise<number> {
@@ -289,19 +334,118 @@ export async function saveRateState(state: RateState): Promise<void> {
 
 import type { LicenseInfo } from "@shared/types";
 
+// ── License: dual-storage with auto-restore ──
+//
+// Why two storages?
+//   - chrome.storage.local survives normal use but is wiped if the user
+//     uninstalls + reinstalls the browser (or the extension).
+//   - chrome.storage.sync (≈ 100 KB total quota) is mirrored across the
+//     user's Chrome instances via their Google account. Surviving a browser
+//     reinstall requires only that the user signs back into Chrome with the
+//     same account.
+//
+// We treat .local as the authoritative copy and .sync as a recovery mirror.
+// On every save we write both. On read, if .local is empty but .sync has a
+// licence, we restore it back into .local (so the next read is fast).
+
 export async function getLicense(): Promise<LicenseInfo> {
-  const result = await chrome.storage.local.get("license");
-  const lic = result.license || {};
+  const localResult = await chrome.storage.local.get("license");
+  let lic = localResult.license;
+
+  // Auto-recovery path: local is empty but the sync mirror has a licence.
+  if (!lic || !lic.active || !lic.key) {
+    try {
+      const syncResult = await chrome.storage.sync.get("license");
+      const synced = syncResult.license;
+      if (synced && synced.active && synced.key) {
+        // Push it back to local so we don't pay the sync read every time
+        await chrome.storage.local.set({ license: synced });
+        lic = synced;
+        console.log("[WFC] License restored from chrome.storage.sync");
+      }
+    } catch {
+      // sync may be unavailable (user signed out of Chrome) — that's fine
+    }
+  }
+
+  lic = lic || {};
   return {
     active: lic.active ?? false,
     key: lic.key ?? null,
     activatedAt: lic.activatedAt ?? null,
     communityToken: lic.communityToken ?? null,
+    recoveryToken: lic.recoveryToken ?? null,
   };
 }
 
 export async function saveLicense(license: LicenseInfo): Promise<void> {
   await chrome.storage.local.set({ license });
+  // Best-effort mirror to sync. If the user is signed out of Chrome or the
+  // sync quota is full (~100 KB), the mirror silently fails — the local
+  // copy still works for this device.
+  try {
+    await chrome.storage.sync.set({ license });
+  } catch {
+    // sync unavailable — proceed with local-only persistence
+  }
+}
+
+// ── License export / import (file-based recovery) ──
+//
+// The user can download a `.wfc-license.json` file containing the full
+// licence record. They can re-import it after a browser reinstall, on
+// another device, or send it to support if they need help.
+
+const LICENSE_FILE_TYPE = "wfc-license-backup";
+const LICENSE_FILE_VERSION = 1;
+
+export interface LicenseBackup {
+  type: typeof LICENSE_FILE_TYPE;
+  version: number;
+  savedAt: string;
+  license: LicenseInfo;
+}
+
+/**
+ * Build the backup payload the user can save as a JSON file. Returns null
+ * if there's no licence to back up (user hasn't activated yet).
+ *
+ * The backup includes the recoveryToken (the original cs_live_… or
+ * wfc_lic_… input) so re-activation works on any device.
+ */
+export async function exportLicenseBackup(): Promise<LicenseBackup | null> {
+  const license = await getLicense();
+  if (!license.active || !license.key) return null;
+  return {
+    type: LICENSE_FILE_TYPE,
+    version: LICENSE_FILE_VERSION,
+    savedAt: new Date().toISOString(),
+    license,
+  };
+}
+
+/**
+ * Validate a backup payload (loaded from a user-supplied file) and return
+ * the embedded activation token — caller passes it to ACTIVATE_LICENSE so
+ * the normal verification path runs (Stripe re-check or Ed25519 sig check).
+ *
+ * Prefers `recoveryToken` (the original signed/checkout input). Falls back
+ * to `key` for backups produced by older clients that didn't yet store the
+ * recovery token. Returns null on any malformed input. Never trusts the
+ * backup blindly — activation is what marks the licence valid.
+ */
+export function readLicenseBackup(payload: unknown): { key: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (p.type !== LICENSE_FILE_TYPE) return null;
+  if (typeof p.version !== "number" || p.version > LICENSE_FILE_VERSION) return null;
+  const lic = p.license as Record<string, unknown> | undefined;
+  if (!lic) return null;
+  const recovery = typeof lic.recoveryToken === "string" ? lic.recoveryToken : "";
+  const key = typeof lic.key === "string" ? lic.key : "";
+  const chosen = recovery || key;
+  if (!chosen) return null;
+  return { key: chosen };
 }
 
 // ── Daily usage counters (for free tier limits) ──

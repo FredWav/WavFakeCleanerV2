@@ -23,24 +23,60 @@ export default function App() {
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
 
+  // Initial load: settings (for onboarding gate) and licence state.
+  // Split into separate effects so each has a single, obvious responsibility
+  // and can re-run independently if its dependency changes.
   useEffect(() => {
+    let cancelled = false;
     api.getSettings().then((s) => {
+      if (cancelled) return;
       if (!s.threadsUsername && !localStorage.getItem("wav_onboarding_done")) {
         setShowOnboarding(true);
       }
     }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     api.getLicense().then((lic) => {
+      if (cancelled) return;
       setLicence(lic);
-      // Auto-refresh communityToken pour les licences activees avant le deploiement communautaire
-      if (lic.active && lic.key && !lic.communityToken) {
-        api.activateLicense(lic.key).then((result) => {
-          if (result?.ok) {
-            api.getLicense().then(setLicence).catch(() => {});
-          }
-        }).catch(() => {});
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Auto-refresh communityToken for licences activated before the community
+  // deployment. Runs only when the licence has a key but no token, and
+  // re-runs when the key changes (e.g. user activates a fresh licence).
+  useEffect(() => {
+    if (!licence.active || !licence.key || licence.communityToken) return;
+    let cancelled = false;
+    api.activateLicense(licence.key).then((result) => {
+      if (cancelled) return;
+      if (result?.ok) {
+        api.getLicense().then((l) => { if (!cancelled) setLicence(l); }).catch(() => {});
       }
     }).catch(() => {});
-  }, []);
+    return () => { cancelled = true; };
+  }, [licence.active, licence.key, licence.communityToken]);
+
+  // Surface a one-time toast when a selector drift is detected on Threads.
+  // The content script reports drift as LOG_FROM_CONTENT with category="drift";
+  // service-worker rebroadcasts as LOG_EVENT. Capping to once per session
+  // prevents toast spam if multiple lookups fall back simultaneously.
+  useEffect(() => {
+    let shown = false;
+    const listener = (message: { type?: string; payload?: { category?: string } }) => {
+      if (shown) return;
+      if (message.type !== "LOG_EVENT") return;
+      if (message.payload?.category !== "drift") return;
+      shown = true;
+      setToast(t("drift_detected", lang));
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, [lang]);
 
   function toggleLang() {
     const cycle: Record<string, string> = { fr: "en", en: "es", es: "fr" };
