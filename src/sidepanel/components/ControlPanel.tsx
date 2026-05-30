@@ -61,7 +61,8 @@ export default function ControlPanel({
       await fn();
       setTimeout(onRefresh, 500);
     } catch (e) {
-      setError(String(e));
+      console.error("[WFC] action failed:", e);
+      setError(t("action_failed", lang));
     } finally {
       setLoading(null);
     }

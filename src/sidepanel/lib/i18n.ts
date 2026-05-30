@@ -114,6 +114,11 @@ const translations: Record<string, Record<string, string>> = {
     bd_many_followers: "Beaucoup d'abonnés",
     // Search
     search_placeholder: "Rechercher...",
+    removed_note: "La suppression n'est annulable qu'en redemandant à la personne de te suivre — Threads ne peut pas la rajouter. Clique un @ pour rouvrir son profil.",
+    export_csv: "Exporter CSV",
+    info_removed_on: "Supprimé le {0}",
+    action_failed: "Action échouée, réessaie.",
+    list_capped: "200 premiers affichés — affine avec la recherche.",
     // Health & Onboarding
     health_score: "Sante du compte",
     scanned_coverage: "{0}% analysés",
@@ -274,6 +279,11 @@ const translations: Record<string, Record<string, string>> = {
     bd_many_followers: "Many followers",
     // Search
     search_placeholder: "Search...",
+    removed_note: "Removal can only be undone by asking the person to follow you again — Threads can't re-add them. Click an @ to reopen their profile.",
+    export_csv: "Export CSV",
+    info_removed_on: "Removed {0}",
+    action_failed: "Action failed, please retry.",
+    list_capped: "Showing first 200 — refine with search.",
     // Health & Onboarding
     health_score: "Account health",
     scanned_coverage: "{0}% scanned",
@@ -434,6 +444,11 @@ const translations: Record<string, Record<string, string>> = {
     bd_many_followers: "Muchos seguidores",
     // Search
     search_placeholder: "Buscar...",
+    removed_note: "La eliminación solo se deshace pidiendo a la persona que te vuelva a seguir — Threads no puede re-agregarla. Haz clic en un @ para reabrir su perfil.",
+    export_csv: "Exportar CSV",
+    info_removed_on: "Eliminado el {0}",
+    action_failed: "Acción fallida, reinténtalo.",
+    list_capped: "Mostrando los primeros 200 — refina con la búsqueda.",
     // Health & Onboarding
     health_score: "Salud de la cuenta",
     scanned_coverage: "{0}% analizados",

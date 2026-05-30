@@ -146,6 +146,26 @@ async function openProfileTab(url: string): Promise<void> {
   profileTabId = tab.id ?? null;
 }
 
+// Export the removed-followers list as CSV (the "journal" half of the
+// journal/undo model — true undo is impossible since Threads can't re-add a
+// follower, so we give the user a portable record + profile links to re-follow).
+function exportRemovedCsv(rows: FollowerWithUrl[]): void {
+  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const header = "username,score,removed_at,profile_url";
+  const lines = rows.map((f) => {
+    const date = f.removedAt ? new Date(f.removedAt).toISOString() : "";
+    return [esc("@" + f.username), String(f.score ?? ""), esc(date), esc(f.profile_url)].join(",");
+  });
+  const csv = [header, ...lines].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `wfc-removed-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function scoreBadge(score: number | null) {
   if (score === null || score === undefined) return null;
   let color = "bg-green-500/20 text-green-400";
@@ -299,6 +319,21 @@ export default function FollowerTable({
         </button>
       </div>
 
+      {/* Removed journal: honesty note about re-follow + CSV export */}
+      {filter === "removed" && (
+        <div className="flex items-start gap-2 px-2 py-1.5 border-b border-gray-800 text-[10px] text-gray-500">
+          <span className="leading-snug flex-1">{t("removed_note", lang)}</span>
+          {followers.length > 0 && (
+            <button
+              onClick={() => exportRemovedCsv(followers)}
+              className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 hover:text-white transition-colors shrink-0"
+            >
+              {t("export_csv", lang)}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto max-h-72 overflow-y-auto">
         <table className="w-full text-xs">
@@ -322,31 +357,36 @@ export default function FollowerTable({
                 const cs = communityScores.get(f.username);
                 const isSpotted = cs && cs.voteCount >= 3 && cs.fakeRatio >= 0.60;
                 const isFakeFilter = filter === "fake";
-                const isBlurred = isFakeFilter && !licence?.active && index >= 5;
+                const isLockedRow = isFakeFilter && !licence?.active && index >= 5;
+
+                // Unlicensed users on the Fake tab: show one clean upsell banner
+                // in place of row 5 and hide the rest — no jarring per-row blur.
+                if (isLockedRow) {
+                  if (index !== 5) return null;
+                  return (
+                    <tr key="paywall">
+                      <td colSpan={3} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-gray-900">
+                        <p className="text-xs text-gray-300 mb-2">
+                          {t("blur_banner", lang).replace("{0}", String(followers.length))}
+                        </p>
+                        <button
+                          onClick={() => onShowLicence?.()}
+                          className="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg
+                            hover:bg-purple-500 transition-colors"
+                        >
+                          {t("blur_cta", lang)}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
 
                 return (
                   <React.Fragment key={f.username}>
-                    {/* Blur banner for non-licensed users */}
-                    {isFakeFilter && !licence?.active && index === 5 && (
-                      <tr>
-                        <td colSpan={3} className="px-3 py-4 text-center bg-gray-900/90">
-                          <p className="text-xs text-gray-300 mb-2">
-                            {t("blur_banner", lang).replace("{0}", String(followers.length))}
-                          </p>
-                          <button
-                            onClick={() => onShowLicence?.()}
-                            className="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg
-                              hover:bg-purple-500 transition-colors"
-                          >
-                            {t("blur_cta", lang)}
-                          </button>
-                        </td>
-                      </tr>
-                    )}
                     {/* Main row */}
                     <tr
-                      onClick={() => { if (!isBlurred) { setExpanded(isExpanded ? null : f.username); setLicencePrompt(null); } }}
-                      className={`border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors ${isBlurred ? "blur-[4px] select-none pointer-events-none" : ""}`}
+                      onClick={() => { setExpanded(isExpanded ? null : f.username); setLicencePrompt(null); }}
+                      className="border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors"
                     >
                       <td className="px-2 py-1.5 font-mono text-gray-300">
                         <a
@@ -387,7 +427,13 @@ export default function FollowerTable({
                               <span>{f.followingCount} {t("info_following", lang)}</span>
                             )}
                             <span>{f.isPrivate ? t("info_private", lang) : t("info_public", lang)}</span>
-                            {f.scannedAt && <span>{new Date(f.scannedAt).toLocaleDateString()}</span>}
+                            {f.removed && f.removedAt ? (
+                              <span className="text-green-500/70">
+                                {t("info_removed_on", lang).replace("{0}", new Date(f.removedAt).toLocaleDateString())}
+                              </span>
+                            ) : f.scannedAt ? (
+                              <span>{new Date(f.scannedAt).toLocaleDateString()}</span>
+                            ) : null}
                           </div>
 
                           {/* Section 2: Analyse lisible */}
@@ -494,6 +540,11 @@ export default function FollowerTable({
           </tbody>
         </table>
       </div>
+      {followers.length >= 200 && (
+        <div className="px-2 py-1 text-[9px] text-gray-600 border-t border-gray-800 text-center">
+          {t("list_capped", lang)}
+        </div>
+      )}
     </div>
   );
 }
