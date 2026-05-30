@@ -51,6 +51,11 @@ robustesse anti-blocage. Audit complet du code, puis correctifs ciblés.
 - **TypeError latente sur Stop** — cliquer Stop pendant la suppression d'un faux
   ne déréférence plus un `removeResult` null (ce qui faussait au passage les
   compteurs de blocage/erreur).
+- **File de retry communautaire réparée** — les votes/sightings mis en queue
+  (offline, 5xx) étaient rejoués avec leur `ts` d'origine et systématiquement
+  refusés par le Worker (`timestamp_expired` : fenêtre de 5 min vs alarme de
+  replay de 15 min), donc jamais renvoyés. Le replay régénère désormais
+  `ts`+`nonce` (retry légitime, idempotent côté Worker).
 
 ### Notes
 - La récupération passe exclusivement par le défilement automatique (pas d'API

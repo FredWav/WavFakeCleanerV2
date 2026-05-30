@@ -200,6 +200,14 @@ export async function processCommunityQueue(): Promise<{ replayed: number; dropp
 
   for (const item of queue) {
     const url = item.kind === "vote" ? COMMUNITY_VOTE_URL : COMMUNITY_REPORT_SIGHTINGS_URL;
+    // Refresh freshness fields before replay. The Worker rejects any ts older
+    // than 5 min, but this alarm only fires every 15 min — so replaying the
+    // original (stale) ts would ALWAYS fail validation (timestamp_expired → 4xx)
+    // and the item would be dropped. The original request never reached the
+    // server, so a fresh ts + nonce is a legitimate retry (vote = idempotent
+    // upsert, sighting = INSERT OR IGNORE — a rare double-delivery is harmless).
+    item.body.ts = Date.now();
+    item.body.nonce = randomNonce();
     let status: number | null = null;
     try {
       const res = await fetch(url, {
