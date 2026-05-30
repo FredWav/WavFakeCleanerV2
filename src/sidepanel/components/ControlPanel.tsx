@@ -116,6 +116,9 @@ export default function ControlPanel({
           {stats.lastError}
         </div>
       )}
+
+      {/* Persistent honesty note: fetching is scroll-based and caps ~5000/pass. */}
+      <p className="text-[10px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
     </div>
   );
 }

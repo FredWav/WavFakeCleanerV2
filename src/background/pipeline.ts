@@ -232,7 +232,7 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
     const knownUsernames = await getAllFollowerUsernames();
     const knownArray = knownUsernames.size > 0 ? [...knownUsernames] : [];
 
-    type FetchSuccess = { collected: Record<string, ContentFollowerMeta>; method: string };
+    type FetchSuccess = { collected: Record<string, ContentFollowerMeta>; method: string; truncated?: boolean; truncReason?: string };
     type FetchError = { error: string; reason?: string; linksFound?: number };
     type FetchAny = FetchSuccess | FetchError | null;
 
@@ -330,6 +330,16 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
     const newCount = await persistFollowerPage(successResult.collected, username);
 
     log("INFO", "fetch", m("fetch_done", total, newCount));
+
+    // If the scroll fetch hit the single-pass cap (~5000) or the 30-min timeout,
+    // the follower list is truncated — say so instead of silently pretending we
+    // got everyone. Surfaced via lastError (shown in ControlPanel once the run
+    // ends) plus a WARNING log line.
+    if (successResult.truncated) {
+      const notice = m("fetch_truncated", total);
+      log("WARNING", "fetch", notice);
+      await updateState({ lastError: notice });
+    }
   } catch (e) {
     log("ERROR", "pipeline", m("fetch_error", String(e)));
     await updateState({ stage: "idle", lastError: String(e) });
@@ -700,7 +710,8 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
           // Retry logic for REMOVE_FOLLOWER: menu_not_found is often a timing issue
           // (page not fully rendered after SCAN_PROFILE tab navigation).
           // Retry once on same page, then re-navigate as last resort.
-          let removeResult: { success: boolean; action: string; error?: string; blocked?: boolean } | null = null;
+          type RemoveOutcome = { success: boolean; action: string; error?: string; blocked?: boolean };
+          let removeResult: RemoveOutcome | null = null;
 
           for (let removeAttempt = 0; removeAttempt < 3; removeAttempt++) {
             if (signal.aborted) break;
@@ -720,9 +731,9 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
             removeResult = await chrome.tabs.sendMessage(currentTabId, {
               type: "REMOVE_FOLLOWER",
               payload: { username: follower.username },
-            }) as typeof removeResult;
+            }) as RemoveOutcome | null;
 
-            if (removeResult!.success || removeResult!.error !== "menu_not_found") {
+            if (removeResult && (removeResult.success || removeResult.error !== "menu_not_found")) {
               break; // Success or non-retryable error
             }
 
@@ -731,7 +742,15 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
             }
           }
 
-          if (removeResult!.success) {
+          // Stop pressed (or no verdict ever returned) before any removal attempt
+          // completed → removeResult is still null. Do NOT dereference it (that was
+          // a latent TypeError that spuriously bumped the blocked/error counters).
+          // Leave the follower marked fake/pending; it'll be retried next cycle.
+          if (!removeResult) {
+            break;
+          }
+
+          if (removeResult.success) {
             await markRemoved(follower.username);
             removed++;
             log("INFO", "clean", m("cycle_fake_removed", follower.username, score));
@@ -740,16 +759,16 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
               status: "ok", errorDetail: null, durationMs: null, createdAt: Date.now(),
             });
           } else {
-            if (removeResult!.blocked || removeResult!.error === "threads_blocked") {
+            if (removeResult.blocked || removeResult.error === "threads_blocked") {
               consecutiveBlocked++;
               log("WARNING", "clean", m("clean_blocked_user", follower.username));
             } else {
-              log("WARNING", "clean", m("cycle_fake_fail", follower.username, score, removeResult!.error ?? ""));
+              log("WARNING", "clean", m("cycle_fake_fail", follower.username, score, removeResult.error ?? ""));
             }
             await addActionLog({
               actionType: "remove", target: follower.username,
-              status: removeResult!.blocked ? "error_429" : "error_other",
-              errorDetail: removeResult!.error || null, durationMs: null, createdAt: Date.now(),
+              status: removeResult.blocked ? "error_429" : "error_other",
+              errorDetail: removeResult.error || null, durationMs: null, createdAt: Date.now(),
             });
           }
           scanned++;

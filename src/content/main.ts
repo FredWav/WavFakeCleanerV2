@@ -123,7 +123,7 @@ async function handleFetchFollowers(
   username: string,
   knownUsernames?: string[],
 ): Promise<
-  | { collected: Record<string, ContentFollowerMeta>; method: string }
+  | { collected: Record<string, ContentFollowerMeta>; method: string; truncated?: boolean; truncReason?: "cap_5000" | "timeout" }
   | { error: string; reason?: string; linksFound?: number }
 > {
   const knownSet = new Set(knownUsernames || []);
@@ -228,7 +228,7 @@ async function handleFetchFollowers(
 async function scrollFetch(
   username: string
 ): Promise<
-  | { collected: Record<string, ContentFollowerMeta>; method: string }
+  | { collected: Record<string, ContentFollowerMeta>; method: string; truncated?: boolean; truncReason?: "cap_5000" | "timeout" }
   | { error: string; reason?: string; linksFound?: number }
 > {
   // If we're already on the dedicated /@user/followers page (e.g., after a
@@ -282,10 +282,13 @@ async function scrollFetch(
   const startTime = Date.now();
   const maxDuration = 1800_000;
   const maxFollowers = 5000;
+  // Track whether we stopped on a hard cap/timeout (= list truncated, the
+  // caller must warn the user) rather than a natural end (got everyone).
+  let truncReason: "cap_5000" | "timeout" | null = null;
 
   while (!contentAborted) {
-    if (Date.now() - startTime > maxDuration) break;
-    if (pseudos.size >= maxFollowers) break;
+    if (Date.now() - startTime > maxDuration) { truncReason = "timeout"; break; }
+    if (pseudos.size >= maxFollowers) { truncReason = "cap_5000"; break; }
 
     await sleep(500);
 
@@ -338,7 +341,12 @@ async function scrollFetch(
     };
   }
 
-  return { collected, method: "scroll" };
+  return {
+    collected,
+    method: "scroll",
+    truncated: truncReason !== null,
+    truncReason: truncReason ?? undefined,
+  };
 }
 
 // ── Scan profile ──

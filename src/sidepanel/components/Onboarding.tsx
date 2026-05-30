@@ -50,6 +50,10 @@ export default function Onboarding({
           ))}
         </div>
 
+        <p className="text-[10px] text-gray-500 leading-snug text-center">
+          {t("fetch_limit_note", lang)}
+        </p>
+
         <button
           onClick={handleDismiss}
           className="w-full px-3 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold

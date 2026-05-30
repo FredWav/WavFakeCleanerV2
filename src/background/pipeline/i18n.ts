@@ -25,6 +25,7 @@ const MSG: Record<string, Record<string, string>> = {
   fetch_start:          { fr: "Récupération de tes followers (@{0})…", en: "Fetching your followers list (@{0})…" },
   fetch_found:          { fr: "{0} followers trouvés, sauvegarde…", en: "{0} followers found, saving…" },
   fetch_done:           { fr: "Terminé : {0} followers récupérés, {1} nouveaux — clique Nettoyer pour les scanner", en: "Done: {0} followers fetched, {1} new — click Clean to analyze them" },
+  fetch_truncated:      { fr: "{0} abonnés récupérés — limite d'une passe (~5000 max) atteinte. Les très gros comptes ne sont pas entièrement couverts en une seule fois.", en: "{0} followers fetched — single-pass limit (~5000 max) reached. Very large accounts aren't fully covered in one go." },
   fetch_error:          { fr: "Erreur récupération : {0}", en: "Fetch error: {0}" },
   fetch_failed:         { fr: "Échec récupération : {0}", en: "Fetch failed: {0}" },
   fetch_retry_fail:     { fr: "Échec après 3 tentatives — canal de messages instable", en: "Fetch failed after 3 retries — message channel keeps closing" },
