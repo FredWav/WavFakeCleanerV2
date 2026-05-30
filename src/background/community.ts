@@ -5,7 +5,7 @@
  * Lookup is open to anyone (no auth required server-side).
  */
 
-import { COMMUNITY_VOTE_URL, COMMUNITY_LOOKUP_URL, COMMUNITY_REPORT_SIGHTINGS_URL, COMMUNITY_CHECK_SIGHTINGS_URL } from "@shared/constants";
+import { COMMUNITY_VOTE_URL, COMMUNITY_REPORT_SIGHTINGS_URL, COMMUNITY_CHECK_SIGHTINGS_URL } from "@shared/constants";
 import { getLicense } from "./storage";
 
 // ── Crypto helpers ──
@@ -24,14 +24,6 @@ function randomNonce(): string {
   return Array.from(arr)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-// ── Types ──
-
-export interface CommunityScore {
-  voteCount: number;
-  fakeRatio: number;      // 0.0–1.0
-  consensusScore: number; // 0–100
 }
 
 // ── Persisted retry queue ──
@@ -267,48 +259,6 @@ export async function checkSightings(usernames: string[]): Promise<Map<string, n
     }
   } catch {
     // Network error — non-critical
-  }
-
-  return result;
-}
-
-// ── Batch lookup ──
-
-export async function batchLookup(
-  usernames: string[],
-): Promise<Map<string, CommunityScore>> {
-  const result = new Map<string, CommunityScore>();
-  if (usernames.length === 0) return result;
-
-  // Build hash→username mapping
-  const hashToUsername = new Map<string, string>();
-  const targetHashes: string[] = [];
-
-  for (const username of usernames) {
-    const hash = await sha256Hex(username.toLowerCase());
-    hashToUsername.set(hash, username);
-    targetHashes.push(hash);
-  }
-
-  try {
-    const res = await fetch(COMMUNITY_LOOKUP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targetHashes }),
-    });
-    if (!res.ok) return result;
-
-    const data = (await res.json()) as Record<
-      string,
-      { voteCount: number; fakeRatio: number; consensusScore: number }
-    >;
-
-    for (const [hash, score] of Object.entries(data)) {
-      const username = hashToUsername.get(hash);
-      if (username) result.set(username, score);
-    }
-  } catch {
-    // Network error — return empty map, community features are non-critical
   }
 
   return result;
