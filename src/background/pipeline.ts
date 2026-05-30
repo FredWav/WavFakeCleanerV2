@@ -14,6 +14,7 @@ import {
   INTER_CYCLE_PAUSE,
   CONTINUOUS_SESSION_MAX_HOURS,
   CONTINUOUS_LONG_BREAK,
+  CONTINUOUS_IDLE_PAUSE,
   HARD_429_PAUSE,
 } from "@shared/constants";
 import { FREE_LIMITS } from "@shared/types";
@@ -207,7 +208,7 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 
   log("INFO", "fetch", m("fetch_start", username));
   // Clear any previous error when starting a fresh run.
-  await updateState({ stage: "fetching", lastError: null });
+  await updateState({ stage: "fetching", lastError: null, pausedUntil: null, pauseReason: null });
 
   try {
     // Force-close any existing background tab (stale content script after extension reload)
@@ -393,7 +394,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
 
   log("INFO", "clean", m("cycle_start", pending.length));
   // Clear any previous error when starting a fresh cycle.
-  await updateState({ stage: "cleaning", total: pending.length, progress: 0, lastError: null });
+  await updateState({ stage: "cleaning", total: pending.length, progress: 0, lastError: null, pausedUntil: null, pauseReason: null });
 
   const sessionId = await createScanSession({
     status: "running",
@@ -407,10 +408,8 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
     finishedAt: null,
   });
 
-  // Track cycle for free tier AVANT le cycle — un crash mid-cycle compte quand même
-  if (!licence.active) {
-    await incrementDailyUsage("cycles");
-  }
+  // Free-tier cycle counting happens at the END of the cycle (gated on work
+  // actually done) so an immediate hard-429 no longer burns the 1 free cycle/day.
 
   // Check cross-user sightings (batch, non-blocking)
   let sightingsMap = new Map<string, number>();
@@ -432,6 +431,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
 
   // ── Phase 1 : trier les followers en 3 catégories ──
   let autoSkipped = 0;
+  let fakesFound = 0; // fakes NEWLY detected this cycle (distinct from removed)
   const needsVisit: typeof preSorted = [];
   const needsRemoveOnly: FollowerRecord[] = []; // Déjà scorés fake, juste supprimer
 
@@ -466,6 +466,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       // jamais ré-attrapés (getFollowersPending ne renvoie que les "pending").
       needsRemoveOnly.push({ ...follower, ...updates });
       cycleSightings.add(follower.username);
+      fakesFound++;
     } else if (follower.isVerified && follower.followersCount !== null && follower.followersCount >= 500) {
       // Cas C : vérifié + beaucoup de followers → légitime
       await updateFollower(follower.username, {
@@ -576,7 +577,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
     // Detect if Threads is blocking us
     if (consecutiveBlocked >= 5) {
       log("WARNING", "clean", m("scan_slowdown"));
-      await sleep(300, signal).catch(() => {});
+      await pausedSleep(300, "slowdown", signal).catch(() => {});
       consecutiveBlocked = 0;
       if (signal.aborted) break;
     }
@@ -607,7 +608,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
             const pauseMin = Math.round(hardPause / 60);
             log("WARNING", "clean", m("threads_hard_429", pauseMin));
             await closeBackgroundTab();
-            await sleep(hardPause, signal);
+            await pausedSleep(hardPause, "hard_429", signal);
             if (signal.aborted) break;
             consecutiveErrorPages = 0;
             // Recreate tab and retry this follower
@@ -622,7 +623,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
             // 1-2 error pages → shorter pause, escalating
             const cooldown = consecutiveErrorPages * 120; // 2min, 4min
             log("WARNING", "clean", m("threads_error_page", follower.username, cooldown));
-            await sleep(cooldown, signal);
+            await pausedSleep(cooldown, "error_page", signal);
             if (signal.aborted) break;
 
             // Re-navigate from scratch
@@ -682,6 +683,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
         await markNotFound(follower.username);
         scanned++;
         removed++;
+        fakesFound++;
         log("INFO", "clean", m("cycle_not_found", follower.username));
         // Community : compte introuvable = fake confirmé pour le pool
         submitVote(follower.username, "fake", 100).catch(() => {});
@@ -703,6 +705,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
         if (scored.isFake) {
           // FAKE — mark scanned then remove immediately
           await markFake(follower, scored, profileData);
+          fakesFound++;
 
           // Simule la réflexion humaine avant de cliquer supprimer (3-8s)
           await sleep(3 + Math.random() * 5, signal);
@@ -834,10 +837,16 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
     }
   }
 
+  // Free tier: only count this cycle against the daily limit if it actually did
+  // something — an immediate hard-429 (0 processed) must not burn the free cycle.
+  if (!licence.active && (scanned > 0 || removed > 0 || reviewed > 0)) {
+    await incrementDailyUsage("cycles");
+  }
+
   await updateScanSession(sessionId, {
     status: signal.aborted ? "stopped" : "completed",
     scannedCount: scanned,
-    fakeCount: removed,
+    fakeCount: fakesFound,
     removedCount: removed,
     finishedAt: Date.now(),
   });
@@ -897,7 +906,7 @@ export function runContinuous(): Promise<void> {
           const breakMin = Math.round(breakDuration / 60);
           log("WARNING", "pipeline", m("continuous_session_break", breakMin, cyclesInSession));
           await closeBackgroundTab();
-          await sleep(breakDuration, signal);
+          await pausedSleep(breakDuration, "session_break", signal);
           if (signal.aborted) break;
           // Reset session counters after the break and resume
           sessionStartedAt = Date.now();
@@ -911,12 +920,25 @@ export function runContinuous(): Promise<void> {
         cyclesInSession++;
 
         // Check if there are more pending followers
-        const remaining = await getFollowersPending(1);
+        let remaining = await getFollowersPending(1);
         if (remaining.length === 0) {
-          // No more pending — re-fetch then continue
+          // No more pending — re-fetch to pick up newly-gained followers
           log("INFO", "pipeline", m("continuous_fetch"));
           await runFetchInternal(signal);
           if (signal.aborted) break;
+          remaining = await getFollowersPending(1);
+        }
+
+        if (remaining.length === 0) {
+          // Account is clean: nothing left to scan/remove. Spinning empty cycles
+          // would reopen a background tab every few minutes for no work, so idle
+          // for a long stretch then loop back to re-fetch/scan later (continuous
+          // mode still catches future fake followers).
+          const idle = randomBetween(...CONTINUOUS_IDLE_PAUSE);
+          log("INFO", "pipeline", m("continuous_idle", Math.round(idle / 60)));
+          await closeBackgroundTab();
+          await pausedSleep(idle, "idle", signal);
+          continue;
         }
 
         // ── Adaptive inter-cycle pause: longer as the session ages ──
@@ -924,7 +946,7 @@ export function runContinuous(): Promise<void> {
         const basePause = randomBetween(...INTER_CYCLE_PAUSE);
         const pause = basePause * ageFactor;
         log("INFO", "pipeline", m("continuous_pause", Math.round(pause)));
-        await sleep(pause, signal);
+        await pausedSleep(pause, "inter_cycle", signal);
       }
     } finally {
       log("INFO", "pipeline", m("continuous_stop"));
@@ -941,6 +963,23 @@ export function runContinuous(): Promise<void> {
 
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+/**
+ * Sleep through a long anti-block pause while telling the UI when we'll resume.
+ * Sets pausedUntil/pauseReason in the pipeline state (so ControlPanel can show a
+ * live countdown instead of a frozen progress bar), then clears them when the
+ * pause ends or is aborted.
+ */
+async function pausedSleep(seconds: number, reason: string, signal: AbortSignal): Promise<void> {
+  await updateState({ pausedUntil: Date.now() + seconds * 1000, pauseReason: reason });
+  await broadcastStats();
+  try {
+    await sleep(seconds, signal);
+  } finally {
+    await updateState({ pausedUntil: null, pauseReason: null });
+    await broadcastStats();
+  }
 }
 
 // ── Exports for service worker ──

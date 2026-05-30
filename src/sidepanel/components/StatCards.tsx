@@ -21,13 +21,16 @@ function AnimatedCard({ value, color, label }: { value: number; color: string; l
   );
 }
 
-function HealthGauge({ score, lang }: { score: number; lang: string }) {
-  const display = useCountUp(score);
+function HealthGauge({ score, coverage, lang }: { score: number | null; coverage: number; lang: string }) {
+  const display = useCountUp(score ?? 0);
   const radius = 35;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference * (1 - display / 100);
-  const color = display > 80 ? "#22c55e" : display > 50 ? "#eab308" : "#ef4444";
-  const bgColor = display > 80 ? "text-green-400" : display > 50 ? "text-yellow-400" : "text-red-400";
+  const hasScore = score !== null;
+  // Empty (full-offset) ring in neutral grey until the first scan produces data,
+  // so a fresh, healthy account never shows an alarming red "0 / 100".
+  const offset = hasScore ? circumference * (1 - display / 100) : circumference;
+  const color = !hasScore ? "#4b5563" : display > 80 ? "#22c55e" : display > 50 ? "#eab308" : "#ef4444";
+  const bgColor = !hasScore ? "text-gray-500" : display > 80 ? "text-green-400" : display > 50 ? "text-yellow-400" : "text-red-400";
 
   return (
     <div className="flex flex-col items-center mb-2">
@@ -50,16 +53,21 @@ function HealthGauge({ score, lang }: { score: number; lang: string }) {
           className={`text-lg font-bold ${bgColor}`}
           fill="currentColor" fontSize="18"
         >
-          {display}
+          {hasScore ? display : "—"}
         </text>
         <text
           x="45" y="56" textAnchor="middle"
           fill="#6b7280" fontSize="8"
         >
-          / 100
+          {hasScore ? "/ 100" : ""}
         </text>
       </svg>
       <span className="text-[10px] text-gray-500 -mt-1">{t("health_score", lang)}</span>
+      {coverage > 0 && coverage < 100 && (
+        <span className="text-[9px] text-gray-600">
+          {t("scanned_coverage", lang).replace("{0}", String(coverage))}
+        </span>
+      )}
     </div>
   );
 }
@@ -67,18 +75,22 @@ function HealthGauge({ score, lang }: { score: number; lang: string }) {
 export default function StatCards({ stats, lang }: { stats: Stats | null; lang: string }) {
   if (!stats) return null;
 
-  // (scannés propres + supprimés) / total × 100
-  // Scannés propres = scanned - fakes - toReview (ceux validés OK)
-  // Monte de 0 vers 100 au fur et à mesure qu'on scanne et nettoie
+  // Health = share of EVALUATED profiles that turned out genuinely OK.
+  // Based on the scanned population (not /total), so a partial scan of a healthy
+  // account no longer reads as "0/100 red". Stays neutral ("—") until the first
+  // scan, and coverage (scanned/total) is shown separately below the gauge.
   const total = stats.totalFollowers ?? 0;
-  const clean = Math.max(0, (stats.scanned ?? 0) - (stats.fakes ?? 0) - (stats.toReview ?? 0));
-  const healthScore = total > 0
-    ? Math.max(0, Math.min(100, Math.round((clean + (stats.removed ?? 0)) / total * 100)))
-    : 0;
+  const scannedCount = stats.scanned ?? 0;
+  const removed = stats.removed ?? 0;
+  // OK profiles = scanned minus the ones flagged fake / to-review / already removed.
+  const clean = Math.max(0, scannedCount - (stats.fakes ?? 0) - (stats.toReview ?? 0) - removed);
+  const evaluated = scannedCount;
+  const healthScore = evaluated > 0 ? Math.min(100, Math.round((clean / evaluated) * 100)) : null;
+  const coverage = total > 0 ? Math.min(100, Math.round((evaluated / total) * 100)) : 0;
 
   return (
     <div className="space-y-2">
-      <HealthGauge score={healthScore} lang={lang} />
+      <HealthGauge score={healthScore} coverage={coverage} lang={lang} />
 
       <div className="grid grid-cols-3 gap-2">
         {cards.map(({ key, color, field }) => (

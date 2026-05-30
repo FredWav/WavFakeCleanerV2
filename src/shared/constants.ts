@@ -46,6 +46,9 @@ export const CONTINUOUS_SESSION_MAX_HOURS = 4;
 export const CONTINUOUS_LONG_BREAK = [7200, 10800] as [number, number];
 // When a hard 429 is detected (error page persists after retries), pause this long (seconds).
 export const HARD_429_PAUSE = [3600, 5400] as [number, number]; // 1–1.5 hours
+// When the account is fully clean (continuous mode finds nothing to do), idle
+// this long before re-fetching/re-scanning instead of spinning empty cycles.
+export const CONTINUOUS_IDLE_PAUSE = [1800, 3600] as [number, number]; // 30–60 min
 
 // ── Threads API ──
 

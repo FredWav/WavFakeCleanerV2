@@ -268,6 +268,8 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
   // Surface the pipeline's last user-facing error so the side panel can show it.
   const pipelineState = await getPipelineState();
   const lastError = pipelineState?.lastError ?? null;
+  const pausedUntil = pipelineState?.pausedUntil ?? null;
+  const pauseReason = pipelineState?.pauseReason ?? null;
 
   return {
     totalFollowers,
@@ -278,6 +280,8 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
     removed,
     isRunning,
     lastError,
+    pausedUntil,
+    pauseReason,
     rate: rateStats,
   };
 }

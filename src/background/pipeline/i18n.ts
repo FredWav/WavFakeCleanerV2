@@ -74,6 +74,7 @@ const MSG: Record<string, Record<string, string>> = {
   continuous_stop:      { fr: "Mode continu arrêté", en: "Continuous mode stopped" },
   continuous_pause:     { fr: "Pause {0}s avant le prochain cycle…", en: "Pause {0}s before next cycle…" },
   continuous_fetch:     { fr: "Re-récupération des followers…", en: "Re-fetching followers…" },
+  continuous_idle:      { fr: "Compte propre — rien à nettoyer. Prochaine vérification dans ~{0} min.", en: "Account clean — nothing to remove. Next check in ~{0} min." },
   cycle_auto_skip:     { fr: "{0} profil(s) résolus automatiquement (pré-score)", en: "{0} profile(s) auto-resolved (pre-score)" },
   cycle_remove_only:   { fr: "{0} profil(s) déjà scorés fake — suppression directe (sans re-scan)", en: "{0} profile(s) already scored fake — removing directly (no re-scan)" },
   scan_channel_lost:   { fr: "@{0} : canal perdu (page Threads crashée ?), re-navigation…", en: "@{0}: channel lost (Threads page crashed?), re-navigating…" },

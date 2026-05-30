@@ -116,6 +116,7 @@ const translations: Record<string, Record<string, string>> = {
     search_placeholder: "Rechercher...",
     // Health & Onboarding
     health_score: "Sante du compte",
+    scanned_coverage: "{0}% analysés",
     onboarding_title: "Bienvenue sur Wav Fake Cleaner",
     onboarding_step1: "Entre ton @username dans les parametres",
     onboarding_step2: "Clique Récupérer les abonnés pour les charger",
@@ -151,6 +152,14 @@ const translations: Record<string, Record<string, string>> = {
     // Notifications
     notification_fakes_found: "Wav Fake Cleaner a detecte {0} faux followers",
     progress_label: "Progression",
+    pause_title: "Pause anti-blocage",
+    pause_resume_in: "Reprise dans {0}",
+    pause_reason_hard_429: "Threads bloque (429)",
+    pause_reason_error_page: "Page d'erreur Threads",
+    pause_reason_slowdown: "Ralentissement détecté",
+    pause_reason_session_break: "Pause de session obligatoire",
+    pause_reason_inter_cycle: "Pause entre cycles",
+    pause_reason_idle: "En veille (compte propre)",
     // Support
     support_help: "Besoin d'aide ?",
   },
@@ -267,6 +276,7 @@ const translations: Record<string, Record<string, string>> = {
     search_placeholder: "Search...",
     // Health & Onboarding
     health_score: "Account health",
+    scanned_coverage: "{0}% scanned",
     onboarding_title: "Welcome to Wav Fake Cleaner",
     onboarding_step1: "Enter your @username in settings",
     onboarding_step2: "Click Fetch followers to load them",
@@ -302,6 +312,14 @@ const translations: Record<string, Record<string, string>> = {
     // Notifications
     notification_fakes_found: "Wav Fake Cleaner detected {0} fake followers",
     progress_label: "Progress",
+    pause_title: "Anti-block pause",
+    pause_resume_in: "Resuming in {0}",
+    pause_reason_hard_429: "Threads is blocking (429)",
+    pause_reason_error_page: "Threads error page",
+    pause_reason_slowdown: "Slowdown detected",
+    pause_reason_session_break: "Mandatory session break",
+    pause_reason_inter_cycle: "Between-cycle pause",
+    pause_reason_idle: "Idle (account clean)",
     // Support
     support_help: "Need help?",
   },
@@ -418,6 +436,7 @@ const translations: Record<string, Record<string, string>> = {
     search_placeholder: "Buscar...",
     // Health & Onboarding
     health_score: "Salud de la cuenta",
+    scanned_coverage: "{0}% analizados",
     onboarding_title: "Bienvenido a Wav Fake Cleaner",
     onboarding_step1: "Ingresa tu @username en ajustes",
     onboarding_step2: "Haz clic en Obtener seguidores para cargarlos",
@@ -453,6 +472,14 @@ const translations: Record<string, Record<string, string>> = {
     // Notifications
     notification_fakes_found: "Wav Fake Cleaner detecto {0} seguidores falsos",
     progress_label: "Progreso",
+    pause_title: "Pausa anti-bloqueo",
+    pause_resume_in: "Reanuda en {0}",
+    pause_reason_hard_429: "Threads bloquea (429)",
+    pause_reason_error_page: "Página de error de Threads",
+    pause_reason_slowdown: "Ralentización detectada",
+    pause_reason_session_break: "Pausa de sesión obligatoria",
+    pause_reason_inter_cycle: "Pausa entre ciclos",
+    pause_reason_idle: "En espera (cuenta limpia)",
     // Support
     support_help: "¿Necesitas ayuda?",
   },

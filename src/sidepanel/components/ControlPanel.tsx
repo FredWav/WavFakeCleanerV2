@@ -1,7 +1,42 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { Stats, LicenseInfo } from "@shared/types";
+
+function formatMMSS(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Live countdown shown while the pipeline is in a long anti-block pause (hard
+ * 429, error-page cooldown, mandatory session break, between-cycle pause).
+ * Without it the progress bar just looks frozen for minutes/hours.
+ */
+function PauseBanner({ until, reason, lang }: { until: number; reason: string | null; lang: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const remaining = until - now;
+  const reasonLabel = reason ? t(`pause_reason_${reason}`, lang) : "";
+  return (
+    <div className="text-amber-300 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1.5 leading-snug">
+      <div className="font-semibold">
+        {t("pause_title", lang)}
+        {reasonLabel ? <span className="font-normal opacity-80"> · {reasonLabel}</span> : null}
+      </div>
+      <div className="opacity-90 tabular-nums">
+        {remaining > 0
+          ? t("pause_resume_in", lang).replace("{0}", formatMMSS(remaining))
+          : t("running", lang)}
+      </div>
+    </div>
+  );
+}
 
 export default function ControlPanel({
   stats,
@@ -88,6 +123,11 @@ export default function ControlPanel({
       >
         {isRunning ? t("stop", lang) : t("stopped", lang)}
       </button>
+
+      {/* Anti-block pause countdown (explains why the bar is frozen) */}
+      {isRunning && stats?.pausedUntil ? (
+        <PauseBanner until={stats.pausedUntil} reason={stats.pauseReason ?? null} lang={lang} />
+      ) : null}
 
       {/* Progress bar */}
       {isRunning && stats && stats.totalFollowers > 0 && (

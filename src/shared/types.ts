@@ -94,6 +94,10 @@ export interface PipelineState {
   progress: number;
   total: number;
   lastError: string | null;
+  // Set while the pipeline sleeps through a long anti-block pause so the UI can
+  // show a countdown instead of a frozen progress bar. Cleared when not paused.
+  pausedUntil?: number | null;
+  pauseReason?: string | null;
 }
 
 // ── Stats for UI ──
@@ -109,6 +113,10 @@ export interface Stats {
   // Last user-facing error from the pipeline (cleared when a new run starts).
   // Null when the last run succeeded or no run has happened yet.
   lastError: string | null;
+  // When the pipeline is in a long anti-block pause: epoch ms when it resumes,
+  // plus a reason code the UI maps to a label. Null/absent when not paused.
+  pausedUntil?: number | null;
+  pauseReason?: string | null;
   rate: {
     actionsThisHour: number;
     limitHour: number;
