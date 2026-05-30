@@ -88,7 +88,7 @@ function extensionPlugin(): Plugin {
       const manifest = {
         manifest_version: 3,
         name: "Wav Fake Cleaner",
-        version: "2.2.2",
+        version: "2.3.0",
         description: "Detect and remove fake followers from your Threads account",
         permissions: ["sidePanel", "storage", "alarms", "offscreen", "activeTab", "scripting", "notifications"],
         content_security_policy: {

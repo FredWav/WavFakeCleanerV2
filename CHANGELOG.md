@@ -9,6 +9,64 @@ Chrome Web Store.
 
 ---
 
+## [2.3.0] — 2026-05-30
+
+Release centrée sur la fiabilité de la récupération, l'honnêteté de l'UI et la
+robustesse anti-blocage. Audit complet du code, puis correctifs ciblés.
+
+### Added
+- **Compte à rebours des pauses anti-blocage** — pendant un hard-429 (1–1,5 h),
+  un break de session continu (2–3 h), un cooldown de page d'erreur ou une mise
+  en veille « compte propre », le panneau affiche un bandeau avec décompte
+  (MM:SS) + motif, au lieu d'une barre de progression figée qui donnait
+  l'impression d'un plantage. (`pausedUntil`/`pauseReason` dans l'état → `Stats`.)
+- **Journal des suppressions** — l'onglet « Supprimés » affiche la date de
+  suppression, garde le lien vers le profil (re-suivi manuel) et permet l'export
+  CSV. Note d'honnêteté : Threads ne permet pas de re-forcer un abonnement.
+- **Tests unitaires du scorer** (Vitest) — `scoreUsername`,
+  `preScoreFromMetadata`, `scoreProfile` verrouillés (dont les cas privés
+  limites) pour éviter toute régression silencieuse lors d'un futur réglage.
+- **Télémétrie de drift sur le fetch** — quand le conteneur de scroll ou le
+  bouton « Followers » est trouvé via un sélecteur de secours, un événement
+  `drift` est émis (le scroll étant désormais le seul chemin de récupération).
+- **Limite de récupération communiquée** — message proactif « défilement
+  automatique, ~5000 max par passe » près du bouton Récupérer et dans
+  l'onboarding ; message réactif quand une passe est tronquée (plafond/timeout).
+
+### Changed
+- **Score de santé** — neutre (« — ») tant qu'aucun scan n'a eu lieu (fini le
+  « 0/100 » rouge à l'installation), calculé sur la population analysée
+  (propre/analysés) au lieu de /total, avec la couverture affichée à part.
+- **Paywall adouci** — le flou par ligne de l'onglet « Faux » (non licenciés)
+  est remplacé par un unique bandeau dégradé avec CTA clair.
+- **Cycle gratuit** — décompté seulement si le cycle a réellement travaillé : un
+  hard-429 immédiat (0 profil traité) ne brûle plus le seul cycle du jour.
+- **Mode continu** — compte propre → veille 30–60 min au lieu de boucler sur des
+  cycles vides qui rouvraient un onglet à chaque tour.
+- **Erreurs d'action localisées** dans le panneau de contrôle (plus de
+  `String(e)` brut).
+- **Stats de session** — `fakeCount` (faux détectés) distinct de `removedCount`.
+
+### Fixed
+- **TypeError latente sur Stop** — cliquer Stop pendant la suppression d'un faux
+  ne déréférence plus un `removeResult` null (ce qui faussait au passage les
+  compteurs de blocage/erreur).
+
+### Notes
+- La récupération passe exclusivement par le défilement automatique (pas d'API
+  Threads exploitable) : limite assumée ~5000/passe, désormais affichée dans l'UI.
+- La table d'abonnés est plafonnée à 200 lignes (indicateur ajouté) — pas de
+  virtualisation nécessaire.
+
+### Reporté (en attente d'arbitrage)
+- **Durcissement du scoring des comptes privés** (réduction des faux positifs à
+  la source) : le modèle « auto + journal/undo » a été retenu pour cette release ;
+  le changement de scoring reste à valider séparément.
+- **Découpage de `runCleanCycleInternal`** : différé pour ne pas déstabiliser le
+  cœur de suppression juste avant la release.
+
+---
+
 ## [2.2.2] — 2026-05-10
 
 ### Fixed
