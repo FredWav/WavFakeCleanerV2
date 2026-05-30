@@ -7,6 +7,7 @@
 
 import { SELECTORS, is429 } from "@shared/selectors";
 import type { ContentProfileData } from "@shared/messages";
+import { reportDrift } from "@shared/selector-strategies";
 import { humanClick } from "./humanize";
 
 // ── Private profile detection ──
@@ -430,6 +431,16 @@ export type MarkScrollReason =
   | "no_scrollable_parent"
   | "container_too_small";
 
+// Signal when the followers list was found via a non-primary selector, so the
+// operator can refresh the primary before Threads removes it entirely. The
+// scroll path is now the ONLY way to fetch followers, so drift here is critical.
+function reportScrollDrift(source: string): void {
+  const rank = source === "dialog" ? 0 : source === "modal" ? 1 : source === "testid" ? 2 : 3;
+  if (rank > 0) {
+    reportDrift({ lookup: "followers-scroll-container", winningStrategy: source, rank });
+  }
+}
+
 export function markScrollContainer(): {
   ok: boolean;
   links: number;
@@ -471,6 +482,7 @@ export function markScrollContainer(): {
       root.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
       const totalLinks = candidates.reduce((acc, c) => acc + c.nodes.length, 0);
       console.log(`[WFC] markScrollContainer: ok via dedicated followers page (${totalLinks} links)`);
+      reportScrollDrift("page");
       return { ok: true, links: totalLinks, source: "page" };
     }
   }
@@ -493,6 +505,7 @@ export function markScrollContainer(): {
       if (hasOverflowSetting && overflowsContent) {
         el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
         console.log(`[WFC] markScrollContainer: ok via ${cand.source} (${cand.nodes.length} links, depth=${depth})`);
+        reportScrollDrift(cand.source);
         return { ok: true, links: cand.nodes.length, source: cand.source };
       }
 
@@ -502,6 +515,7 @@ export function markScrollContainer(): {
       if (oy === "hidden" && overflowsContent && el.clientHeight > 200) {
         el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
         console.log(`[WFC] markScrollContainer: ok via ${cand.source} relaxed (overflow:hidden, depth=${depth})`);
+        reportScrollDrift(cand.source);
         return { ok: true, links: cand.nodes.length, source: cand.source };
       }
 
@@ -599,6 +613,8 @@ export async function clickFollowersButton(): Promise<boolean> {
     if (SELECTORS.profile.followersTextPattern.test(t)) {
       const r = el.getBoundingClientRect();
       if (r.height < 50) {
+        // Primary "a[href*=followers]" failed; we matched via text — signal drift.
+        reportDrift({ lookup: "followers-button", winningStrategy: "text-pattern", rank: 1 });
         await humanClick(el as HTMLElement);
         return true;
       }

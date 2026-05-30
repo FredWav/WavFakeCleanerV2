@@ -38,6 +38,21 @@ export function onDrift(handler: (event: DriftEvent) => void): void {
 }
 
 /**
+ * Manually report a drift event from a lookup that doesn't go through
+ * tryStrategies (e.g. the inline multi-candidate scroll-container detection,
+ * which already has ordered fallbacks but couldn't signal which one won).
+ * No-op when no handler is registered.
+ */
+export function reportDrift(event: DriftEvent): void {
+  if (!driftHandler) return;
+  try {
+    driftHandler(event);
+  } catch {
+    // never let telemetry kill the caller
+  }
+}
+
+/**
  * Run strategies in order; return the first non-null result.
  *
  * Reports a drift event when rank > 0. Returns `null` only when every
