@@ -4,6 +4,7 @@ import { t } from "../lib/i18n";
 import type { FollowerRecord, LicenseInfo } from "@shared/types";
 import { COMMUNITY_LOOKUP_URL } from "@shared/constants";
 import { IconGlobe, IconWarn, IconCheck, IconRefresh, IconChevronDown, IconChevronRight } from "./Icons";
+import Skeleton from "./ui/Skeleton";
 
 // ── Community lookup (inline — no storage deps, runs in side panel) ──
 
@@ -393,9 +394,33 @@ export default function FollowerTable({
           </thead>
           <tbody>
             {loading && followers.length === 0 ? (
-              <tr><td colSpan={3} className="text-center py-6 text-gray-600">{t("loading", lang)}</td></tr>
+              // Skeleton rows: same geometry as real rows, no layout jump.
+              Array.from({ length: 6 }, (_, i) => (
+                <tr key={`skeleton-${i}`} className="border-t border-gray-800/50">
+                  <td className="px-2 py-2"><Skeleton className="h-3.5 w-28" /></td>
+                  <td className="px-1 py-2"><Skeleton className="h-3.5 w-7 mx-auto" /></td>
+                  <td className="px-1 py-2"><Skeleton className="h-3.5 w-12 mx-auto" /></td>
+                </tr>
+              ))
             ) : followers.length === 0 ? (
-              <tr><td colSpan={3} className="text-center py-6 text-gray-600">{t("no_data", lang)}</td></tr>
+              <tr>
+                <td colSpan={3} className="text-center py-8">
+                  {filter === "fake" ? (
+                    // Empty "fake" tab is GOOD news — say so instead of "no data".
+                    <div className="space-y-1">
+                      <div className="text-green-400 text-base" aria-hidden="true">✓</div>
+                      <p className="text-xs text-gray-400">{t("empty_no_fakes", lang)}</p>
+                    </div>
+                  ) : !filter && !search ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-gray-400">{t("empty_no_followers", lang)}</p>
+                      <p className="text-[10px] text-gray-600">{t("empty_no_followers_hint", lang)}</p>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-600">{t("no_data", lang)}</span>
+                  )}
+                </td>
+              </tr>
             ) : (
               followers.map((f, index) => {
                 const isExpanded = expanded === f.username;
@@ -432,7 +457,7 @@ export default function FollowerTable({
                     {/* Main row */}
                     <tr
                       onClick={() => { setExpanded(isExpanded ? null : f.username); setLicencePrompt(null); }}
-                      className="border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors"
+                      className="border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors animate-row-in"
                     >
                       <td className="px-2 py-1.5 font-mono text-gray-300">
                         <a

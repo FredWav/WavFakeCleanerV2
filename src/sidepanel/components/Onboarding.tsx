@@ -1,4 +1,6 @@
 import { t } from "../lib/i18n";
+import Modal from "./ui/Modal";
+import Button from "./ui/Button";
 
 export default function Onboarding({
   lang,
@@ -21,14 +23,7 @@ export default function Onboarding({
   ];
 
   return (
-    <div
-      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-2"
-      onClick={handleDismiss}
-    >
-      <div
-        className="bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-sm p-5 space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={handleDismiss} dim="bg-black/70" className="p-5 space-y-4">
         <h2 className="text-sm font-bold text-white text-center">
           {t("onboarding_title", lang)}
         </h2>
@@ -54,14 +49,9 @@ export default function Onboarding({
           {t("fetch_limit_note", lang)}
         </p>
 
-        <button
-          onClick={handleDismiss}
-          className="w-full px-3 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold
-            hover:bg-purple-500 transition-colors"
-        >
+        <Button onClick={handleDismiss} className="w-full rounded-xl py-2 font-bold">
           {t("onboarding_dismiss", lang)}
-        </button>
-      </div>
-    </div>
+        </Button>
+    </Modal>
   );
 }

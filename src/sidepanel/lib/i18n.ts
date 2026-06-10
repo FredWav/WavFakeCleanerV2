@@ -71,6 +71,10 @@ const translations: Record<string, Record<string, string>> = {
     reason_quota: "stockage plein",
     reason_expired: "expiré",
     reason_network: "réseau",
+    // États vides
+    empty_no_followers: "Aucun follower pour l'instant",
+    empty_no_followers_hint: "Lance d'abord « Récupérer les abonnés » ci-dessus.",
+    empty_no_fakes: "Aucun faux follower détecté — ton compte a l'air sain.",
     rate_limited: "Limité",
     daily_limit: "Limite/jour",
     hourly_limit: "Limite/heure",
@@ -257,6 +261,10 @@ const translations: Record<string, Record<string, string>> = {
     reason_quota: "storage full",
     reason_expired: "expired",
     reason_network: "network",
+    // Empty states
+    empty_no_followers: "No followers yet",
+    empty_no_followers_hint: "Run “Fetch followers” above first.",
+    empty_no_fakes: "No fake followers detected — your account looks healthy.",
     rate_limited: "Limited",
     daily_limit: "Limit/day",
     hourly_limit: "Limit/hour",
@@ -443,6 +451,10 @@ const translations: Record<string, Record<string, string>> = {
     reason_quota: "almacenamiento lleno",
     reason_expired: "expirado",
     reason_network: "red",
+    // Estados vacíos
+    empty_no_followers: "Aún no hay seguidores",
+    empty_no_followers_hint: "Primero ejecuta «Recuperar seguidores» arriba.",
+    empty_no_fakes: "Ningún seguidor falso detectado: tu cuenta parece sana.",
     rate_limited: "Limitado",
     daily_limit: "Límite/día",
     hourly_limit: "Límite/hora",

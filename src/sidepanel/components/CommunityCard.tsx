@@ -3,6 +3,7 @@ import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { CommunityStatus, LicenseInfo } from "@shared/types";
 import { IconGlobe, IconRefresh } from "./Icons";
+import Skeleton from "./ui/Skeleton";
 
 /**
  * Community status card — the user-facing half of the v3 observability work.
@@ -72,7 +73,16 @@ export default function CommunityCard({
     };
   }, [licence?.active, refresh]);
 
-  if (!licence?.active || !status) return null;
+  if (!licence?.active) return null;
+
+  if (!status) {
+    return (
+      <div className="bg-gray-900 rounded-xl border border-gray-800 px-3 py-2 space-y-1.5">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-4 w-48" />
+      </div>
+    );
+  }
 
   async function replayNow() {
     setReplaying(true);

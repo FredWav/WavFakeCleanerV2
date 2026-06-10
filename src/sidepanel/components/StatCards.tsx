@@ -1,6 +1,7 @@
 import { t } from "../lib/i18n";
 import { useCountUp } from "../hooks/useCountUp";
 import type { Stats } from "@shared/types";
+import Skeleton from "./ui/Skeleton";
 
 const cards = [
   { key: "total", color: "bg-blue-500/20 text-blue-400", field: "totalFollowers" as const },
@@ -73,7 +74,22 @@ function HealthGauge({ score, coverage, lang }: { score: number | null; coverage
 }
 
 export default function StatCards({ stats, lang }: { stats: Stats | null; lang: string }) {
-  if (!stats) return null;
+  // First paint before the first GET_STATS answer: keep the layout stable
+  // with skeletons instead of a blank gap.
+  if (!stats) {
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-col items-center mb-2">
+          <Skeleton className="w-20 h-20 rounded-full" />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {cards.map(({ key }) => (
+            <Skeleton key={key} className="h-[60px] rounded-xl" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // Health = share of EVALUATED profiles that turned out genuinely OK.
   // Based on the scanned population (not /total), so a partial scan of a healthy
