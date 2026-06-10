@@ -22,6 +22,11 @@ export type RequestMessage =
   | { type: "APPROVE_FOLLOWER"; payload: { username: string } }
   | { type: "REJECT_FOLLOWER"; payload: { username: string } }
   | { type: "SUBMIT_COMMUNITY_VOTE"; payload: { username: string; verdict: "fake" | "ok"; score: number } }
+  | { type: "GET_COMMUNITY_STATUS" }
+  | { type: "COMMUNITY_REPLAY_NOW" }
+  // Sent by the sidepanel when its community-score lookup fails, so the
+  // failure is counted/surfaced instead of dying in a silent catch.
+  | { type: "COMMUNITY_LOOKUP_FAILED"; payload: { httpStatus: number | null } }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
   | { type: "EXPORT_LICENSE" }

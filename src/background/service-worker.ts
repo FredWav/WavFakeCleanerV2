@@ -31,7 +31,14 @@ import {
   persistFollowerPage,
 } from "./pipeline";
 import { restoreSessionState } from "./pipeline/tab-manager";
-import { submitVote, reportSightings, processCommunityQueue } from "./community";
+import {
+  submitVote,
+  reportSightings,
+  processCommunityQueue,
+  getCommunityStatus,
+  checkTokenHealth,
+} from "./community";
+import { recordCommunityEvent, setTokenStatus } from "./community-events";
 import { verifyLicenceToken } from "./licence-verify";
 
 // ── Récupération après crash du service worker ──
@@ -188,6 +195,30 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       }
     }
 
+    case "GET_COMMUNITY_STATUS": {
+      const status = await getCommunityStatus();
+      // Opportunistic lazy health check (self-throttled to 1/day): keeps the
+      // token pill honest without a dedicated alarm.
+      checkTokenHealth(false).catch(() => {});
+      return status;
+    }
+
+    case "COMMUNITY_REPLAY_NOW":
+      // Immediate drain for the sidepanel's "retry now" button (and manual
+      // E2E verification — no need to wait for the 15-min alarm).
+      return await processCommunityQueue();
+
+    case "COMMUNITY_LOOKUP_FAILED": {
+      const { httpStatus } = msg.payload as { httpStatus: number | null };
+      await recordCommunityEvent({
+        kind: "lookup_failed",
+        reason: httpStatus === null ? "network" : `http_${httpStatus}`,
+        httpStatus,
+        stage: "sidepanel",
+      });
+      return { ok: true };
+    }
+
     case "GET_LICENSE":
       return await getLicense();
 
@@ -238,6 +269,9 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
             communityToken: data.communityToken ?? code,
             recoveryToken: code,
           });
+          // The Worker just validated this token — record it so the community
+          // card starts green instead of "unknown".
+          setTokenStatus("ok").catch(() => {});
           return { ok: true };
         } catch {
           return { ok: false, error: "network_error" };
@@ -270,6 +304,7 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
           communityToken: data.communityToken ?? upgradedKey,
           recoveryToken: upgradedKey, // prefer the short code for backups
         });
+        setTokenStatus("ok").catch(() => {});
       } catch {
         return { ok: false, error: "network_error" };
       }
@@ -377,7 +412,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await rateTracker.load();
   } else if (alarm.name === "community-queue-replay") {
     // Drain any votes/sightings that failed earlier (offline, 5xx, SW restart).
-    // 4xx errors and items past the attempt cap are dropped silently.
+    // Outcomes (drops, replays, token health) are recorded by community-events:
+    // counters in storage, LOG_EVENT broadcasts, and telemetry.
     try {
       const result = await processCommunityQueue();
       if (result.replayed > 0 || result.dropped > 0) {

@@ -132,7 +132,14 @@ const RATE_LIMITS = {
   vote: 200,        // votes per hour per token
   sightings: 20,    // sighting batches per hour per token
   telemetry: 50,    // telemetry events per hour per anon hash
+  token_check: 30,  // token health checks per hour per IP hash
 };
+
+// HMAC an IP for per-IP rate limiting without ever storing the raw address.
+async function ipHash(env, request) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  return hmacHex(env.HMAC_SALT, "ip:" + ip);
+}
 
 async function checkAndBumpRateLimit(env, tokenHash, endpoint) {
   const bucket = Math.floor(Date.now() / 3_600_000);
@@ -202,6 +209,7 @@ export default {
       if (url.pathname === "/community-stats") return handleCommunityStats(request, env);
       if (url.pathname === "/report-sightings" && request.method === "POST") return handleReportSightings(request, env);
       if (url.pathname === "/check-sightings" && request.method === "POST") return handleCheckSightings(request, env);
+      if (url.pathname === "/token-check" && request.method === "POST") return handleTokenCheck(request, env);
       if (url.pathname === "/telemetry" && request.method === "POST") return handleTelemetry(request, env);
       return json({ error: "not_found" }, 404, request);
     } catch (e) {
@@ -641,6 +649,49 @@ async function handleCheckSightings(request, env) {
   }
 
   return json({ results }, 200, request);
+}
+
+// ── /token-check ── (community token health, no auth, per-IP rate limited)
+//
+// Lets the extension distinguish "my licence is revoked/invalid" from
+// transient failures, instead of dropping every vote on a silent 403 forever.
+// Returns { valid: boolean } — nothing else, so it leaks no licence metadata.
+
+async function handleTokenCheck(request, env) {
+  if (!env.DB) return json({ error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ error: "server_misconfigured" }, 500, request);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400, request); }
+
+  const { communityToken } = body || {};
+  if (typeof communityToken !== "string" || communityToken.length < 8 || communityToken.length > 120) {
+    return json({ error: "invalid_token_format" }, 400, request);
+  }
+
+  // Per-IP rate limit (hashed — raw IPs never touch D1)
+  const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "token_check");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+  }
+
+  const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
+  const tokenRow = await env.DB.prepare(
+    "SELECT token_hash FROM tokens WHERE token_hash = ?"
+  ).bind(tokenHash).first();
+  if (!tokenRow) return json({ valid: false }, 200, request);
+
+  // WFC codes also honor licence revocation: a revoked licence must lose its
+  // voting rights even though its token row was created at issuance.
+  if (CODE_RE.test(communityToken)) {
+    const lic = await env.DB.prepare(
+      "SELECT revoked FROM licenses WHERE code = ?"
+    ).bind(communityToken).first();
+    if (lic && lic.revoked) return json({ valid: false }, 200, request);
+  }
+
+  return json({ valid: true }, 200, request);
 }
 
 // ── /telemetry ── (anonymous opt-in error reports, no auth)

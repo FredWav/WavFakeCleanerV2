@@ -30,6 +30,7 @@ export const COMMUNITY_LOOKUP_URL = "https://restless-credit-5e6a.fred-olalde.wo
 export const COMMUNITY_STATS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/community-stats";
 export const COMMUNITY_REPORT_SIGHTINGS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/report-sightings";
 export const COMMUNITY_CHECK_SIGHTINGS_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/check-sightings";
+export const COMMUNITY_TOKEN_CHECK_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/token-check";
 
 // ── Anonymous error telemetry (opt-in via Settings.telemetry) ──
 export const TELEMETRY_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/telemetry";

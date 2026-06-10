@@ -21,6 +21,14 @@ async function sha256Hex(str: string): Promise<string> {
     .join("");
 }
 
+// Tell the service worker a lookup failed so it's counted and surfaced
+// (community status card + telemetry) instead of dying in a silent catch.
+function reportLookupFailure(httpStatus: number | null): void {
+  chrome.runtime
+    .sendMessage({ type: "COMMUNITY_LOOKUP_FAILED", payload: { httpStatus } })
+    .catch(() => {});
+}
+
 async function fetchCommunityScores(usernames: string[]): Promise<Map<string, CommunityScore>> {
   const result = new Map<string, CommunityScore>();
   if (usernames.length === 0) return result;
@@ -39,13 +47,19 @@ async function fetchCommunityScores(usernames: string[]): Promise<Map<string, Co
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ targetHashes: hashes }),
     });
-    if (!res.ok) return result;
+    if (!res.ok) {
+      reportLookupFailure(res.status);
+      return result;
+    }
     const data = await res.json() as Record<string, CommunityScore>;
     for (const [h, score] of Object.entries(data)) {
       const u = hashToUser.get(h);
       if (u) result.set(u, score);
     }
-  } catch { /* community features non-critical */ }
+  } catch {
+    // community features non-critical — but the failure is still counted
+    reportLookupFailure(null);
+  }
   return result;
 }
 

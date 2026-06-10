@@ -86,6 +86,13 @@ const MSG: Record<string, Record<string, string>> = {
   cycle_remove_retry:  { fr: "@{0} : menu introuvable, retry {1}/2…", en: "@{0}: menu not found, retry {1}/2…" },
   cycle_remove_retry_nav: { fr: "@{0} : re-navigation vers le profil (dernier essai)…", en: "@{0}: re-navigating to profile (last attempt)…" },
   notification_fakes_found: { fr: "Wav Fake Cleaner a detecte {0} faux followers", en: "Wav Fake Cleaner detected {0} fake followers" },
+  // Community submission path (votes / sightings / retry queue)
+  community_enqueued:       { fr: "Contribution communautaire en attente d'envoi — renvoi automatique toutes les 15 min", en: "Community contribution queued — automatic retry every 15 min" },
+  community_dropped:        { fr: "Contribution communautaire perdue ({0})", en: "Community contribution lost ({0})" },
+  community_replay:         { fr: "File communautaire : {0} envoyé(s), {1} perdu(s), {2} en attente", en: "Community queue: {0} sent, {1} dropped, {2} pending" },
+  community_token_invalid:  { fr: "Licence communautaire invalide — réactive ta licence pour contribuer aux votes", en: "Community licence invalid — re-activate your licence to contribute votes" },
+  community_lookup_failed:  { fr: "Consultation communautaire échouée ({0})", en: "Community lookup failed ({0})" },
+  community_storage_error:  { fr: "Stockage local saturé — une contribution communautaire n'a pas pu être conservée", en: "Local storage full — a community contribution could not be kept" },
   // User-facing mappings of internal fetch error codes (shown in the side panel)
   err_no_username:           { fr: "Aucun nom d'utilisateur configuré dans les paramètres.", en: "No username configured in settings." },
   err_followers_button:      { fr: "Bouton « Followers » introuvable. Vérifie que tu es connecté(e) et que ton profil est bien public.", en: "“Followers” button not found. Check that you're logged in and your profile is public." },
