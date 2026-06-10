@@ -9,6 +9,104 @@ Chrome Web Store.
 
 ---
 
+## [3.0.0] — 2026-06-10
+
+Release majeure centrée sur le côté communautaire — qui échouait en silence de
+bout en bout — avec enfin de la visibilité des deux côtés : une carte de statut
+dans le panneau pour les utilisateurs, et un dashboard opérateur servi par le
+Worker. Le MAJOR est justifié par le changement de défaut de la télémétrie
+(opt-in → opt-out, anonyme).
+
+### Added
+- **Carte « Communauté » dans le panneau** (licenciés) — contributions
+  envoyées / en attente / perdues (avec la raison dominante), résultat du
+  dernier renvoi, pastille de santé du token (« Réactiver la licence » si le
+  Worker rejette le token), bouton « Réessayer » qui rejoue la file sans
+  attendre l'alarme de 15 min.
+- **Dashboard opérateur `/admin`** sur le Worker (auth Bearer via secret
+  `ADMIN_TOKEN`, token jamais dans l'URL) : votes/jour (+ % fake),
+  sightings/jour, voteurs actifs 7/30 j, licences + activations, top erreurs
+  télémétrie, pertes communautaires par raison, profondeur de la file,
+  **agrégation du drift des sélecteurs** (early-warning avant cassure),
+  distribution des versions, santé des tables. Bouton de révocation qui coupe
+  la licence ET son token de vote en un clic.
+- **Endpoint `/token-check`** — l'extension distingue désormais « licence
+  révoquée/invalide » d'une panne passagère, au lieu de perdre chaque vote sur
+  un 403 silencieux pour toujours. Vérification paresseuse 1×/24 h + forcée
+  sur 403.
+- **Événements communautaires tracés de bout en bout**
+  (`community-events.ts`) : chaque envoi/mise en file/perte alimente des
+  compteurs persistants, la LogConsole (throttlée, sans spam) et la télémétrie.
+- **Spans de performance** (`pipeline/perf.ts`) — ring buffer local de 200
+  mesures (fetch, persist par page, nav/scan/suppression par profil, net des
+  pauses anti-blocage) + un résumé lisible par run dans la LogConsole.
+- **Tests** : 44 nouveaux tests Vitest (file de retry avec verrou de
+  régression sur le refresh ts+nonce, dedup, TTL, quota, overflow, santé du
+  token, throttle télémétrie) sur une infra dédiée (`vitest.config.ts` +
+  mock chrome avec simulation de quota).
+- **Skeletons + états vides** — chargement sans saut de layout (stats, table,
+  carte communauté) ; l'onglet « Faux » vide devient une bonne nouvelle
+  (« ton compte a l'air sain ») au lieu d'un « aucune donnée ».
+
+### Changed
+- **Télémétrie anonyme activée par défaut (opt-out)** — migration unique à la
+  mise à jour (l'ancien formulaire persistait un `false` explicite pour tout
+  le monde) + bannière d'information une seule fois. Couvre désormais les
+  événements communauté/drift/perf avec un champ numérique `value`, throttle
+  client 10/h par type d'événement, et **jamais aucun username, même hashé**.
+  PRIVACY.md réécrit en conséquence (rétention 90 j).
+- **429 sur un vote = ré-essayable** — un vote rate-limité était jeté
+  (perte de données) ; il repart maintenant dans la file.
+- **File de retry communautaire** : dédoublonnage à l'entrée (le dernier vote
+  par cible gagne, les batches de sightings fusionnent sous le plafond de 50),
+  TTL de 7 jours, et chaque perte (4xx, 5 tentatives, débordement des 500
+  entrées, quota storage) est comptée et visible au lieu de silencieuse.
+- **Polling des stats adaptatif** — 3 s pendant un run, 15 s au repos (chaque
+  tick re-scannait tout le store IndexedDB) ; le broadcast temps réel reste le
+  canal principal.
+- **Drift réellement câblé à la télémétrie** — l'événement n'atteignait jamais
+  le serveur, même pour les utilisateurs opt-in (le handler ne faisait que
+  rebroadcaster vers la LogConsole).
+- **Bundles minifiés** (esbuild, autorisé par le CWS) — service worker
+  122 → 70 Ko, content script 54 → 29 Ko.
+- **Version single-source** — le manifest lit `package.json` au lieu d'une
+  seconde chaîne codée en dur qui divergeait à chaque release.
+- **Modals unifiées** (`ui/Modal`) — Échap pour fermer, backdrop flouté,
+  animation pop-in ; micro-animations sous `prefers-reduced-motion` uniquement.
+
+### Fixed
+- **Plus aucun échec silencieux sur le chemin communautaire** — les 6 blocs
+  `catch` vides de `community.ts` (lecture/écriture de file, vote, sightings,
+  replay, lookup) sont remplacés par des événements visibles avec raison.
+- **Licence révoquée = droits de vote coupés** — le token communautaire créé à
+  l'émission n'était jamais supprimé à la révocation ; `/vote` l'acceptait
+  donc indéfiniment. Corrigé via `/admin/api/revoke` et honoré par
+  `/token-check`.
+
+### Security
+- **Rate-limit per-IP (IP hashées HMAC)** sur les endpoints ouverts qui n'en
+  avaient aucun : `/lookup` 120/h, `/check-sightings` 120/h, `/verify` 30/h,
+  `/community-stats` 60/h, `/token-check` 30/h.
+- **CORS resserré** — les entrées threads.net (allowance morte) sont
+  supprimées ; le secret optionnel `EXTENSION_IDS` transforme le blanket
+  `chrome-extension://` en allowlist stricte (à activer une fois les IDs de
+  prod connus).
+- **Housekeeping déterministe** — cron quotidien (03:00 UTC) pour purger
+  nonces/rate_limits/vieille télémétrie ; la loterie de 1 % par écriture reste
+  en ceinture-bretelles.
+- **Dashboard admin** : échappement HTML systématique des champs télémétrie
+  (postables sans auth → XSS stockée sinon), headers `nosniff` +
+  `Referrer-Policy: no-referrer` sur toutes les réponses HTML.
+
+### Notes
+- **Déploiement** : appliquer `migrations/0004-observability.sql` AVANT
+  `wrangler deploy` (colonne `telemetry.value`), puis poser le secret
+  `ADMIN_TOKEN`. Runbook complet dans `migrations/README.md`.
+- **CWS** : le passage de la télémétrie en opt-out impose de mettre à jour le
+  formulaire de divulgation des données du Chrome Web Store avant soumission.
+
+---
+
 ## [2.3.0] — 2026-05-30
 
 Release centrée sur la fiabilité de la récupération, l'honnêteté de l'UI et la

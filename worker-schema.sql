@@ -1,10 +1,13 @@
--- WFC Community — D1 schema (v3)
--- Deploy: npx wrangler d1 execute wfc-community --remote --file worker-schema.sql
+-- WFC Community — D1 schema (v4)
+-- Fresh databases: npx wrangler d1 execute wfc-community --remote --file worker-schema.sql
+-- Existing databases: apply migrations/000N-*.sql in order instead (ALTER
+-- statements are not idempotent — see migrations/README.md).
 --
 -- Version history:
 --   v1: tokens, votes, sightings, nonces
 --   v2: rate_limits, telemetry
 --   v3: licenses (short product codes WFC-XXXX-XXXX, generated at payment)
+--   v4: telemetry.value (numeric payload) + category index (observability)
 --
 -- All target/token identifiers are stored as HMAC-SHA256(env.HMAC_SALT, ...)
 -- — never as raw values nor as plain SHA-256. Even a full DB dump cannot be
@@ -62,17 +65,19 @@ CREATE TABLE IF NOT EXISTS telemetry (
   anon_hash   TEXT NOT NULL,                     -- HMAC(SALT, client anonId)
   v           TEXT NOT NULL,                     -- extension version (e.g. "2.0.3")
   lang        TEXT NOT NULL,
-  category    TEXT,                              -- "fetch" | "clean" | "scan" | ...
-  error_code  TEXT NOT NULL,                     -- "scroll_container_not_found" | ...
-  reason      TEXT,                              -- "no_links" | ...
-  stage       TEXT,                              -- "fetching" | "cleaning" | ...
+  category    TEXT,                              -- "fetch" | "clean" | "community" | "drift" | "perf" | ...
+  error_code  TEXT NOT NULL,                     -- "scroll_container_not_found" | "vote_dropped" | ...
+  reason      TEXT,                              -- "no_links" | "http_403" | ...
+  stage       TEXT,                              -- "fetching" | "replay" | ...
   ts          INTEGER NOT NULL,                  -- client-side ms timestamp
+  value       INTEGER,                           -- numeric payload (drift rank, queue depth, duration s)
   created_at  INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_error ON telemetry(error_code);
 CREATE INDEX IF NOT EXISTS idx_telemetry_anon ON telemetry(anon_hash);
 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry(created_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_category ON telemetry(category);
 
 -- Short product codes issued at Stripe payment confirmation.
 -- The code (WFC-XXXX-XXXX) is the user-facing licence identifier.

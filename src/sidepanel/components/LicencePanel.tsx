@@ -4,6 +4,7 @@ import { t } from "../lib/i18n";
 import { PAYMENT_LINK, COMMUNITY_STATS_URL } from "@shared/constants";
 import type { LicenseInfo } from "@shared/types";
 import { IconCheck, IconX } from "./Icons";
+import Modal from "./ui/Modal";
 
 export default function LicencePanel({
   lang,
@@ -127,14 +128,7 @@ export default function LicencePanel({
   ];
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2"
-      onClick={onClose}
-    >
-      <div
-        className="bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-sm p-4 space-y-3"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">{t("licence", lang)}</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">
@@ -283,7 +277,6 @@ export default function LicencePanel({
             contact@fredwav.com
           </a>
         </p>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -4,7 +4,7 @@
  */
 
 import type { RequestMessage } from "@shared/messages";
-import type { Stats, FollowerRecord, Settings, LicenseInfo } from "@shared/types";
+import type { Stats, FollowerRecord, Settings, LicenseInfo, CommunityStatus } from "@shared/types";
 
 async function send<T>(message: RequestMessage): Promise<T> {
   return chrome.runtime.sendMessage(message) as Promise<T>;
@@ -46,6 +46,11 @@ export const api = {
       type: "SUBMIT_COMMUNITY_VOTE",
       payload: { username, verdict, score },
     }),
+
+  getCommunityStatus: () => send<CommunityStatus>({ type: "GET_COMMUNITY_STATUS" }),
+
+  replayCommunityQueue: () =>
+    send<{ replayed: number; dropped: number; remaining: number }>({ type: "COMMUNITY_REPLAY_NOW" }),
 
   getLicense: () => send<LicenseInfo>({ type: "GET_LICENSE" }),
 

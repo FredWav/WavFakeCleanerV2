@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { Settings } from "@shared/types";
+import Modal from "./ui/Modal";
+import Button from "./ui/Button";
 
 export default function SettingsPanel({
   lang,
@@ -16,7 +18,7 @@ export default function SettingsPanel({
     threadsUsername: "",
     scoreThreshold: 70,
     privateAlwaysReview: false,
-    telemetry: false,
+    telemetry: true, // v3 default — the stored value overwrites this on load
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -43,14 +45,7 @@ export default function SettingsPanel({
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2"
-      onClick={onClose}
-    >
-      <div
-        className="bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-sm p-4 space-y-3"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">{t("settings", lang)}</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">
@@ -109,18 +104,12 @@ export default function SettingsPanel({
         </div>
 
         <div className="flex items-center gap-2 pt-1">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium
-              hover:bg-purple-500 transition-colors disabled:opacity-50"
-          >
+          <Button onClick={save} disabled={saving}>
             {saving ? "..." : t("save", lang)}
-          </button>
+          </Button>
           {saved && <span className="text-green-400 text-xs">{t("saved", lang)}</span>}
           {error && <span className="text-red-400 text-xs">{error}</span>}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

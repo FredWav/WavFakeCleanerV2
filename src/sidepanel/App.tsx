@@ -5,6 +5,7 @@ import { t, getStoredLang, setStoredLang } from "./lib/i18n";
 import { api } from "./lib/messaging";
 import StatCards from "./components/StatCards";
 import ControlPanel from "./components/ControlPanel";
+import CommunityCard from "./components/CommunityCard";
 import LogConsole from "./components/LogConsole";
 import FollowerTable from "./components/FollowerTable";
 import SettingsPanel from "./components/SettingsPanel";
@@ -20,8 +21,22 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
   const [toast, setToast] = useState<string | null>(null);
+  const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
+
+  // One-time notice after the v3 update: telemetry is now on by default.
+  // The flag is set by the onInstalled migration and cleared on dismiss.
+  useEffect(() => {
+    chrome.storage.local.get("wfc_telemetry_notice_pending").then((r) => {
+      if (r?.wfc_telemetry_notice_pending) setShowTelemetryNotice(true);
+    }).catch(() => {});
+  }, []);
+
+  function dismissTelemetryNotice() {
+    setShowTelemetryNotice(false);
+    chrome.storage.local.remove("wfc_telemetry_notice_pending").catch(() => {});
+  }
 
   // Initial load: settings (for onboarding gate) and licence state.
   // Split into separate effects so each has a single, obvious responsibility
@@ -136,8 +151,36 @@ export default function App() {
         </div>
       </header>
 
+      {/* One-time v3 telemetry notice */}
+      {showTelemetryNotice && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-purple-800/40 bg-purple-950/30 text-[10px] text-purple-200">
+          <span className="flex-1 leading-snug">{t("telemetry_notice", lang)}</span>
+          <button
+            onClick={() => { dismissTelemetryNotice(); setShowSettings(true); }}
+            className="shrink-0 px-2 py-0.5 rounded bg-purple-600/40 text-purple-100 hover:bg-purple-600/60 transition-colors"
+          >
+            {t("telemetry_notice_cta", lang)}
+          </button>
+          <button
+            onClick={dismissTelemetryNotice}
+            className="shrink-0 text-purple-400 hover:text-white transition-colors text-sm leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Stats */}
       <StatCards stats={stats} lang={lang} />
+
+      {/* Community status (licensed users) */}
+      <CommunityCard
+        lang={lang}
+        licence={licence}
+        onShowLicence={() => setShowLicence(true)}
+        showToast={setToast}
+      />
 
       {/* Controls */}
       <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} />

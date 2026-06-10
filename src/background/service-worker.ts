@@ -31,7 +31,15 @@ import {
   persistFollowerPage,
 } from "./pipeline";
 import { restoreSessionState } from "./pipeline/tab-manager";
-import { submitVote, reportSightings, processCommunityQueue } from "./community";
+import {
+  submitVote,
+  reportSightings,
+  processCommunityQueue,
+  getCommunityStatus,
+  checkTokenHealth,
+} from "./community";
+import { recordCommunityEvent, setTokenStatus } from "./community-events";
+import { reportTelemetry } from "./telemetry";
 import { verifyLicenceToken } from "./licence-verify";
 
 // ── Récupération après crash du service worker ──
@@ -188,6 +196,30 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       }
     }
 
+    case "GET_COMMUNITY_STATUS": {
+      const status = await getCommunityStatus();
+      // Opportunistic lazy health check (self-throttled to 1/day): keeps the
+      // token pill honest without a dedicated alarm.
+      checkTokenHealth(false).catch(() => {});
+      return status;
+    }
+
+    case "COMMUNITY_REPLAY_NOW":
+      // Immediate drain for the sidepanel's "retry now" button (and manual
+      // E2E verification — no need to wait for the 15-min alarm).
+      return await processCommunityQueue();
+
+    case "COMMUNITY_LOOKUP_FAILED": {
+      const { httpStatus } = msg.payload as { httpStatus: number | null };
+      await recordCommunityEvent({
+        kind: "lookup_failed",
+        reason: httpStatus === null ? "network" : `http_${httpStatus}`,
+        httpStatus,
+        stage: "sidepanel",
+      });
+      return { ok: true };
+    }
+
     case "GET_LICENSE":
       return await getLicense();
 
@@ -238,6 +270,9 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
             communityToken: data.communityToken ?? code,
             recoveryToken: code,
           });
+          // The Worker just validated this token — record it so the community
+          // card starts green instead of "unknown".
+          setTokenStatus("ok").catch(() => {});
           return { ok: true };
         } catch {
           return { ok: false, error: "network_error" };
@@ -270,6 +305,7 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
           communityToken: data.communityToken ?? upgradedKey,
           recoveryToken: upgradedKey, // prefer the short code for backups
         });
+        setTokenStatus("ok").catch(() => {});
       } catch {
         return { ok: false, error: "network_error" };
       }
@@ -307,6 +343,32 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
         message,
       };
       chrome.runtime.sendMessage({ type: "LOG_EVENT", payload: entry }).catch(() => {});
+      return { ok: true };
+    }
+
+    case "DRIFT_DETECTED": {
+      const { lookup, winningStrategy, rank } = msg.payload as {
+        lookup: string; winningStrategy: string; rank: number;
+      };
+      // Same LOG_EVENT shape/text as before so the App.tsx drift toast keeps
+      // matching on category === "drift".
+      chrome.runtime.sendMessage({
+        type: "LOG_EVENT",
+        payload: {
+          ts: new Date().toISOString(),
+          level: "WARNING",
+          category: "drift",
+          message: `Selector drift detected: ${lookup} → ${winningStrategy} (rank ${rank})`,
+        },
+      }).catch(() => {});
+      // Fleet-wide early warning: which selectors are drifting, on how many
+      // installs — drives the admin dashboard's drift table.
+      reportTelemetry({
+        category: "drift",
+        errorCode: lookup,
+        reason: winningStrategy,
+        value: rank,
+      }).catch(() => {});
       return { ok: true };
     }
 
@@ -377,7 +439,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await rateTracker.load();
   } else if (alarm.name === "community-queue-replay") {
     // Drain any votes/sightings that failed earlier (offline, 5xx, SW restart).
-    // 4xx errors and items past the attempt cap are dropped silently.
+    // Outcomes (drops, replays, token health) are recorded by community-events:
+    // counters in storage, LOG_EVENT broadcasts, and telemetry.
     try {
       const result = await processCommunityQueue();
       if (result.replayed > 0 || result.dropped > 0) {
@@ -393,8 +456,31 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ── Install handler ──
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("Wav Fake Cleaner V2 installed");
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log("Wav Fake Cleaner V2 installed", details.reason);
+
+  void (async () => {
+    try {
+      const settings = await getSettings();
+      if (settings.telemetryMigratedV3) return;
+
+      if (details.reason === "install") {
+        // Fresh install: DEFAULT_SETTINGS already has telemetry ON; just mark
+        // the migration done so a later update never overrides a real opt-out.
+        await saveSettings({ telemetryMigratedV3: true });
+      } else if (details.reason === "update") {
+        // v3 migration: every pre-3.0 user has an explicit telemetry:false
+        // persisted by the settings form (the old default), indistinguishable
+        // from a deliberate opt-out. Flip everyone ON once, show a one-time
+        // notice, and let the settings toggle be the opt-out from now on.
+        await saveSettings({ telemetry: true, telemetryMigratedV3: true });
+        await chrome.storage.local.set({ wfc_telemetry_notice_pending: true });
+        console.log("[WFC] v3 migration: telemetry default ON (opt-out in settings)");
+      }
+    } catch (e) {
+      console.error("[WFC] v3 telemetry migration failed:", e);
+    }
+  })();
 });
 
 // ── Service worker suspend handler ──

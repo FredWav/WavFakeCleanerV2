@@ -130,9 +130,13 @@ export interface Settings {
   threadsUsername: string;
   scoreThreshold: number;
   privateAlwaysReview?: boolean;
-  // Opt-in: send anonymous error telemetry to the developer's worker so bugs
-  // can be diagnosed without the user having to copy logs manually. Default off.
+  // Anonymous technical telemetry (errors, community queue health, selector
+  // drift). ON by default since v3; this is the opt-out switch.
   telemetry?: boolean;
+  // One-time v3 migration marker: existing users had an explicit `false`
+  // persisted by the settings form, which is indistinguishable from a real
+  // opt-out — the migration flips everyone ON once and shows a notice.
+  telemetryMigratedV3?: boolean;
 }
 
 // ── License ──
@@ -150,6 +154,53 @@ export interface LicenseInfo {
    * original signed token so an export → import round-trip works.
    */
   recoveryToken?: string | null;
+}
+
+// ── Community status (visibility into the vote/sighting submission path) ──
+
+export type CommunityTokenStatus = "ok" | "invalid" | "unknown";
+
+/**
+ * Why a community contribution was lost (or failed to submit).
+ *   http_403      — Worker rejected the token (invalid/revoked licence)
+ *   http_4xx      — other client error (validation, replayed nonce, …)
+ *   max_attempts  — dropped after exhausting replay attempts
+ *   overflow      — trimmed by the queue's FIFO cap
+ *   quota         — chrome.storage write failed (quota exhausted)
+ *   expired       — sat in the queue past its TTL
+ *   network       — network error (lookups only; submissions retry instead)
+ */
+export type CommunityFailureReason =
+  | "http_403"
+  | "http_4xx"
+  | "max_attempts"
+  | "overflow"
+  | "quota"
+  | "expired"
+  | "network";
+
+export interface CommunityReplaySummary {
+  ts: number;
+  replayed: number;
+  dropped: number;
+  remaining: number;
+}
+
+export interface CommunityStatus {
+  /** Contributions delivered to the Worker (votes + sighting reports). */
+  sent: number;
+  /** Contributions that entered the retry queue at least once. */
+  enqueued: number;
+  /** Contributions lost forever. */
+  dropped: number;
+  droppedByReason: Partial<Record<CommunityFailureReason, number>>;
+  lastDropReason: CommunityFailureReason | null;
+  lastReplay: CommunityReplaySummary | null;
+  tokenStatus: CommunityTokenStatus;
+  tokenCheckedAt: number | null;
+  /** Live length of the retry queue (computed, not stored). */
+  queueLength: number;
+  updatedAt: number;
 }
 
 // ── Free tier limits ──
