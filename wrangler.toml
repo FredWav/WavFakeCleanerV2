@@ -2,6 +2,18 @@ name = "restless-credit-5e6a"
 main = "stripe-verify-worker.js"
 compatibility_date = "2024-01-01"
 
+# Deterministic housekeeping (nonces, rate_limits, old telemetry) — replaces
+# reliance on the 1% per-write lottery, which stays as belt-and-braces.
+[triggers]
+crons = ["0 3 * * *"]
+
+# Secrets (set via `wrangler secret put`, never committed):
+#   HMAC_SALT          — identifier hashing (already in place)
+#   STRIPE_SECRET_KEY  — licence verification (already in place)
+#   ADMIN_TOKEN        — Bearer token for /admin (long random string)
+#   EXTENSION_IDS      — optional CORS allowlist, comma-separated extension IDs
+#                        (unset = any chrome-extension:// origin, current behavior)
+
 [[d1_databases]]
 binding = "DB"
 database_name = "wfc-community"

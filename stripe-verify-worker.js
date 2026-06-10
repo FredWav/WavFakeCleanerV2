@@ -42,15 +42,29 @@ async function hmacHex(salt, data) {
 }
 
 // ── CORS helpers ──
+// Only extension origins are served: no content script calls the Worker (all
+// calls come from the service worker / sidepanel), so the old threads.net
+// entries were dead allowance and are gone. When the EXTENSION_IDS secret is
+// set (comma-separated extension IDs), it becomes a strict allowlist; unset,
+// any chrome-extension:// origin is accepted (pre-v3 behavior) so the
+// tightening can ship independently once the production IDs are known.
+
+let extensionIdAllowlist = null; // parsed once per isolate — env is static
+
+function loadExtensionAllowlist(env) {
+  if (extensionIdAllowlist !== null) return;
+  extensionIdAllowlist = String(env?.EXTENSION_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 function isAllowedOrigin(origin) {
-  if (!origin) return false;
-  if (origin.startsWith("chrome-extension://")) return true;
-  const allowed = [
-    "https://www.threads.net", "https://threads.net",
-    "https://www.threads.com", "https://threads.com",
-  ];
-  return allowed.some((a) => origin === a || origin.startsWith(a + "/"));
+  if (!origin || !origin.startsWith("chrome-extension://")) return false;
+  const ids = extensionIdAllowlist || [];
+  if (ids.length === 0) return true; // allowlist not configured
+  const id = origin.slice("chrome-extension://".length).replace(/\/+$/, "");
+  return ids.includes(id);
 }
 
 function corsHeaders(request) {
@@ -58,6 +72,13 @@ function corsHeaders(request) {
   if (!origin || !isAllowedOrigin(origin)) return {};
   return { "Access-Control-Allow-Origin": origin };
 }
+
+// Hardening headers for every HTML response (/success, /admin).
+const HTML_HEADERS = {
+  "Content-Type": "text/html; charset=utf-8",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+};
 
 // ── Response helpers ──
 
@@ -129,10 +150,16 @@ async function getOrCreateLicenseCode(env, sessionId) {
 // ── Rate limiting ──
 
 const RATE_LIMITS = {
-  vote: 200,        // votes per hour per token
-  sightings: 20,    // sighting batches per hour per token
-  telemetry: 50,    // telemetry events per hour per anon hash
-  token_check: 30,  // token health checks per hour per IP hash
+  vote: 200,            // votes per hour per token
+  sightings: 20,        // sighting batches per hour per token
+  telemetry: 50,        // telemetry events per hour per anon hash
+  token_check: 30,      // token health checks per hour per IP hash
+  // Per-IP limits on the previously unlimited open endpoints. Generous —
+  // the extension does one /lookup per table load — but they bound abuse.
+  lookup: 120,
+  check_sightings: 120,
+  verify: 30,
+  community_stats: 60,
 };
 
 // HMAC an IP for per-IP rate limiting without ever storing the raw address.
@@ -162,21 +189,27 @@ async function checkAndBumpRateLimit(env, tokenHash, endpoint) {
   return { allowed: true };
 }
 
-// ── Lazy housekeeping (1% chance per write) ──
+// ── Housekeeping ──
+// Runs deterministically from the daily cron trigger, plus a 1% per-write
+// lottery as belt-and-braces between cron runs.
+
+async function runCleanup(env) {
+  const cutoffNonces = Date.now() - 600_000;          // 10 min
+  const cutoffBuckets = Math.floor(Date.now() / 3_600_000) - 25; // keep 25 hour-buckets
+  const cutoffTelemetry = Date.now() - 90 * 24 * 3_600_000; // keep 90 days
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM nonces WHERE used_at < ?").bind(cutoffNonces),
+    env.DB.prepare("DELETE FROM rate_limits WHERE hour_bucket < ?").bind(cutoffBuckets),
+    env.DB.prepare("DELETE FROM telemetry WHERE created_at < ?").bind(cutoffTelemetry),
+  ]);
+}
 
 async function maybeCleanup(env) {
   if (Math.random() >= 0.01) return;
   try {
-    const cutoffNonces = Date.now() - 600_000;          // 10 min
-    const cutoffBuckets = Math.floor(Date.now() / 3_600_000) - 25; // keep 25 hour-buckets
-    const cutoffTelemetry = Date.now() - 90 * 24 * 3_600_000; // keep 90 days
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM nonces WHERE used_at < ?").bind(cutoffNonces),
-      env.DB.prepare("DELETE FROM rate_limits WHERE hour_bucket < ?").bind(cutoffBuckets),
-      env.DB.prepare("DELETE FROM telemetry WHERE created_at < ?").bind(cutoffTelemetry),
-    ]);
+    await runCleanup(env);
   } catch {
-    // non-critical; another request will clean later
+    // non-critical; the cron (or another request) will clean later
   }
 }
 
@@ -185,6 +218,7 @@ async function maybeCleanup(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    loadExtensionAllowlist(env);
 
     if (request.method === "OPTIONS") {
       const origin = request.headers.get("Origin");
@@ -196,7 +230,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": origin,
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
     }
@@ -211,12 +245,26 @@ export default {
       if (url.pathname === "/check-sightings" && request.method === "POST") return handleCheckSightings(request, env);
       if (url.pathname === "/token-check" && request.method === "POST") return handleTokenCheck(request, env);
       if (url.pathname === "/telemetry" && request.method === "POST") return handleTelemetry(request, env);
+      // Operator dashboard (no CORS — same-origin browser use only)
+      if (url.pathname === "/admin" && request.method === "GET") return handleAdminPage();
+      if (url.pathname === "/admin/api/overview" && request.method === "GET") return handleAdminOverview(request, env, url);
+      if (url.pathname === "/admin/api/revoke" && request.method === "POST") return handleAdminRevoke(request, env);
       return json({ error: "not_found" }, 404, request);
     } catch (e) {
       // Log the real error to worker logs (visible only to the operator);
       // never leak stack traces or internal IDs to the client.
       console.error("[worker] internal_error:", e);
       return json({ error: "internal_error" }, 500, request);
+    }
+  },
+
+  // Daily cron (wrangler.toml [triggers]) — deterministic housekeeping.
+  async scheduled(_event, env, _ctx) {
+    try {
+      await runCleanup(env);
+      console.log("[worker] scheduled cleanup done");
+    } catch (e) {
+      console.error("[worker] scheduled cleanup failed:", e);
     }
   },
 };
@@ -226,6 +274,15 @@ export default {
 async function handleVerify(request, env, url) {
   if (!env.HMAC_SALT) {
     return json({ valid: false, error: "server_misconfigured" }, 500, request);
+  }
+
+  // Per-IP limit: this endpoint fans out to the Stripe API and issues codes —
+  // the most expensive unauthenticated call we have.
+  if (env.DB) {
+    const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "verify");
+    if (!rl.allowed) {
+      return json({ valid: false, error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+    }
   }
 
   // ── Path A : lookup by short licence code (post-2.2 customers) ──
@@ -404,7 +461,7 @@ async function handleSuccess(request, env, url) {
   </script>
 </body>
 </html>`;
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: HTML_HEADERS });
 }
 
 // ── /vote ──
@@ -496,6 +553,11 @@ async function handleLookup(request, env) {
     return json({ error: "too_many_hashes" }, 400, request);
   }
 
+  const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "lookup");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+  }
+
   // Translate client SHA-256 hashes to server HMACs
   const hmacToClient = new Map();
   const targetHashes = [];
@@ -540,6 +602,10 @@ async function handleLookup(request, env) {
 async function handleCommunityStats(request, env) {
   if (!env.DB) return json({ totalFakesDetected: 0 }, 200, request);
   try {
+    const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "community_stats");
+    if (!rl.allowed) {
+      return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
+    }
     const row = await env.DB.prepare(
       "SELECT COUNT(DISTINCT target_hash) AS total FROM votes WHERE verdict = 'fake'"
     ).first();
@@ -592,20 +658,23 @@ async function handleReportSightings(request, env) {
     "INSERT INTO nonces (nonce, used_at) VALUES (?, ?)"
   ).bind(nonce, Date.now()).run();
 
-  // Batch insert sightings (HMAC each target hash)
+  // Batch insert sightings (HMAC each target hash) — one D1 round trip
+  // instead of N awaited inserts.
   const now = Date.now();
-  let inserted = 0;
+  const statements = [];
   for (const clientHash of clientTargetHashes) {
     if (!HEX64_RE.test(String(clientHash))) continue;
     const targetHash = await hmacHex(env.HMAC_SALT, clientHash);
-    await env.DB.prepare(
-      "INSERT OR IGNORE INTO sightings (target_hash, reporter_hash, created_at) VALUES (?, ?, ?)"
-    ).bind(targetHash, tokenHash, now).run();
-    inserted++;
+    statements.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO sightings (target_hash, reporter_hash, created_at) VALUES (?, ?, ?)"
+      ).bind(targetHash, tokenHash, now)
+    );
   }
+  if (statements.length > 0) await env.DB.batch(statements);
 
   await maybeCleanup(env);
-  return json({ ok: true, reported: inserted }, 200, request);
+  return json({ ok: true, reported: statements.length }, 200, request);
 }
 
 // ── /check-sightings ── (batch, no auth)
@@ -624,6 +693,11 @@ async function handleCheckSightings(request, env) {
   }
   if (clientTargetHashes.length > 200) {
     return json({ error: "too_many_hashes" }, 400, request);
+  }
+
+  const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "check_sightings");
+  if (!rl.allowed) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfter }, 429, request);
   }
 
   // Translate client SHA-256 hashes to server HMACs
@@ -761,4 +835,345 @@ async function handleTelemetry(request, env) {
 
   await maybeCleanup(env);
   return json({ ok: true }, 200, request);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Operator dashboard — /admin (HTML shell), /admin/api/overview (data),
+// /admin/api/revoke (kill a licence + its voting token).
+//
+// Auth: Bearer token compared via HMAC against the ADMIN_TOKEN secret
+// (`wrangler secret put ADMIN_TOKEN`). Comparing HMACs instead of raw
+// strings gives constant-time behavior with the primitives at hand. The
+// shell page itself contains no data; the token lives in sessionStorage,
+// never in the URL. No CORS on these routes — same-origin browser use only.
+// ════════════════════════════════════════════════════════════════════════
+
+async function isAdminAuthorized(request, env) {
+  if (!env.ADMIN_TOKEN || !env.HMAC_SALT) return false;
+  const auth = request.headers.get("Authorization") || "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const provided = auth.slice(7).trim();
+  if (!provided) return false;
+  const a = await hmacHex(env.HMAC_SALT, "admin:" + provided);
+  const b = await hmacHex(env.HMAC_SALT, "admin:" + env.ADMIN_TOKEN);
+  return a === b;
+}
+
+async function handleAdminOverview(request, env, url) {
+  if (!(await isAdminAuthorized(request, env))) {
+    return json({ error: "unauthorized" }, 403);
+  }
+  if (!env.DB) return json({ error: "db_not_configured" }, 503);
+
+  const days = Math.max(1, Math.min(90, parseInt(url.searchParams.get("days") || "14", 10) || 14));
+  const now = Date.now();
+  const cutoff = now - days * 24 * 3_600_000;
+  const cutoff7d = now - 7 * 24 * 3_600_000;
+  const cutoff30d = now - 30 * 24 * 3_600_000;
+  const currentBucket = Math.floor(now / 3_600_000);
+  const DAY = "strftime('%Y-%m-%d', created_at/1000, 'unixepoch')";
+
+  const results = await env.DB.batch([
+    env.DB.prepare(`SELECT ${DAY} AS day, COUNT(*) AS votes, SUM(verdict='fake') AS fakeVotes FROM votes WHERE created_at > ? GROUP BY day ORDER BY day`).bind(cutoff),
+    env.DB.prepare("SELECT COUNT(DISTINCT token_hash) AS n FROM votes WHERE created_at > ?").bind(cutoff7d),
+    env.DB.prepare("SELECT COUNT(DISTINCT token_hash) AS n FROM votes WHERE created_at > ?").bind(cutoff30d),
+    env.DB.prepare("SELECT COUNT(DISTINCT target_hash) AS n FROM votes WHERE verdict = 'fake'"),
+    env.DB.prepare(`SELECT ${DAY} AS day, COUNT(*) AS n FROM sightings WHERE created_at > ? GROUP BY day ORDER BY day`).bind(cutoff),
+    env.DB.prepare("SELECT COUNT(DISTINCT reporter_hash) AS n FROM sightings WHERE created_at > ?").bind(cutoff7d),
+    env.DB.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(revoked), 0) AS revoked FROM licenses"),
+    env.DB.prepare(`SELECT ${DAY} AS day, COUNT(*) AS n FROM licenses WHERE created_at > ? GROUP BY day ORDER BY day`).bind(cutoff),
+    env.DB.prepare("SELECT category, error_code AS errorCode, COUNT(*) AS n FROM telemetry WHERE created_at > ? GROUP BY category, error_code ORDER BY n DESC LIMIT 25").bind(cutoff),
+    env.DB.prepare("SELECT COALESCE(reason, '?') AS reason, COUNT(*) AS events, SUM(COALESCE(value, 1)) AS items FROM telemetry WHERE category = 'community' AND error_code IN ('vote_dropped','sightings_dropped','queue_overflow') AND created_at > ? GROUP BY reason ORDER BY items DESC").bind(cutoff),
+    env.DB.prepare("SELECT CAST(ROUND(AVG(value)) AS INTEGER) AS avg, MAX(value) AS max FROM telemetry WHERE category = 'community' AND error_code = 'replay_summary' AND value IS NOT NULL AND created_at > ?").bind(cutoff),
+    env.DB.prepare("SELECT error_code AS lookup, COALESCE(reason, '?') AS strategy, COUNT(*) AS n, COUNT(DISTINCT anon_hash) AS users, MAX(created_at) AS lastSeen FROM telemetry WHERE category = 'drift' AND created_at > ? GROUP BY error_code, reason ORDER BY n DESC LIMIT 20").bind(cutoff),
+    env.DB.prepare("SELECT v, COUNT(DISTINCT anon_hash) AS users FROM telemetry WHERE created_at > ? GROUP BY v ORDER BY users DESC LIMIT 10").bind(cutoff),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM nonces"),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM rate_limits"),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM telemetry"),
+    env.DB.prepare("SELECT endpoint, MAX(count) AS peak FROM rate_limits WHERE hour_bucket = ? GROUP BY endpoint ORDER BY peak DESC").bind(currentBucket),
+  ]);
+
+  const r = (i) => results[i].results || [];
+  const first = (i) => (results[i].results || [])[0] || {};
+
+  return json({
+    generatedAt: now,
+    days,
+    licenses: {
+      total: first(6).total ?? 0,
+      revoked: first(6).revoked ?? 0,
+      activationsPerDay: r(7),
+    },
+    votes: {
+      perDay: r(0),
+      voters7d: first(1).n ?? 0,
+      voters30d: first(2).n ?? 0,
+      fakesDetected: first(3).n ?? 0,
+    },
+    sightings: {
+      perDay: r(4),
+      reporters7d: first(5).n ?? 0,
+    },
+    topErrors: r(8),
+    communityDrops: r(9),
+    queueDepth: { avg: first(10).avg ?? null, max: first(10).max ?? null },
+    drift: r(11),
+    versions: r(12),
+    health: {
+      nonces: first(13).n ?? 0,
+      rateLimitRows: first(14).n ?? 0,
+      telemetryRows: first(15).n ?? 0,
+      currentHourPressure: r(16),
+    },
+  }, 200);
+}
+
+async function handleAdminRevoke(request, env) {
+  if (!(await isAdminAuthorized(request, env))) {
+    return json({ error: "unauthorized" }, 403);
+  }
+  if (!env.DB) return json({ error: "db_not_configured" }, 503);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: "invalid_json" }, 400); }
+
+  const { code } = body || {};
+  if (typeof code !== "string" || !CODE_RE.test(code)) {
+    return json({ error: "invalid_code" }, 400);
+  }
+
+  const row = await env.DB.prepare("SELECT code, revoked FROM licenses WHERE code = ?").bind(code).first();
+  if (!row) return json({ ok: false, error: "not_found" }, 404);
+
+  // Revoke the licence AND delete its community token in one shot — before
+  // v3 a revoked licence kept voting forever (the token row created at
+  // issuance was never cleaned up, and /vote only checks `tokens`).
+  const tokenHash = await hmacHex(env.HMAC_SALT, code);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE licenses SET revoked = 1 WHERE code = ?").bind(code),
+    env.DB.prepare("DELETE FROM tokens WHERE token_hash = ?").bind(tokenHash),
+  ]);
+
+  return json({ ok: true, code, alreadyRevoked: !!row.revoked }, 200);
+}
+
+function handleAdminPage() {
+  // Static shell: zero data, zero secrets. The inline JS asks for the admin
+  // token (sessionStorage), calls /admin/api/overview, and renders tables.
+  // SECURITY: every dynamic string is HTML-escaped before innerHTML —
+  // telemetry fields are attacker-controlled (the endpoint is unauthenticated).
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>WFC — Admin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background: #0f0f11; color: #e5e7eb; margin: 0; padding: 24px; }
+  h1 { color: #a855f7; font-size: 1.2rem; margin: 0 0 4px; }
+  h2 { color: #c084fc; font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; margin: 26px 0 8px; }
+  .sub { color: #6b7280; font-size: .75rem; margin-bottom: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: #1a1a2e; border: 1px solid #2d2d40; border-radius: 12px; padding: 12px 14px; }
+  .tile .v { font-size: 1.4rem; font-weight: 700; color: #fff; }
+  .tile .l { font-size: .68rem; color: #9ca3af; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #1f1f30; }
+  th { color: #6b7280; font-weight: 600; font-size: .68rem; text-transform: uppercase; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { display: inline-block; height: 9px; background: #6d4aff; border-radius: 3px; vertical-align: middle; min-width: 2px; }
+  .bar.red { background: #ef4444; }
+  .warn { color: #fbbf24; } .bad { color: #f87171; } .ok { color: #34d399; }
+  .card { background: #15152a; border: 1px solid #26263c; border-radius: 12px; padding: 12px 14px; overflow-x: auto; }
+  #login { max-width: 380px; margin: 12vh auto; text-align: center; }
+  input, button { font: inherit; border-radius: 8px; border: 1px solid #3b3b52; background: #0f0f11; color: #fff; padding: 8px 10px; }
+  button { background: #6d4aff; border: 0; cursor: pointer; font-weight: 600; }
+  button:hover { background: #7c5cff; }
+  button.danger { background: #b91c1c; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #err { color: #f87171; font-size: .8rem; min-height: 1.2em; margin-top: 8px; }
+  .muted { color: #6b7280; }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1>WFC — Admin</h1>
+  <p class="sub">Tableau de bord op&eacute;rateur</p>
+  <div class="row" style="justify-content:center">
+    <input id="tok" type="password" placeholder="ADMIN_TOKEN" style="width:220px">
+    <button onclick="saveTok()">Entrer</button>
+  </div>
+  <div id="err"></div>
+</div>
+<div id="dash" style="display:none"></div>
+<script>
+"use strict";
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function num(x) { var n = Number(x); return isFinite(n) ? n : 0; }
+function fmtDate(ms) { try { return new Date(num(ms)).toISOString().slice(0, 16).replace("T", " "); } catch (e) { return "?"; } }
+function getTok() { return sessionStorage.getItem("wfc_admin_token") || ""; }
+function saveTok() {
+  var v = document.getElementById("tok").value.trim();
+  if (!v) return;
+  sessionStorage.setItem("wfc_admin_token", v);
+  load();
+}
+function logout(msg) {
+  sessionStorage.removeItem("wfc_admin_token");
+  document.getElementById("dash").style.display = "none";
+  document.getElementById("login").style.display = "block";
+  document.getElementById("err").textContent = msg || "";
+}
+function tiles(items) {
+  var h = '<div class="grid">';
+  for (var i = 0; i < items.length; i++) {
+    h += '<div class="tile"><div class="v ' + (items[i][2] || "") + '">' + esc(items[i][1]) + '</div><div class="l">' + esc(items[i][0]) + "</div></div>";
+  }
+  return h + "</div>";
+}
+function table(headers, rows) {
+  var h = '<div class="card"><table><tr>';
+  for (var i = 0; i < headers.length; i++) h += "<th" + (headers[i][1] ? ' class="num"' : "") + ">" + esc(headers[i][0]) + "</th>";
+  h += "</tr>";
+  if (!rows.length) h += '<tr><td colspan="' + headers.length + '" class="muted">aucune donn&eacute;e</td></tr>';
+  for (var rI = 0; rI < rows.length; rI++) {
+    h += "<tr>";
+    for (var c = 0; c < rows[rI].length; c++) h += "<td" + (headers[c] && headers[c][1] ? ' class="num"' : "") + ">" + rows[rI][c] + "</td>";
+    h += "</tr>";
+  }
+  return h + "</table></div>";
+}
+function bar(v, max, red) {
+  var w = max > 0 ? Math.max(2, Math.round(num(v) / max * 90)) : 2;
+  return '<span class="bar' + (red ? " red" : "") + '" style="width:' + w + 'px"></span> ' + num(v);
+}
+function load() {
+  var tok = getTok();
+  if (!tok) return;
+  fetch("/admin/api/overview?days=14", { headers: { Authorization: "Bearer " + tok } })
+    .then(function (res) {
+      if (res.status === 403) { logout("Token refus\\u00e9"); throw new Error("403"); }
+      if (!res.ok) { logout("Erreur " + res.status); throw new Error(String(res.status)); }
+      return res.json();
+    })
+    .then(render)
+    .catch(function () {});
+}
+function render(d) {
+  document.getElementById("login").style.display = "none";
+  var el = document.getElementById("dash");
+  el.style.display = "block";
+
+  var votesTotal = 0, fakeTotal = 0, i;
+  for (i = 0; i < d.votes.perDay.length; i++) { votesTotal += num(d.votes.perDay[i].votes); fakeTotal += num(d.votes.perDay[i].fakeVotes); }
+  var maxVotes = 0, maxSight = 0;
+  for (i = 0; i < d.votes.perDay.length; i++) maxVotes = Math.max(maxVotes, num(d.votes.perDay[i].votes));
+  for (i = 0; i < d.sightings.perDay.length; i++) maxSight = Math.max(maxSight, num(d.sightings.perDay[i].n));
+
+  var h = "<h1>WFC — Admin</h1>" +
+    '<p class="sub">G&eacute;n&eacute;r&eacute; ' + fmtDate(d.generatedAt) + " UTC &middot; fen&ecirc;tre " + num(d.days) + ' jours &middot; <a href="#" onclick="load();return false" style="color:#a855f7">rafra&icirc;chir</a></p>';
+
+  h += tiles([
+    ["Licences", num(d.licenses.total)],
+    ["R\\u00e9voqu\\u00e9es", num(d.licenses.revoked), num(d.licenses.revoked) > 0 ? "warn" : ""],
+    ["Voteurs 7j", num(d.votes.voters7d)],
+    ["Voteurs 30j", num(d.votes.voters30d)],
+    ["Votes (" + num(d.days) + "j)", votesTotal],
+    ["Fakes d\\u00e9tect\\u00e9s", num(d.votes.fakesDetected)],
+    ["Queue moy/max", (d.queueDepth.avg == null ? "—" : num(d.queueDepth.avg) + " / " + num(d.queueDepth.max)), num(d.queueDepth.max) > 100 ? "warn" : ""],
+  ]);
+
+  h += "<h2>Votes / jour</h2>";
+  var vRows = [];
+  for (i = 0; i < d.votes.perDay.length; i++) {
+    var v = d.votes.perDay[i];
+    vRows.push([esc(v.day), bar(v.votes, maxVotes), bar(v.fakeVotes, maxVotes, true)]);
+  }
+  h += table([["Jour"], ["Votes", 1], ["Dont fake", 1]], vRows);
+
+  h += "<h2>Sightings / jour <span class='muted'>(reporters 7j : " + num(d.sightings.reporters7d) + ")</span></h2>";
+  var sRows = [];
+  for (i = 0; i < d.sightings.perDay.length; i++) sRows.push([esc(d.sightings.perDay[i].day), bar(d.sightings.perDay[i].n, maxSight)]);
+  h += table([["Jour"], ["Signalements", 1]], sRows);
+
+  h += "<h2 class='warn'>D&eacute;rive des s&eacute;lecteurs (early warning)</h2>";
+  var dRows = [];
+  for (i = 0; i < d.drift.length; i++) {
+    var dr = d.drift[i];
+    dRows.push([esc(dr.lookup), esc(dr.strategy), num(dr.n), num(dr.users), esc(fmtDate(dr.lastSeen))]);
+  }
+  h += table([["S\\u00e9lecteur"], ["Strat\\u00e9gie gagnante"], ["Occurrences", 1], ["Installs", 1], ["Vu le"]], dRows);
+
+  h += "<h2>Pertes communautaires (par raison)</h2>";
+  var cRows = [];
+  for (i = 0; i < d.communityDrops.length; i++) {
+    var cd = d.communityDrops[i];
+    cRows.push([esc(cd.reason), num(cd.events), num(cd.items)]);
+  }
+  h += table([["Raison"], ["\\u00c9v\\u00e9nements", 1], ["Contributions", 1]], cRows);
+
+  h += "<h2>Top erreurs t\\u00e9l\\u00e9m\\u00e9trie</h2>";
+  var eRows = [];
+  for (i = 0; i < d.topErrors.length; i++) {
+    var te = d.topErrors[i];
+    eRows.push([esc(te.category), esc(te.errorCode), num(te.n)]);
+  }
+  h += table([["Cat\\u00e9gorie"], ["Code"], ["n", 1]], eRows);
+
+  h += "<h2>Versions actives</h2>";
+  var verRows = [];
+  for (i = 0; i < d.versions.length; i++) verRows.push([esc(d.versions[i].v), num(d.versions[i].users)]);
+  h += table([["Version"], ["Installs", 1]], verRows);
+
+  var pres = "";
+  for (i = 0; i < d.health.currentHourPressure.length; i++) {
+    var p = d.health.currentHourPressure[i];
+    pres += esc(p.endpoint) + ": " + num(p.peak) + "  ";
+  }
+  h += "<h2>Sant&eacute; des tables</h2>";
+  h += tiles([
+    ["Nonces", num(d.health.nonces), num(d.health.nonces) > 5000 ? "warn" : ""],
+    ["Rate-limit rows", num(d.health.rateLimitRows)],
+    ["T\\u00e9l\\u00e9m\\u00e9trie rows", num(d.health.telemetryRows)],
+    ["Pression heure courante", pres || "—"],
+  ]);
+
+  h += "<h2 class='bad'>R&eacute;voquer une licence</h2>" +
+    '<div class="card"><div class="row">' +
+    '<input id="rvk" placeholder="WFC-XXXX-XXXX" style="width:170px">' +
+    '<button class="danger" onclick="revoke()">R&eacute;voquer + couper le vote</button>' +
+    '<span id="rvkmsg" class="muted"></span>' +
+    "</div></div>";
+
+  el.innerHTML = h;
+}
+function revoke() {
+  var code = document.getElementById("rvk").value.trim().toUpperCase();
+  var msg = document.getElementById("rvkmsg");
+  if (!code) return;
+  if (!confirm("R\\u00e9voquer " + code + " ? La licence et son token de vote seront coup\\u00e9s.")) return;
+  fetch("/admin/api/revoke", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getTok() },
+    body: JSON.stringify({ code: code }),
+  })
+    .then(function (res) { return res.json().then(function (j) { return { s: res.status, j: j }; }); })
+    .then(function (r) {
+      if (r.s === 200) { msg.textContent = "OK — r\\u00e9voqu\\u00e9e" + (r.j.alreadyRevoked ? " (d\\u00e9j\\u00e0 r\\u00e9voqu\\u00e9e)" : ""); msg.className = "ok"; }
+      else { msg.textContent = "Erreur: " + (r.j && r.j.error ? r.j.error : r.s); msg.className = "bad"; }
+    })
+    .catch(function () { msg.textContent = "Erreur r\\u00e9seau"; msg.className = "bad"; });
+}
+if (getTok()) load();
+</script>
+</body>
+</html>`;
+  return new Response(html, { headers: HTML_HEADERS });
 }
