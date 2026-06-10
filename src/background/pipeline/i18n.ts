@@ -93,6 +93,9 @@ const MSG: Record<string, Record<string, string>> = {
   community_token_invalid:  { fr: "Licence communautaire invalide — réactive ta licence pour contribuer aux votes", en: "Community licence invalid — re-activate your licence to contribute votes" },
   community_lookup_failed:  { fr: "Consultation communautaire échouée ({0})", en: "Community lookup failed ({0})" },
   community_storage_error:  { fr: "Stockage local saturé — une contribution communautaire n'a pas pu être conservée", en: "Local storage full — a community contribution could not be kept" },
+  // Perf run summaries (one line per run — details in chrome.storage.session)
+  perf_fetch_summary:       { fr: "Perf : récupération en {0}s — {1} followers ({2} nouveaux)", en: "Perf: fetch took {0}s — {1} followers ({2} new)" },
+  perf_cycle_summary:       { fr: "Perf : {0} profils traités, travail effectif {1}s sur {2}s (le reste = pacing anti-blocage)", en: "Perf: {0} profiles processed, effective work {1}s of {2}s (the rest is anti-block pacing)" },
   // User-facing mappings of internal fetch error codes (shown in the side panel)
   err_no_username:           { fr: "Aucun nom d'utilisateur configuré dans les paramètres.", en: "No username configured in settings." },
   err_followers_button:      { fr: "Bouton « Followers » introuvable. Vérifie que tu es connecté(e) et que ton profil est bien public.", en: "“Followers” button not found. Check that you're logged in and your profile is public." },

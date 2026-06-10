@@ -41,7 +41,8 @@ function extensionPlugin(): Plugin {
           "@background": "./src/background",
         },
         tsconfig: "tsconfig.json",
-        minify: false,
+        // Minification (not obfuscation) is fine for CWS review.
+        minify: true,
       });
 
       // Build content script as IIFE (self-contained, no ES imports)
@@ -57,7 +58,7 @@ function extensionPlugin(): Plugin {
           "@content": "./src/content",
         },
         tsconfig: "tsconfig.json",
-        minify: false,
+        minify: true,
         banner: {
           js: 'console.log("[WFC] === Content script IIFE starting ===", window.location.href);',
         },

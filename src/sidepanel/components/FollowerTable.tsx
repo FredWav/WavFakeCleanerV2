@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { FollowerRecord, LicenseInfo } from "@shared/types";
@@ -13,12 +13,19 @@ interface CommunityScore {
   consensusScore: number; // 0–100
 }
 
+// Usernames are stable — never hash the same one twice per panel session.
+const sha256Cache = new Map<string, string>();
+
 async function sha256Hex(str: string): Promise<string> {
+  const cached = sha256Cache.get(str);
+  if (cached) return cached;
   const data = new TextEncoder().encode(str);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
+  const hex = Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+  sha256Cache.set(str, hex);
+  return hex;
 }
 
 // Tell the service worker a lookup failed so it's counted and surfaced
@@ -78,6 +85,23 @@ function parseBreakdown(raw: string | null): string[] {
 interface ReadableItem {
   label: string;
   suspect: boolean; // true = orange warning, false = green positive
+}
+
+// The regex chains below re-ran for every row on every render (filter
+// changes, expand/collapse, vote state…). Breakdown strings are immutable per
+// follower, so cache the readable result by (breakdown, lang).
+const readableCache = new Map<string, ReadableItem[]>();
+const READABLE_CACHE_MAX = 600;
+
+function readableBreakdown(raw: string | null, lang: string): ReadableItem[] {
+  if (!raw) return [];
+  const key = `${lang}|${raw}`;
+  const cached = readableCache.get(key);
+  if (cached) return cached;
+  const computed = breakdownToReadable(parseBreakdown(raw), lang);
+  if (readableCache.size >= READABLE_CACHE_MAX) readableCache.clear();
+  readableCache.set(key, computed);
+  return computed;
 }
 
 function breakdownToReadable(items: string[], lang: string): ReadableItem[] {
@@ -223,6 +247,11 @@ export default function FollowerTable({
   const [voteLoading, setVoteLoading] = useState<string | null>(null);
   const [licencePrompt, setLicencePrompt] = useState<string | null>(null);
 
+  // Skip the community-score refetch when the visible username set hasn't
+  // changed (e.g. expanding a row, toggling a vote) — one Worker call per
+  // actual list change instead of one per render trigger.
+  const lastLookupKey = useRef<string>("");
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -230,9 +259,13 @@ export default function FollowerTable({
       setFollowers(data);
       const scanned = data.filter((f) => f.scanned && !f.removed).map((f) => f.username);
       if (scanned.length > 0) {
-        fetchCommunityScores(scanned.slice(0, 200))
-          .then((scores) => setCommunityScores(scores))
-          .catch(() => {});
+        const lookupKey = scanned.slice(0, 200).join("\n");
+        if (lookupKey !== lastLookupKey.current) {
+          lastLookupKey.current = lookupKey;
+          fetchCommunityScores(scanned.slice(0, 200))
+            .then((scores) => setCommunityScores(scores))
+            .catch(() => {});
+        }
       }
     } catch {
       // silent
@@ -366,8 +399,7 @@ export default function FollowerTable({
             ) : (
               followers.map((f, index) => {
                 const isExpanded = expanded === f.username;
-                const breakdown = parseBreakdown(f.scoreBreakdown);
-                const readable = breakdownToReadable(breakdown, lang);
+                const readable = readableBreakdown(f.scoreBreakdown, lang);
                 const cs = communityScores.get(f.username);
                 const isSpotted = cs && cs.voteCount >= 3 && cs.fakeRatio >= 0.60;
                 const isFakeFilter = filter === "fake";

@@ -68,6 +68,7 @@ import {
   markScanError,
 } from "./pipeline/follower-updater";
 import { PROFILE_VISIT, COOLDOWN, PACER } from "./pipeline/timings";
+import { span, coarseBucket } from "./pipeline/perf";
 
 // ── Pipeline i18n / state / tab-mgmt / messenger / follower-updater ──
 // All extracted to ./pipeline/* sub-modules in v2.1.
@@ -108,6 +109,7 @@ export async function persistFollowerPage(
   users: Record<string, ContentFollowerMeta>,
   ownerUsername: string,
 ): Promise<number> {
+  const persistSpan = span("persist_page");
   const now = Date.now();
   const newRecords: FollowerRecord[] = [];
   let newCount = 0;
@@ -157,6 +159,7 @@ export async function persistFollowerPage(
   if (newRecords.length > 0) {
     await upsertFollowers(newRecords);
   }
+  persistSpan.end({ users: Object.keys(users).length, inserted: newCount });
   return newCount;
 }
 
@@ -207,6 +210,7 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
   }
 
   log("INFO", "fetch", m("fetch_start", username));
+  const fetchSpan = span("fetch_run");
   // Clear any previous error when starting a fresh run.
   await updateState({ stage: "fetching", lastError: null, pausedUntil: null, pauseReason: null });
 
@@ -332,6 +336,17 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 
     log("INFO", "fetch", m("fetch_done", total, newCount));
 
+    // Perf summary: one human line + one coarse telemetry event. Detailed
+    // spans live in chrome.storage.session (local-only ring buffer).
+    const fetchSeconds = Math.round(fetchSpan.end({ followers: total, inserted: newCount }) / 1000);
+    log("INFO", "perf", m("perf_fetch_summary", fetchSeconds, total, newCount));
+    reportTelemetry({
+      category: "perf",
+      errorCode: "fetch_complete",
+      reason: `followers_${coarseBucket(total, [500, 2000, 5000])}`,
+      value: fetchSeconds,
+    }).catch(() => {});
+
     // If the scroll fetch hit the single-pass cap (~5000) or the 30-min timeout,
     // the follower list is truncated — say so instead of silently pretending we
     // got everyone. Surfaced via lastError (shown in ControlPanel once the run
@@ -393,6 +408,10 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
   await rateTracker.resetErrors();
 
   log("INFO", "clean", m("cycle_start", pending.length));
+  const cycleSpan = span("clean_cycle");
+  // Net work time (navigation, scan, removal) — pacing sleeps excluded, so
+  // the summary separates what we control from deliberate anti-block waits.
+  let workMs = 0;
   // Clear any previous error when starting a fresh cycle.
   await updateState({ stage: "cleaning", total: pending.length, progress: 0, lastError: null, pausedUntil: null, pauseReason: null });
 
@@ -501,8 +520,10 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       const profileUrl = `https://www.threads.com/@${encodeURIComponent(follower.username)}`;
       log("INFO", "clean", m("cycle_visit", follower.username));
 
+      const rmNavSpan = span("profile_nav");
       await chrome.tabs.update(rmTabId, { url: profileUrl });
       await waitForTabLoad(rmTabId, signal);
+      workMs += rmNavSpan.end();
       await sleep(8 + Math.random() * 12, signal);
       await ensureContentScript(rmTabId);
 
@@ -514,10 +535,12 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
         continue;
       }
 
+      const rmSpan = span("profile_remove");
       const removeResult = await chrome.tabs.sendMessage(rmTabId, {
         type: "REMOVE_FOLLOWER",
         payload: { username: follower.username },
       }) as { success: boolean; action: string; error?: string; blocked?: boolean };
+      workMs += rmSpan.end();
 
       if (removeResult.success) {
         await updateFollower(follower.username, {
@@ -588,8 +611,10 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       log("INFO", "clean", m("cycle_visit", follower.username));
 
       // 1. Navigate to profile
+      const navSpan = span("profile_nav");
       await chrome.tabs.update(currentTabId, { url: profileUrl });
       await waitForTabLoad(currentTabId, signal);
+      workMs += navSpan.end();
       // Laisse React hydrater puis simule une lecture humaine rapide
       await sleep(6 + Math.random() * 8, signal);
       await ensureContentScript(currentTabId);
@@ -652,10 +677,12 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       }
 
       // 2. Scan profile
+      const scanSpan = span("profile_scan");
       const rawProfileData = await chrome.tabs.sendMessage(currentTabId, {
         type: "SCAN_PROFILE",
         payload: { username: follower.username },
       });
+      workMs += scanSpan.end();
 
       // Validation minimale de la réponse du content script
       if (!rawProfileData || typeof rawProfileData !== "object" || !("username" in rawProfileData)) {
@@ -716,6 +743,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
           type RemoveOutcome = { success: boolean; action: string; error?: string; blocked?: boolean };
           let removeResult: RemoveOutcome | null = null;
 
+          const removeSpan = span("profile_remove");
           for (let removeAttempt = 0; removeAttempt < 3; removeAttempt++) {
             if (signal.aborted) break;
 
@@ -744,6 +772,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
               log("WARNING", "clean", m("cycle_remove_retry", follower.username, removeAttempt + 1));
             }
           }
+          workMs += removeSpan.end();
 
           // Stop pressed (or no verdict ever returned) before any removal attempt
           // completed → removeResult is still null. Do NOT dereference it (that was
@@ -852,6 +881,18 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
   });
 
   log("INFO", "clean", m("cycle_done", scanned, removed, reviewed));
+
+  // Perf summary: net work vs wall time. Wall time includes the deliberate
+  // pacing — the gap between the two is the anti-block budget, by design.
+  const wallSeconds = Math.round(cycleSpan.end({ scanned, removed }) / 1000);
+  const workSeconds = Math.round(workMs / 1000);
+  log("INFO", "perf", m("perf_cycle_summary", scanned, workSeconds, wallSeconds));
+  reportTelemetry({
+    category: "perf",
+    errorCode: "clean_cycle_complete",
+    reason: `profiles_${coarseBucket(scanned, [10, 25, 50])}`,
+    value: workSeconds,
+  }).catch(() => {});
 
   // Push tous les fakes du cycle au pool communautaire (1 seul batch).
   // Le worker rate-limite a 20 batches/h donc on rentre largement.

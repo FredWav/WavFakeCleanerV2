@@ -83,8 +83,11 @@ export async function upsertFollowers(records: FollowerRecord[]): Promise<void> 
   const db = await getDb();
   const tx = db.transaction("followers", "readwrite");
   try {
+    // Fire all puts without awaiting each (idiomatic idb batching): requests
+    // queue inside the transaction and tx.done surfaces any failure. Awaiting
+    // per-put serializes on each round trip for no extra safety.
     for (const record of records) {
-      await tx.store.put(record);
+      void tx.store.put(record);
     }
     await tx.done;
   } catch (e) {
