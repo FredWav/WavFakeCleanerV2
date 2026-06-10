@@ -39,6 +39,7 @@ import {
   checkTokenHealth,
 } from "./community";
 import { recordCommunityEvent, setTokenStatus } from "./community-events";
+import { reportTelemetry } from "./telemetry";
 import { verifyLicenceToken } from "./licence-verify";
 
 // ── Récupération après crash du service worker ──
@@ -345,6 +346,32 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
     }
 
+    case "DRIFT_DETECTED": {
+      const { lookup, winningStrategy, rank } = msg.payload as {
+        lookup: string; winningStrategy: string; rank: number;
+      };
+      // Same LOG_EVENT shape/text as before so the App.tsx drift toast keeps
+      // matching on category === "drift".
+      chrome.runtime.sendMessage({
+        type: "LOG_EVENT",
+        payload: {
+          ts: new Date().toISOString(),
+          level: "WARNING",
+          category: "drift",
+          message: `Selector drift detected: ${lookup} → ${winningStrategy} (rank ${rank})`,
+        },
+      }).catch(() => {});
+      // Fleet-wide early warning: which selectors are drifting, on how many
+      // installs — drives the admin dashboard's drift table.
+      reportTelemetry({
+        category: "drift",
+        errorCode: lookup,
+        reason: winningStrategy,
+        value: rank,
+      }).catch(() => {});
+      return { ok: true };
+    }
+
     case "FETCH_PROGRESS": {
       const { page, total } = msg.payload as { page: number; total: number };
       const logEntry = {
@@ -429,8 +456,31 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ── Install handler ──
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("Wav Fake Cleaner V2 installed");
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log("Wav Fake Cleaner V2 installed", details.reason);
+
+  void (async () => {
+    try {
+      const settings = await getSettings();
+      if (settings.telemetryMigratedV3) return;
+
+      if (details.reason === "install") {
+        // Fresh install: DEFAULT_SETTINGS already has telemetry ON; just mark
+        // the migration done so a later update never overrides a real opt-out.
+        await saveSettings({ telemetryMigratedV3: true });
+      } else if (details.reason === "update") {
+        // v3 migration: every pre-3.0 user has an explicit telemetry:false
+        // persisted by the settings form (the old default), indistinguishable
+        // from a deliberate opt-out. Flip everyone ON once, show a one-time
+        // notice, and let the settings toggle be the opt-out from now on.
+        await saveSettings({ telemetry: true, telemetryMigratedV3: true });
+        await chrome.storage.local.set({ wfc_telemetry_notice_pending: true });
+        console.log("[WFC] v3 migration: telemetry default ON (opt-out in settings)");
+      }
+    } catch (e) {
+      console.error("[WFC] v3 telemetry migration failed:", e);
+    }
+  })();
 });
 
 // ── Service worker suspend handler ──

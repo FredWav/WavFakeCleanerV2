@@ -1,6 +1,6 @@
 # Privacy Policy — Wav Fake Cleaner
 
-_Last updated: 2026-05-03_
+_Last updated: 2026-06-10_
 
 ## Who we are
 
@@ -45,18 +45,29 @@ exceptions described below.
    the Stripe API to confirm that the payment was completed. We do
    not see, store, or transmit any payment card information.
 
-4. **Anonymous error reports (optional, opt-in).** If — and only if —
-   you enable "Send anonymous error reports" in Settings (off by
-   default), the extension may send a minimal error event to the same
-   Cloudflare Worker when a fetch operation fails. Each event
-   contains: a randomly generated anonymous ID (UUID v4 stored
-   locally, never linked to your Threads identity), the extension
-   version, your selected language, and the technical error code
-   (e.g., `scroll_container_not_found`, `no_links`). The anonymous
-   ID is HMAC-hashed before being stored, so a database dump cannot
-   be reversed to identify a user. This setting can be turned off at
-   any time. **No follower data, no usernames, no log message
-   content, and no personal identifiers are ever transmitted.**
+4. **Anonymous technical diagnostics (on by default, opt-out).**
+   Since version 3.0, the extension sends minimal technical health
+   events to the same Cloudflare Worker so that bugs and breakages
+   (e.g., Threads changing its page structure, community votes
+   failing to deliver) can be detected and fixed without asking users
+   to copy logs. You can turn this off at any time with the
+   "Anonymous diagnostics" switch in Settings; existing users were
+   shown a one-time notice when updating to v3. Each event contains
+   **exactly** these fields:
+   - a randomly generated anonymous ID (UUID v4 stored locally, never
+     linked to your Threads identity; HMAC-hashed server-side so a
+     database dump cannot be reversed to identify a user),
+   - the extension version and your selected language,
+   - an event category (`fetch`, `clean`, `community`, `drift`,
+     `perf`), a technical code (e.g., `scroll_container_not_found`,
+     `vote_dropped`), an optional reason code (e.g., `http_403`), an
+     optional stage, and an optional small number (e.g., a queue
+     length or a duration in seconds).
+
+   **No follower data, no usernames — not even hashed ones — no log
+   message content, and no personal identifiers are ever transmitted
+   in diagnostics.** Events are rate-limited client-side and
+   server-side, and deleted from our database after 90 days.
 
 ## What we do NOT collect
 

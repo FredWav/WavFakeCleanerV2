@@ -16,7 +16,10 @@ export const DEFAULT_SETTINGS = {
   threadsUsername: "",
   scoreThreshold: 70,
   privateAlwaysReview: false,
-  telemetry: false,
+  // Anonymous technical telemetry — ON by default since v3 (opt-out in
+  // settings). Existing users are migrated once in onInstalled with a
+  // one-time notice banner. See PRIVACY.md for the exact fields.
+  telemetry: true,
 };
 
 // ── Licence (Stripe + Cloudflare Worker) ──

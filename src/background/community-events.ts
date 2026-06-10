@@ -261,7 +261,18 @@ export function recordCommunityEvent(evt: CommunityEvent): Promise<void> {
     } catch {
       // Quota exhausted while recording — nothing left to record it with.
     }
+    pingStatusUpdated();
   });
+}
+
+// Cheap "something changed" ping for the sidepanel CommunityCard. Rejects
+// harmlessly when no panel is open.
+function pingStatusUpdated(): void {
+  try {
+    void chrome.runtime.sendMessage({ type: "COMMUNITY_STATUS_UPDATED" }).catch(() => {});
+  } catch {
+    // ignore
+  }
 }
 
 export function recordReplaySummary(replay: {
@@ -290,5 +301,6 @@ export function setTokenStatus(tokenStatus: CommunityTokenStatus): Promise<void>
     } catch {
       // ignore
     }
+    pingStatusUpdated();
   });
 }

@@ -53,18 +53,10 @@ import { onDrift } from "@shared/selector-strategies";
 
 // ── Selector drift telemetry ──
 // Fires when a non-primary selector strategy succeeds — signal that Threads
-// has changed its DOM and the primary needs updating. Routed through the
-// existing message channel; the service worker forwards to telemetry if
-// the user opted in.
+// has changed its DOM and the primary needs updating. The service worker
+// rebroadcasts the LOG_EVENT (UI toast) and reports it to telemetry.
 onDrift((event) => {
-  send({
-    type: "LOG_FROM_CONTENT",
-    payload: {
-      level: "WARNING",
-      category: "drift",
-      message: `Selector drift detected: ${event.lookup} → ${event.winningStrategy} (rank ${event.rank})`,
-    },
-  });
+  send({ type: "DRIFT_DETECTED", payload: event });
 });
 
 // ── Send message to service worker ──

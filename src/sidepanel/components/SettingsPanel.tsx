@@ -16,7 +16,7 @@ export default function SettingsPanel({
     threadsUsername: "",
     scoreThreshold: 70,
     privateAlwaysReview: false,
-    telemetry: false,
+    telemetry: true, // v3 default — the stored value overwrites this on load
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);

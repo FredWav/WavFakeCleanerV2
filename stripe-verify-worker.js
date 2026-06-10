@@ -716,7 +716,7 @@ async function handleTelemetry(request, env) {
   try { body = await request.json(); }
   catch { return json({ error: "invalid_json" }, 400, request); }
 
-  const { anonId, v, lang, ts, category, errorCode, reason, stage } = body || {};
+  const { anonId, v, lang, ts, category, errorCode, reason, stage, value } = body || {};
 
   if (typeof anonId !== "string" || anonId.length < 16 || anonId.length > 100) {
     return json({ error: "invalid_anon_id" }, 400, request);
@@ -730,6 +730,11 @@ async function handleTelemetry(request, env) {
   // Soft-cap free-form fields to bound storage and avoid abuse
   const safe = (s, max) =>
     typeof s === "string" ? s.slice(0, max).replace(/[^\x20-\x7e]/g, "") : null;
+  // Optional numeric payload (v4): clamp to a sane integer range.
+  const safeValue =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.max(-2_147_483_648, Math.min(2_147_483_647, Math.round(value)))
+      : null;
 
   const anonHash = await hmacHex(env.HMAC_SALT, anonId);
 
@@ -740,8 +745,8 @@ async function handleTelemetry(request, env) {
   }
 
   await env.DB.prepare(`
-    INSERT INTO telemetry (anon_hash, v, lang, category, error_code, reason, stage, ts)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO telemetry (anon_hash, v, lang, category, error_code, reason, stage, ts, value)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     anonHash,
     safe(v, 20) || "unknown",
@@ -750,7 +755,8 @@ async function handleTelemetry(request, env) {
     safe(errorCode, 80),
     safe(reason, 80),
     safe(stage, 32),
-    ts
+    ts,
+    safeValue
   ).run();
 
   await maybeCleanup(env);

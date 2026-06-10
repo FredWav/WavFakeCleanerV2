@@ -37,13 +37,20 @@ export type RequestMessage =
 export type BroadcastMessage =
   | { type: "LOG_EVENT"; payload: LogEntry }
   | { type: "STATS_UPDATED"; payload: Stats }
-  | { type: "PIPELINE_STATE"; payload: PipelineState };
+  | { type: "PIPELINE_STATE"; payload: PipelineState }
+  // Lightweight ping after any community status change (vote sent/queued/
+  // dropped, replay, token check) — the CommunityCard refetches on it.
+  | { type: "COMMUNITY_STATUS_UPDATED" };
 
 // Messages FROM content script TO service worker
 export type ContentMessage =
   | { type: "CONTENT_READY" }
   | { type: "RATE_LIMIT_DETECTED" }
   | { type: "LOG_FROM_CONTENT"; payload: { level: string; category: string; message: string } }
+  // Selector drift: a fallback strategy won over the primary selector. The SW
+  // rebroadcasts a LOG_EVENT (UI toast) and reports it to telemetry so stale
+  // selectors are visible fleet-wide before they break entirely.
+  | { type: "DRIFT_DETECTED"; payload: { lookup: string; winningStrategy: string; rank: number } }
   | { type: "FETCH_PROGRESS"; payload: { page: number; total: number } }
   // Sent after every page of followers is fetched, so the background can persist
   // incrementally and never lose progress when the user clicks Stop.
