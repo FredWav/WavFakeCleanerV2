@@ -4,6 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 import { writeFileSync, mkdirSync, copyFileSync, existsSync } from "fs";
 import { build as esbuild } from "esbuild";
+// Single source of truth for the version — package.json. The manifest version
+// below used to be a separate hardcoded string and drifted at every release.
+import pkg from "./package.json";
 
 // Plugin to emit manifest.json, offscreen.html, icons, and IIFE content script
 function extensionPlugin(): Plugin {
@@ -89,7 +92,7 @@ function extensionPlugin(): Plugin {
       const manifest = {
         manifest_version: 3,
         name: "Wav Fake Cleaner",
-        version: "2.3.0",
+        version: pkg.version,
         description: "Detect and remove fake followers from your Threads account",
         permissions: ["sidePanel", "storage", "alarms", "offscreen", "activeTab", "scripting", "notifications"],
         content_security_policy: {
