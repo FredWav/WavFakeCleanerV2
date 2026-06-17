@@ -312,6 +312,31 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
     }
 
+    case "RECOVER_LICENSE": {
+      // Recover-by-email: ask the Worker for the WFC code tied to this email,
+      // then run it through the normal activation path (same as IMPORT_LICENSE).
+      // The email travels in the POST body, never the URL.
+      const email = (msg.payload as { email: string }).email?.trim();
+      if (!email) return { ok: false, error: "invalid_email" };
+      try {
+        const { LICENCE_RECOVER_URL } = await import("@shared/constants");
+        const res = await fetch(LICENCE_RECOVER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        if (!res.ok) return { ok: false, error: "network_error" };
+        const data = await res.json() as { found: boolean; code?: string };
+        if (!data.found || !data.code) return { ok: false, error: "not_found" };
+        return await handleMessage({
+          type: "ACTIVATE_LICENSE",
+          payload: { key: data.code },
+        });
+      } catch {
+        return { ok: false, error: "network_error" };
+      }
+    }
+
     case "EXPORT_LICENSE": {
       const backup = await exportLicenseBackup();
       if (!backup) return { ok: false, error: "no_license" };

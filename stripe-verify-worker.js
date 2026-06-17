@@ -106,16 +106,43 @@ function generateLicenseCode() {
   return `WFC-${chars.slice(0, 4)}-${chars.slice(4, 8)}`;
 }
 
+// Normalize an email for hashing: trim + lowercase so the HMAC computed at
+// issuance matches the one computed at /recover time regardless of casing or
+// stray whitespace. Returns "" for missing/obviously-invalid input (so we
+// never hash garbage as if it were a recovery key).
+function normalizeEmail(email) {
+  if (typeof email !== "string") return "";
+  const e = email.trim().toLowerCase();
+  // Not a full RFC validator — just "looks like an address".
+  if (e.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return "";
+  return e;
+}
+
 // Idempotent: returns the existing code if this Stripe session was already
 // turned into a licence. Otherwise generates a fresh code (with collision
 // retry) and registers its HMAC as a community-vote token.
-async function getOrCreateLicenseCode(env, sessionId) {
+//
+// `email` is the Stripe customer's email (present on every paid checkout
+// session). We store HMAC(SALT, normalized email) so the licence can later be
+// recovered by email — never the raw address. On the idempotent path we
+// backfill email_hash if a pre-recover-by-email row had it NULL.
+async function getOrCreateLicenseCode(env, sessionId, email) {
   const sessionIdHash = await hmacHex(env.HMAC_SALT, sessionId);
+  const normalized = normalizeEmail(email);
+  const emailHash = normalized ? await hmacHex(env.HMAC_SALT, normalized) : null;
 
   const existing = await env.DB.prepare(
-    "SELECT code FROM licenses WHERE session_id_hash = ? AND revoked = 0"
+    "SELECT code, email_hash FROM licenses WHERE session_id_hash = ? AND revoked = 0"
   ).bind(sessionIdHash).first();
-  if (existing) return existing.code;
+  if (existing) {
+    // Backfill the email hash the first time a legacy customer re-verifies.
+    if (emailHash && !existing.email_hash) {
+      await env.DB.prepare(
+        "UPDATE licenses SET email_hash = ? WHERE code = ? AND email_hash IS NULL"
+      ).bind(emailHash, existing.code).run();
+    }
+    return existing.code;
+  }
 
   // Generate and insert. The PK constraint on `code` makes collisions
   // visible as INSERT failures; retry up to 5 times (collisions are
@@ -125,8 +152,8 @@ async function getOrCreateLicenseCode(env, sessionId) {
     const code = generateLicenseCode();
     try {
       await env.DB.prepare(
-        "INSERT INTO licenses (code, session_id_hash, created_at) VALUES (?, ?, ?)"
-      ).bind(code, sessionIdHash, Date.now()).run();
+        "INSERT INTO licenses (code, session_id_hash, email_hash, created_at) VALUES (?, ?, ?, ?)"
+      ).bind(code, sessionIdHash, emailHash, Date.now()).run();
       // Register the code's HMAC as a community-vote token so /vote works
       // immediately for the new licensee.
       const tokenHash = await hmacHex(env.HMAC_SALT, code);
@@ -160,12 +187,32 @@ const RATE_LIMITS = {
   check_sightings: 120,
   verify: 30,
   community_stats: 60,
+  recover: 10,          // recover-by-email attempts per hour per IP
+  recover_email: 5,     // recover-by-email attempts per hour per email
 };
+
+// Collapse an IPv6 address to its /64 network prefix before bucketing, so a
+// client can't mint unlimited rate-limit buckets by rotating through its (a
+// typical allocation is a full /64). IPv4 and non-IP values pass through
+// unchanged. This is the standard granularity for IPv6 rate limiting.
+function ipRateLimitKey(ip) {
+  if (!ip.includes(":")) return ip; // IPv4 or "unknown"
+  const [headStr, tailStr] = ip.split("::");
+  const head = headStr ? headStr.split(":") : [];
+  const hasCompression = tailStr !== undefined;
+  const tail = hasCompression && tailStr ? tailStr.split(":") : [];
+  const groups = hasCompression
+    ? head.concat(Array(Math.max(0, 8 - head.length - tail.length)).fill("0"), tail)
+    : head;
+  // First 4 groups = /64. Strip leading zeros per group so e.g. "0db8" and
+  // "db8" map to the same bucket.
+  return groups.slice(0, 4).map((g) => (g || "0").replace(/^0+(?=[0-9a-fA-F])/, "").toLowerCase()).join(":");
+}
 
 // HMAC an IP for per-IP rate limiting without ever storing the raw address.
 async function ipHash(env, request) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  return hmacHex(env.HMAC_SALT, "ip:" + ip);
+  return hmacHex(env.HMAC_SALT, "ip:" + ipRateLimitKey(ip));
 }
 
 async function checkAndBumpRateLimit(env, tokenHash, endpoint) {
@@ -237,6 +284,7 @@ export default {
 
     try {
       if (url.pathname === "/verify") return handleVerify(request, env, url);
+      if (url.pathname === "/recover" && request.method === "POST") return handleRecover(request, env);
       if (url.pathname === "/success") return handleSuccess(request, env, url);
       if (url.pathname === "/vote" && request.method === "POST") return handleVote(request, env);
       if (url.pathname === "/lookup" && request.method === "POST") return handleLookup(request, env);
@@ -333,7 +381,7 @@ async function handleVerify(request, env, url) {
     // Generate or retrieve the short code; use it as the community token.
     let issuedCode;
     try {
-      issuedCode = await getOrCreateLicenseCode(env, sessionId);
+      issuedCode = await getOrCreateLicenseCode(env, sessionId, session.customer_details?.email);
     } catch (e) {
       console.error("[worker] code issuance failed, falling back to session_id:", e);
       // Last-resort: legacy behavior (session ID as token) so the user
@@ -353,6 +401,61 @@ async function handleVerify(request, env, url) {
   } catch (e) {
     console.error("[worker] /verify failed:", e);
     return json({ valid: false, error: "verify_failed" }, 200, request);
+  }
+}
+
+// ── /recover ──
+//
+// Recover-by-email: a user who lost their local storage (browser reinstall,
+// OS reset, switched browsers) retypes the email they paid with and gets
+// their licence code back. We only ever compare HMAC(email) against the
+// stored email_hash — the raw address is never logged or persisted, and it
+// travels in the POST body (not the query string) to stay out of access logs.
+//
+// Deliberate trade-off (product decision): knowing a buyer's email is enough
+// to recover their code. A per-IP limit (collapsed to /64 for IPv6) plus a
+// per-email limit bound casual enumeration; a determined attacker rotating
+// across many networks could still probe a known email list — acceptable
+// given the low value of what's returned (a lifetime licence code).
+async function handleRecover(request, env) {
+  if (!env.DB) return json({ found: false, error: "db_not_configured" }, 503, request);
+  if (!env.HMAC_SALT) return json({ found: false, error: "server_misconfigured" }, 500, request);
+
+  // Per-IP limit first — cheap, and the main brute-force guard.
+  const ipRl = await checkAndBumpRateLimit(env, await ipHash(env, request), "recover");
+  if (!ipRl.allowed) {
+    return json({ found: false, error: "rate_limited", retryAfter: ipRl.retryAfter }, 429, request);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ found: false, error: "invalid_request" }, 400, request);
+  }
+
+  const normalized = normalizeEmail(body && body.email);
+  if (!normalized) {
+    return json({ found: false, error: "invalid_email" }, 400, request);
+  }
+  const emailHash = await hmacHex(env.HMAC_SALT, normalized);
+
+  // Per-email limit — stops someone hammering a single address from rotating
+  // IPs, and bounds enumeration of any one inbox.
+  const emailRl = await checkAndBumpRateLimit(env, "recover:" + emailHash, "recover_email");
+  if (!emailRl.allowed) {
+    return json({ found: false, error: "rate_limited", retryAfter: emailRl.retryAfter }, 429, request);
+  }
+
+  try {
+    const row = await env.DB.prepare(
+      "SELECT code FROM licenses WHERE email_hash = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1"
+    ).bind(emailHash).first();
+    if (!row) return json({ found: false }, 200, request);
+    return json({ found: true, code: row.code }, 200, request);
+  } catch (e) {
+    console.error("[worker] /recover failed:", e);
+    return json({ found: false, error: "recover_failed" }, 200, request);
   }
 }
 
@@ -376,7 +479,7 @@ async function handleSuccess(request, env, url) {
       );
       const session = await r.json();
       if (session.payment_status === "paid") {
-        licenseCode = await getOrCreateLicenseCode(env, safeSessionId);
+        licenseCode = await getOrCreateLicenseCode(env, safeSessionId, session.customer_details?.email);
       }
     } catch (e) {
       console.error("[worker] /success code issuance failed:", e);

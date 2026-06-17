@@ -57,6 +57,9 @@ export const api = {
   activateLicense: (key: string) =>
     send<{ ok: boolean; error?: string }>({ type: "ACTIVATE_LICENSE", payload: { key } }),
 
+  recoverLicense: (email: string) =>
+    send<{ ok: boolean; error?: string }>({ type: "RECOVER_LICENSE", payload: { email } }),
+
   exportLicense: () =>
     send<{ ok: boolean; backup?: unknown; error?: string }>({ type: "EXPORT_LICENSE" }),
 

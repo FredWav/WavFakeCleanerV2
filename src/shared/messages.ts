@@ -29,6 +29,7 @@ export type RequestMessage =
   | { type: "COMMUNITY_LOOKUP_FAILED"; payload: { httpStatus: number | null } }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
+  | { type: "RECOVER_LICENSE"; payload: { email: string } }
   | { type: "EXPORT_LICENSE" }
   | { type: "IMPORT_LICENSE"; payload: { backup: unknown } }
   | { type: "KEEPALIVE_PING" };

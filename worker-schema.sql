@@ -1,4 +1,4 @@
--- WFC Community — D1 schema (v4)
+-- WFC Community — D1 schema (v5)
 -- Fresh databases: npx wrangler d1 execute wfc-community --remote --file worker-schema.sql
 -- Existing databases: apply migrations/000N-*.sql in order instead (ALTER
 -- statements are not idempotent — see migrations/README.md).
@@ -8,6 +8,7 @@
 --   v2: rate_limits, telemetry
 --   v3: licenses (short product codes WFC-XXXX-XXXX, generated at payment)
 --   v4: telemetry.value (numeric payload) + category index (observability)
+--   v5: licenses.email_hash (recover-by-email) + index
 --
 -- All target/token identifiers are stored as HMAC-SHA256(env.HMAC_SALT, ...)
 -- — never as raw values nor as plain SHA-256. Even a full DB dump cannot be
@@ -84,11 +85,17 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_category ON telemetry(category);
 -- session_id_hash links it back to the original Stripe checkout session
 -- so re-verification can be done if needed. revoked=1 disables a code
 -- without deleting the row (chargebacks, etc.).
+-- email_hash = HMAC(SALT, lowercased+trimmed customer email) powers
+-- recover-by-email (/recover): a user who lost their local storage retypes
+-- the email they paid with and gets their code back. NULL on legacy rows
+-- until backfilled (scripts/backfill-license-emails.mjs).
 CREATE TABLE IF NOT EXISTS licenses (
   code             TEXT PRIMARY KEY,                 -- WFC-XXXX-XXXX
   session_id_hash  TEXT NOT NULL UNIQUE,             -- HMAC(SALT, cs_live_xxx)
+  email_hash       TEXT,                             -- HMAC(SALT, normalized email), nullable
   created_at       INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   revoked          INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_licenses_session ON licenses(session_id_hash);
+CREATE INDEX IF NOT EXISTS idx_licenses_email ON licenses(email_hash);

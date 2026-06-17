@@ -28,3 +28,6 @@ Thumbs.db
 *.owner-key
 wfc-licence-tokens.txt
 .env.licence
+
+# Backfill artifact (regenerable; HMAC hex only, but noise)
+scripts/backfill-emails.generated.sql

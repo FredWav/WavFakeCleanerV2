@@ -20,8 +20,12 @@ export default function LicencePanel({
   showToast?: (msg: string) => void;
 }) {
   const [key, setKey] = useState("");
+  const [recoverEmail, setRecoverEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recoverLoading, setRecoverLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -34,6 +38,43 @@ export default function LicencePanel({
       .catch(() => {});
   }, []);
 
+  // Pull the backup payload and trigger a file download. Returns false if
+  // there's nothing to back up (no active licence). Shared by the manual
+  // "export" button and the automatic backup after a successful activation.
+  async function downloadBackupFile(): Promise<boolean> {
+    const result = await api.exportLicense();
+    if (!result.ok || !result.backup) return false;
+    const blob = new Blob([JSON.stringify(result.backup, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `wfc-license-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  }
+
+  // After any successful activation/recovery, auto-download a backup so the
+  // user keeps a recoverable copy even if they never click "export" — losing
+  // it was the #1 cause of lost licences on reinstall. Falls back to the plain
+  // success toast if the download couldn't be produced.
+  async function onActivated() {
+    const updated = await api.getLicense();
+    onUpdate(updated);
+    let backedUp = false;
+    try {
+      backedUp = await downloadBackupFile();
+    } catch {
+      // non-fatal — the licence is active regardless
+    }
+    showToast?.(t(backedUp ? "licence_success_backed_up" : "licence_success", lang));
+  }
+
   async function activate() {
     if (!key.trim()) return;
     setLoading(true);
@@ -41,9 +82,7 @@ export default function LicencePanel({
     try {
       const result = await api.activateLicense(key.trim());
       if (result.ok) {
-        const updated = await api.getLicense();
-        onUpdate(updated);
-        showToast?.(t("licence_success", lang));
+        await onActivated();
       } else {
         const errKey = result.error === "network_error" ? "licence_network_error" : "licence_invalid";
         setError(t(errKey, lang));
@@ -55,27 +94,54 @@ export default function LicencePanel({
     }
   }
 
-  // Download the licence as a JSON file the user can keep safe.
+  // Recover-by-email: ask the Worker for the code tied to this purchase email,
+  // then activate it. Saves users who lost their local storage and never kept
+  // their code or a backup file.
+  async function recover() {
+    if (!recoverEmail.trim()) return;
+    setRecoverLoading(true);
+    setRecoverError(null);
+    try {
+      const result = await api.recoverLicense(recoverEmail.trim());
+      if (result.ok) {
+        await onActivated();
+      } else {
+        // not_found / network_error / invalid_email come straight from the
+        // recover step. Any other code (e.g. licence_invalid forwarded from
+        // the post-recover activation, like a since-revoked code) means the
+        // email WAS found — so don't blame the email; show a neutral message.
+        const errKey =
+          result.error === "not_found" ? "licence_recover_not_found" :
+          result.error === "network_error" ? "licence_network_error" :
+          result.error === "invalid_email" ? "licence_recover_invalid_email" :
+          "licence_recover_failed";
+        setRecoverError(t(errKey, lang));
+      }
+    } catch {
+      setRecoverError(t("licence_network_error", lang));
+    } finally {
+      setRecoverLoading(false);
+    }
+  }
+
+  // Copy the active licence code to the clipboard (the user can now see it,
+  // so they can note it down and re-activate anywhere).
+  async function copyCode() {
+    if (!licence.key) return;
+    try {
+      await navigator.clipboard.writeText(licence.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable — the code is select-all so manual copy works
+    }
+  }
+
+  // Manual "export" button — same download, with explicit toasts.
   async function exportLicence() {
     try {
-      const result = await api.exportLicense();
-      if (!result.ok || !result.backup) {
-        showToast?.(t("licence_export_empty", lang));
-        return;
-      }
-      const blob = new Blob([JSON.stringify(result.backup, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const ts = new Date().toISOString().slice(0, 10);
-      a.href = url;
-      a.download = `wfc-license-${ts}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast?.(t("licence_export_ok", lang));
+      const ok = await downloadBackupFile();
+      showToast?.(t(ok ? "licence_export_ok" : "licence_export_empty", lang));
     } catch {
       showToast?.(t("licence_export_failed", lang));
     }
@@ -145,6 +211,26 @@ export default function LicencePanel({
               </span>
             </div>
             <p className="text-xs text-gray-400">{t("licence_pro_limits", lang)}</p>
+
+            {/* Visible licence code — so the user can note it and re-activate
+                anywhere. The portable WFC code is the durable credential. */}
+            {licence.key?.startsWith("WFC-") && (
+              <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
+                <p className="text-[10px] text-gray-400">{t("licence_code_label", lang)}</p>
+                <button
+                  onClick={copyCode}
+                  title={t("licence_code_copy_hint", lang)}
+                  className="w-full font-mono text-sm font-bold tracking-wider text-purple-300
+                    bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 hover:border-purple-500
+                    transition-colors select-all"
+                >
+                  {licence.key}
+                </button>
+                <p className="text-[10px] text-gray-500 text-center">
+                  {copied ? t("licence_code_copied", lang) : t("licence_code_copy_hint", lang)}
+                </p>
+              </div>
+            )}
 
             {/* Backup / restore — saves the user from losing access on browser reinstall */}
             <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-2">
@@ -263,6 +349,32 @@ export default function LicencePanel({
                   style={{ display: "none" }}
                 />
               </div>
+            </div>
+
+            {/* Recover by email — for users who already bought but lost their
+                local storage (reinstall, new browser, OS reset). */}
+            <div className="space-y-1.5 pt-2 border-t border-gray-800/50">
+              <p className="text-[10px] text-gray-400">{t("licence_recover_hint", lang)}</p>
+              <div className="flex gap-1.5">
+                <input
+                  type="email"
+                  value={recoverEmail}
+                  onChange={(e) => setRecoverEmail(e.target.value)}
+                  placeholder={t("licence_recover_placeholder", lang)}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
+                    text-xs text-white focus:border-purple-500 outline-none"
+                  onKeyDown={(e) => e.key === "Enter" && recover()}
+                />
+                <button
+                  onClick={recover}
+                  disabled={recoverLoading || !recoverEmail.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-gray-700 text-white text-xs font-medium
+                    hover:bg-gray-600 transition-colors disabled:opacity-50"
+                >
+                  {recoverLoading ? "..." : t("licence_recover_button", lang)}
+                </button>
+              </div>
+              {recoverError && <p className="text-red-400 text-[10px]">{recoverError}</p>}
             </div>
           </div>
         )}

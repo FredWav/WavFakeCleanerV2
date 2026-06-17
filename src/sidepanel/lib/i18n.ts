@@ -167,6 +167,18 @@ const translations: Record<string, Record<string, string>> = {
     licence_export_failed: "Echec du telechargement.",
     licence_import_ok: "Licence restauree avec succes.",
     licence_import_malformed: "Fichier de sauvegarde invalide.",
+    licence_success_backed_up: "Licence activee ! Une sauvegarde a ete telechargee — garde-la.",
+    // Licence code display (when active)
+    licence_code_label: "Ton code de licence",
+    licence_code_copy_hint: "Clique pour copier — note-le quelque part de sur.",
+    licence_code_copied: "Copie !",
+    // Recover by email
+    licence_recover_hint: "Deja achete mais licence perdue ? Recupere-la avec ton email d'achat.",
+    licence_recover_placeholder: "Ton email d'achat",
+    licence_recover_button: "Recuperer",
+    licence_recover_not_found: "Aucune licence trouvee pour cet email.",
+    licence_recover_invalid_email: "Email invalide.",
+    licence_recover_failed: "Licence trouvee mais activation impossible — reessaye ou contacte le support.",
     // Blur / paywall
     blur_banner: "{0} faux comptes detectes. Debloquez pour tous les voir.",
     blur_cta: "Voir tous les faux",
@@ -357,6 +369,18 @@ const translations: Record<string, Record<string, string>> = {
     licence_export_failed: "Download failed.",
     licence_import_ok: "Licence restored successfully.",
     licence_import_malformed: "Invalid backup file.",
+    licence_success_backed_up: "Licence activated! A backup file was downloaded — keep it.",
+    // Licence code display (when active)
+    licence_code_label: "Your licence code",
+    licence_code_copy_hint: "Click to copy — save it somewhere safe.",
+    licence_code_copied: "Copied!",
+    // Recover by email
+    licence_recover_hint: "Already bought but lost your licence? Recover it with your purchase email.",
+    licence_recover_placeholder: "Your purchase email",
+    licence_recover_button: "Recover",
+    licence_recover_not_found: "No licence found for this email.",
+    licence_recover_invalid_email: "Invalid email.",
+    licence_recover_failed: "Licence found but activation failed — retry or contact support.",
     // Blur / paywall
     blur_banner: "{0} fake accounts detected. Unlock to see them all.",
     blur_cta: "See all fakes",
@@ -547,6 +571,18 @@ const translations: Record<string, Record<string, string>> = {
     licence_export_failed: "Error de descarga.",
     licence_import_ok: "Licencia restaurada correctamente.",
     licence_import_malformed: "Archivo de respaldo inválido.",
+    licence_success_backed_up: "¡Licencia activada! Se descargó una copia de seguridad — guárdala.",
+    // Licence code display (when active)
+    licence_code_label: "Tu código de licencia",
+    licence_code_copy_hint: "Haz clic para copiar — guárdalo en un lugar seguro.",
+    licence_code_copied: "¡Copiado!",
+    // Recover by email
+    licence_recover_hint: "¿Ya compraste pero perdiste tu licencia? Recupérala con tu email de compra.",
+    licence_recover_placeholder: "Tu email de compra",
+    licence_recover_button: "Recuperar",
+    licence_recover_not_found: "No se encontró ninguna licencia para este email.",
+    licence_recover_invalid_email: "Email no válido.",
+    licence_recover_failed: "Licencia encontrada pero no se pudo activar — reintenta o contacta con soporte.",
     // Blur / paywall
     blur_banner: "{0} cuentas falsas detectadas. Desbloquea para verlas todas.",
     blur_cta: "Ver todos los falsos",
