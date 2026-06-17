@@ -59,7 +59,11 @@ export default function ControlPanel({
 }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const isRunning = stats?.isRunning;
+  // Flagged fakes still present (not yet removed) — the count for the
+  // explicit "Supprimer les faux" step after an analysis.
+  const fakesToRemove = stats?.fakes ?? 0;
 
   async function run(action: string) {
     setLoading(action);
@@ -97,35 +101,34 @@ export default function ControlPanel({
         {t("safety_promise", lang)}
       </p>
 
-      <div className="flex gap-2">
+      {/* Primary beginner flow: ONE button that fetches + analyses and NEVER
+          deletes. Removal is an explicit, reviewable second step below. */}
+      <button
+        onClick={() => run("analyze")}
+        disabled={!!loading || !!isRunning}
+        className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
+          ${isRunning
+            ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+            : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
+          }
+          ${loading === "analyze" ? "animate-pulse" : ""}`}
+      >
+        {t("analyze_btn", lang)}
+      </button>
+      <p className="text-[10px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
+
+      {/* Step 2: delete ONLY the flagged fakes the user can see and reviewed. */}
+      {!isRunning && fakesToRemove > 0 && (
         <button
-          onClick={() => run("fetch")}
-          disabled={!!loading || !!isRunning}
-          className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
-            ${isRunning
-              ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-              : "bg-blue-600 text-white hover:bg-blue-500 active:scale-95"
-            }
-            ${loading === "fetch" ? "animate-pulse" : ""}`}
+          onClick={() => run("removeFakes")}
+          disabled={!!loading}
+          className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+            bg-red-600/90 text-white hover:bg-red-500 active:scale-95
+            ${loading === "removeFakes" ? "animate-pulse" : ""}`}
         >
-          {t("fetch", lang)}
+          {t("remove_fakes_btn", lang)} ({fakesToRemove.toLocaleString()})
         </button>
-        <button
-          onClick={handleClean}
-          disabled={!!loading || !!isRunning}
-          className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
-            ${isRunning
-              ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-              : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
-            }
-            ${loading === "clean" || loading === "continuous" ? "animate-pulse" : ""}`}
-        >
-          {t("clean_btn", lang)}
-          {licence.active && (
-            <span className="ml-1 text-[10px] opacity-70">{t("continuous_label", lang)}</span>
-          )}
-        </button>
-      </div>
+      )}
 
       <button
         onClick={() => run("stop")}
@@ -138,6 +141,46 @@ export default function ControlPanel({
       >
         {isRunning ? t("stop", lang) : t("stopped", lang)}
       </button>
+
+      {/* Advanced: original two-step manual controls (power users / paid
+          continuous mode). Hidden by default to keep the beginner flow clean. */}
+      <button
+        onClick={() => setShowAdvanced((v) => !v)}
+        className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        {showAdvanced ? "▾ " : "▸ "}{t("advanced_toggle", lang)}
+      </button>
+      {showAdvanced && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => run("fetch")}
+            disabled={!!loading || !!isRunning}
+            className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
+              ${isRunning
+                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                : "bg-blue-600 text-white hover:bg-blue-500 active:scale-95"
+              }
+              ${loading === "fetch" ? "animate-pulse" : ""}`}
+          >
+            {t("fetch", lang)}
+          </button>
+          <button
+            onClick={handleClean}
+            disabled={!!loading || !!isRunning}
+            className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
+              ${isRunning
+                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
+              }
+              ${loading === "clean" || loading === "continuous" ? "animate-pulse" : ""}`}
+          >
+            {t("clean_btn", lang)}
+            {licence.active && (
+              <span className="ml-1 text-[10px] opacity-70">{t("continuous_label", lang)}</span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Anti-block pause countdown (explains why the bar is frozen) */}
       {isRunning && stats?.pausedUntil ? (

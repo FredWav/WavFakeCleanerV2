@@ -16,6 +16,10 @@ export type RequestMessage =
   | { type: "UPDATE_SETTINGS"; payload: Partial<Settings> }
   | { type: "START_FETCH" }
   | { type: "START_CLEAN" }
+  // Guided beginner flow: analyse (fetch + scan + flag, no removal), then a
+  // separate remove-only pass over the flagged fakes.
+  | { type: "START_ANALYZE" }
+  | { type: "START_REMOVE_FAKES" }
   | { type: "START_CONTINUOUS" }
   | { type: "STOP" }
   | { type: "RESET_SCANNED" }

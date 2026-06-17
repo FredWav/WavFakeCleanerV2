@@ -24,6 +24,8 @@ import {
 import {
   runFetch,
   runCleanCycle,
+  runAnalyzeCycle,
+  runRemoveFlagged,
   runContinuous,
   stopPipeline,
   isRunning,
@@ -176,6 +178,16 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
 
     case "START_CLEAN":
       runCleanCycle(); // fire and forget
+      return { ok: true };
+
+    case "START_ANALYZE":
+      // Beginner flow: fetch (cheap incremental re-fetch when already known),
+      // then analyse + flag fakes WITHOUT removing anything. Fire and forget.
+      (async () => { await runFetch(); await runAnalyzeCycle(); })();
+      return { ok: true };
+
+    case "START_REMOVE_FAKES":
+      runRemoveFlagged(); // fire and forget — deletes only already-flagged fakes
       return { ok: true };
 
     case "START_CONTINUOUS":

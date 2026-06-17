@@ -22,6 +22,7 @@ import { scoreProfile, preScoreFromMetadata } from "./scorer";
 import {
   upsertFollowers,
   getFollower,
+  getFollowers,
   updateFollower,
   getFollowersPending,
   getAllFollowerUsernames,
@@ -383,7 +384,120 @@ export function runCleanCycle(): Promise<void> {
   });
 }
 
-async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
+// ── Analyse-only cycle (scan + flag, NEVER remove) ──
+// Powers the beginner "Analyser mon compte" flow: the same thorough scan as a
+// clean cycle, but it only flags fakes — the user reviews them, then removal
+// happens as an explicit second step (runRemoveFlagged).
+export function runAnalyzeCycle(): Promise<void> {
+  return withPipelineLock(async () => {
+    if (isRunning()) return;
+    abortController = new AbortController();
+    await startKeepAlive();
+    try {
+      await runCleanCycleInternal(abortController.signal, false);
+    } finally {
+      await closeBackgroundTab();
+      await stopKeepAlive();
+      abortController = null;
+    }
+  });
+}
+
+// ── Remove-only pass over already-flagged fakes ──
+// Second step of the guided flow: deletes exactly the accounts already flagged
+// "fake" (and shown to the user in the Faux list). No scanning/scoring here.
+export function runRemoveFlagged(): Promise<void> {
+  return withPipelineLock(async () => {
+    if (isRunning()) return;
+    abortController = new AbortController();
+    await startKeepAlive();
+    try {
+      await runRemoveFlaggedInternal(abortController.signal);
+    } finally {
+      await closeBackgroundTab();
+      await stopKeepAlive();
+      abortController = null;
+    }
+  });
+}
+
+async function runRemoveFlaggedInternal(signal: AbortSignal): Promise<void> {
+  await loadLang();
+  await rateTracker.load();
+
+  const fakes = (await getFollowers({ status: "fake" })).filter((f) => !f.removed);
+  if (fakes.length === 0) {
+    log("INFO", "clean", m("cycle_no_pending"));
+    return;
+  }
+
+  await updateState({
+    stage: "cleaning", total: fakes.length, progress: 0,
+    lastError: null, pausedUntil: null, pauseReason: null,
+  });
+
+  let removed = 0;
+  let consecutiveBlocked = 0;
+  for (const follower of fakes) {
+    if (signal.aborted) break;
+    if (consecutiveBlocked >= 5) {
+      log("WARNING", "clean", m("scan_slowdown"));
+      await pausedSleep(300, "slowdown", signal).catch(() => {});
+      consecutiveBlocked = 0;
+      if (signal.aborted) break;
+    }
+    try {
+      const tabId = await getOrCreateBackgroundTab();
+      const profileUrl = `https://www.threads.com/@${encodeURIComponent(follower.username)}`;
+      log("INFO", "clean", m("cycle_visit", follower.username));
+
+      await chrome.tabs.update(tabId, { url: profileUrl });
+      await waitForTabLoad(tabId, signal);
+      await sleep(6 + Math.random() * 8, signal);
+      await ensureContentScript(tabId);
+
+      const pageCheck = await chrome.tabs.sendMessage(tabId, { type: "CHECK_PAGE" }) as
+        { ok: boolean; errorPage: boolean } | null;
+      if (pageCheck?.errorPage && !pageCheck.ok) {
+        log("WARNING", "clean", m("threads_error_page_skip", follower.username));
+        continue;
+      }
+
+      const removeResult = await chrome.tabs.sendMessage(tabId, {
+        type: "REMOVE_FOLLOWER",
+        payload: { username: follower.username },
+      }) as { success: boolean; action: string; error?: string; blocked?: boolean };
+
+      if (removeResult.success) {
+        await markRemoved(follower.username);
+        removed++;
+        log("INFO", "clean", m("cycle_fake_removed", follower.username, follower.score ?? 0));
+        await addActionLog({
+          actionType: "remove", target: follower.username,
+          status: "ok", errorDetail: null, durationMs: null, createdAt: Date.now(),
+        });
+      } else {
+        log("WARNING", "clean", m("cycle_fake_fail", follower.username, follower.score ?? 0, removeResult.error ?? ""));
+        if (removeResult.blocked) consecutiveBlocked++;
+      }
+
+      await updateState({ stage: "cleaning", progress: removed, total: fakes.length });
+      await broadcastStats();
+      await sleep(pacer.nextPause(), signal);
+    } catch (e) {
+      log("ERROR", "clean", m("scan_error", follower.username, e instanceof Error ? e.message : String(e)));
+      await sleep(2, signal).catch(() => {});
+    }
+  }
+
+  await updateState({ stage: "idle" });
+  await broadcastStats();
+  log("INFO", "clean", m("cycle_done", 0, removed, 0));
+}
+
+// When removeFlagged is false the cycle scans + flags fakes but never deletes
+// (the "Analyser mon compte" flow) — the user removes them in an explicit step.
+async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true): Promise<number> {
   await loadLang();
   await rateTracker.load();
 
@@ -464,7 +578,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
 
     // Cas A : déjà scanné et marqué fake (crash/429 avant suppression) → supprimer directement
     if (follower.isFake && follower.score !== null && follower.scanned) {
-      needsRemoveOnly.push(follower);
+      if (removeFlagged) needsRemoveOnly.push(follower);
       continue;
     }
 
@@ -483,7 +597,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
       // Critique pour les users free (1 cycle/jour) : on doit ABSOLUMENT supprimer
       // dans le même cycle, sinon ces fakes restent flaggés "fake" en DB et ne sont
       // jamais ré-attrapés (getFollowersPending ne renvoie que les "pending").
-      needsRemoveOnly.push({ ...follower, ...updates });
+      if (removeFlagged) needsRemoveOnly.push({ ...follower, ...updates });
       cycleSightings.add(follower.username);
       fakesFound++;
     } else if (follower.isVerified && follower.followersCount !== null && follower.followersCount >= 500) {
@@ -509,7 +623,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
 
   // ── Phase 2 : supprimer les profils déjà scorés fake (retry après crash/429) ──
   let removed = 0;
-  if (needsRemoveOnly.length > 0) {
+  if (removeFlagged && needsRemoveOnly.length > 0) {
     log("INFO", "clean", m("cycle_remove_only", needsRemoveOnly.length));
 
     // Need a tab for removals
@@ -734,6 +848,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
           await markFake(follower, scored, profileData);
           fakesFound++;
 
+          if (removeFlagged) {
           // Simule la réflexion humaine avant de cliquer supprimer (3-8s)
           await sleep(3 + Math.random() * 5, signal);
 
@@ -803,6 +918,7 @@ async function runCleanCycleInternal(signal: AbortSignal): Promise<number> {
               errorDetail: removeResult.error || null, durationMs: null, createdAt: Date.now(),
             });
           }
+          } // end if (removeFlagged)
           scanned++;
         } else if (scored.toReview) {
           // TO REVIEW

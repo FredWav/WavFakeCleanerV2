@@ -29,6 +29,10 @@ export const api = {
   clean: () =>
     send<{ ok: boolean }>({ type: "START_CLEAN" }),
 
+  analyze: () => send<{ ok: boolean }>({ type: "START_ANALYZE" }),
+
+  removeFakes: () => send<{ ok: boolean }>({ type: "START_REMOVE_FAKES" }),
+
   continuous: () => send<{ ok: boolean }>({ type: "START_CONTINUOUS" }),
 
   stop: () => send<{ ok: boolean }>({ type: "STOP" }),
