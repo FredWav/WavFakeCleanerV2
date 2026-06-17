@@ -23,6 +23,7 @@ export default function App() {
   const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
   const [toast, setToast] = useState<string | null>(null);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
+  const [prescan, setPrescan] = useState<{ likelyFakes: number; total: number } | null>(null);
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
@@ -52,6 +53,38 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  // Free "chiffre choc": once followers are fetched (and we're idle), count the
+  // obvious fakes from metadata alone — no scan, no removal, no daily cost — so
+  // the user sees the scale of the problem in seconds, not after a long clean.
+  useEffect(() => {
+    if (!stats || stats.isRunning || (stats.totalFollowers ?? 0) <= 0) return;
+    let cancelled = false;
+    api.getPrescanEstimate()
+      .then((r) => { if (!cancelled) setPrescan(r); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [stats?.isRunning, stats?.totalFollowers]);
+
+  // Live-react to a licence becoming active in storage — e.g. the /success page
+  // content script activates after payment while this panel is open. Without
+  // this, the panel keeps showing the locked state and the buyer thinks it
+  // failed. Mirrors both storage areas (local + sync backup).
+  useEffect(() => {
+    function onChanged(
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string
+    ) {
+      if ((area === "local" || area === "sync") && changes.license) {
+        api.getLicense().then((lic) => {
+          setLicence(lic);
+          if (!licence.active && lic.active) setToast(t("licence_success", lang));
+        }).catch(() => {});
+      }
+    }
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, [licence.active, lang]);
 
   // Initial load: settings (for onboarding gate) and licence state.
   // Split into separate effects so each has a single, obvious responsibility
@@ -196,6 +229,15 @@ export default function App() {
         onShowLicence={() => setShowLicence(true)}
         showToast={setToast}
       />
+
+      {/* Post-fetch teaser: how many fakes we already spotted from metadata */}
+      {prescan && prescan.likelyFakes > 0 && !stats?.isRunning && (
+        <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 leading-snug">
+          {t("prescan_banner", lang)
+            .replace("{0}", prescan.likelyFakes.toLocaleString())
+            .replace("{1}", prescan.total.toLocaleString())}
+        </div>
+      )}
 
       {/* Controls */}
       <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} />

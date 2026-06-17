@@ -27,6 +27,9 @@ export type RequestMessage =
   // Sent by the sidepanel when its community-score lookup fails, so the
   // failure is counted/surfaced instead of dying in a silent catch.
   | { type: "COMMUNITY_LOOKUP_FAILED"; payload: { httpStatus: number | null } }
+  // Read-only: count obvious fakes from already-fetched metadata (no profile
+  // visits, no removal, no daily-limit cost) — powers the post-fetch teaser.
+  | { type: "GET_PRESCAN_ESTIMATE" }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
   | { type: "RECOVER_LICENSE"; payload: { email: string } }

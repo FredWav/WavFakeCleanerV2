@@ -219,6 +219,7 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_intro_2: "WFC les détecte un par un, et c'est toi qui décides.",
     onboarding_intro_3: "Tes vrais abonnés ne sont jamais touchés.",
     community_total_banner: "La communauté WFC a déjà nettoyé {0} faux comptes.",
+    prescan_banner: "On a déjà repéré au moins {0} faux parmi tes {1} abonnés. Lance « Nettoyer les fakes » pour tous les voir et les supprimer.",
     // Support
     support_help: "Besoin d'aide ?",
   },
@@ -438,6 +439,7 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_intro_2: "WFC detects them one by one, and you decide.",
     onboarding_intro_3: "Your real followers are never touched.",
     community_total_banner: "The WFC community has already cleaned {0} fake accounts.",
+    prescan_banner: "We've already spotted at least {0} fakes among your {1} followers. Run “Clean fakes” to see and remove them all.",
     // Support
     support_help: "Need help?",
   },
@@ -657,6 +659,7 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_intro_2: "WFC los detecta uno por uno, y tú decides.",
     onboarding_intro_3: "Tus seguidores reales nunca se tocan.",
     community_total_banner: "La comunidad WFC ya ha limpiado {0} cuentas falsas.",
+    prescan_banner: "Ya hemos detectado al menos {0} falsos entre tus {1} seguidores. Pulsa «Limpiar falsos» para verlos y eliminarlos todos.",
     // Support
     support_help: "¿Necesitas ayuda?",
   },

@@ -31,6 +31,7 @@ import {
   persistFollowerPage,
 } from "./pipeline";
 import { restoreSessionState } from "./pipeline/tab-manager";
+import { preScoreFromMetadata } from "./scorer";
 import {
   submitVote,
   reportSightings,
@@ -128,6 +129,35 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
         ...f,
         profile_url: `https://www.threads.net/@${f.username}`,
       }));
+    }
+
+    case "GET_PRESCAN_ESTIMATE": {
+      // Count fakes we can already be confident about WITHOUT visiting any
+      // profile: obvious metadata fakes (preScoreFromMetadata returns a score)
+      // plus anything a full scan already flagged. Excludes already-removed
+      // accounts. Pure read — never mutates, never touches the daily limit.
+      const all = await getFollowers();
+      let likelyFakes = 0;
+      for (const f of all) {
+        if (f.removed) continue;
+        if (f.isFake === true) {
+          likelyFakes++;
+          continue;
+        }
+        const hasBio = (f.bio || "").trim().length > 0;
+        const { score } = preScoreFromMetadata(
+          f.username,
+          f.followersCount,
+          f.isPrivate,
+          f.fullName || null,
+          f.hasProfilePic,
+          hasBio,
+          f.isVerified,
+          f.followingCount
+        );
+        if (score !== null) likelyFakes++;
+      }
+      return { likelyFakes, total: all.length };
     }
 
     case "GET_SETTINGS":

@@ -52,6 +52,9 @@ export const api = {
   replayCommunityQueue: () =>
     send<{ replayed: number; dropped: number; remaining: number }>({ type: "COMMUNITY_REPLAY_NOW" }),
 
+  getPrescanEstimate: () =>
+    send<{ likelyFakes: number; total: number }>({ type: "GET_PRESCAN_ESTIMATE" }),
+
   getLicense: () => send<LicenseInfo>({ type: "GET_LICENSE" }),
 
   activateLicense: (key: string) =>
