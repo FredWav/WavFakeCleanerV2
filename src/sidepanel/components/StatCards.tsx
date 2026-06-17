@@ -73,7 +73,15 @@ function HealthGauge({ score, coverage, lang }: { score: number | null; coverage
   );
 }
 
-export default function StatCards({ stats, lang }: { stats: Stats | null; lang: string }) {
+export default function StatCards({
+  stats,
+  lang,
+  communityTotal,
+}: {
+  stats: Stats | null;
+  lang: string;
+  communityTotal?: number | null;
+}) {
   // First paint before the first GET_STATS answer: keep the layout stable
   // with skeletons instead of a blank gap.
   if (!stats) {
@@ -104,9 +112,26 @@ export default function StatCards({ stats, lang }: { stats: Stats | null; lang: 
   const healthScore = evaluated > 0 ? Math.min(100, Math.round((clean / evaluated) * 100)) : null;
   const coverage = total > 0 ? Math.min(100, Math.round((evaluated / total) * 100)) : 0;
 
+  // Extrapolate the share of fakes from the scanned sample to the whole account,
+  // so a partial scan already hints at the full scale of the problem. Only shown
+  // when we have a real sample, some fakes, and the scan isn't already complete.
+  const fakesCount = stats.fakes ?? 0;
+  const estimatedFakes =
+    evaluated > 0 && fakesCount > 0 && total > evaluated
+      ? Math.round((fakesCount / evaluated) * total)
+      : null;
+
   return (
     <div className="space-y-2">
       <HealthGauge score={healthScore} coverage={coverage} lang={lang} />
+
+      {estimatedFakes !== null && (
+        <p className="text-[10px] text-red-300/90 text-center bg-red-500/5 rounded-lg px-2 py-1 leading-snug">
+          {t("fakes_estimate", lang)
+            .replace("{0}", estimatedFakes.toLocaleString())
+            .replace("{1}", total.toLocaleString())}
+        </p>
+      )}
 
       <div className="grid grid-cols-3 gap-2">
         {cards.map(({ key, color, field }) => (
@@ -119,6 +144,12 @@ export default function StatCards({ stats, lang }: { stats: Stats | null; lang: 
         ))}
 
       </div>
+
+      {typeof communityTotal === "number" && communityTotal > 0 && (
+        <p className="text-[10px] text-blue-400/90 text-center leading-snug">
+          {t("community_total_banner", lang).replace("{0}", communityTotal.toLocaleString())}
+        </p>
+      )}
     </div>
   );
 }

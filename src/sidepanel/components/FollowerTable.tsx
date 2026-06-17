@@ -438,7 +438,9 @@ export default function FollowerTable({
                     <tr key="paywall">
                       <td colSpan={3} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-gray-900">
                         <p className="text-xs text-gray-300 mb-2">
-                          {t("blur_banner", lang).replace("{0}", String(followers.length))}
+                          {t("blur_banner_count", lang)
+                            .replace("{0}", String(followers.length))
+                            .replace("{1}", String(Math.max(0, followers.length - 5)))}
                         </p>
                         <button
                           onClick={() => onShowLicence?.()}

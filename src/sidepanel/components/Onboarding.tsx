@@ -28,6 +28,14 @@ export default function Onboarding({
           {t("onboarding_title", lang)}
         </h2>
 
+        {/* Explain WHAT the product does and WHY fakes matter, before the
+            practical steps — otherwise a beginner has no reason to care. */}
+        <div className="space-y-1.5 text-[11px] text-gray-300 leading-snug">
+          <p>{t("onboarding_intro_1", lang)}</p>
+          <p>{t("onboarding_intro_2", lang)}</p>
+          <p className="text-green-300">{t("onboarding_intro_3", lang)}</p>
+        </div>
+
         <div className="space-y-3">
           {steps.map(({ num, text, action }) => (
             <div

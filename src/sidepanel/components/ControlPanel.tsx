@@ -15,7 +15,7 @@ function formatMMSS(ms: number): string {
  * 429, error-page cooldown, mandatory session break, between-cycle pause).
  * Without it the progress bar just looks frozen for minutes/hours.
  */
-function PauseBanner({ until, reason, lang }: { until: number; reason: string | null; lang: string }) {
+function PauseBanner({ until, reason, lang, removed }: { until: number; reason: string | null; lang: string; removed: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -34,6 +34,14 @@ function PauseBanner({ until, reason, lang }: { until: number; reason: string | 
           ? t("pause_resume_in", lang).replace("{0}", formatMMSS(remaining))
           : t("running", lang)}
       </div>
+      {/* Reframe a long pause as deliberate protection, not a freeze, and show
+          the work already done so the wait feels earned. */}
+      <div className="mt-1 font-normal opacity-80">{t("pause_reassure", lang)}</div>
+      {removed > 0 && (
+        <div className="font-normal opacity-80">
+          {t("pause_progress_so_far", lang).replace("{0}", removed.toLocaleString())}
+        </div>
+      )}
     </div>
   );
 }
@@ -83,6 +91,12 @@ export default function ControlPanel({
 
   return (
     <div className="space-y-2">
+      {/* Permanent reassurance: real followers are never touched. Eases the n.1
+          fear that blocks both usage and conversion. */}
+      <p className="text-[10px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+        {t("safety_promise", lang)}
+      </p>
+
       <div className="flex gap-2">
         <button
           onClick={() => run("fetch")}
@@ -127,8 +141,19 @@ export default function ControlPanel({
 
       {/* Anti-block pause countdown (explains why the bar is frozen) */}
       {isRunning && stats?.pausedUntil ? (
-        <PauseBanner until={stats.pausedUntil} reason={stats.pauseReason ?? null} lang={lang} />
+        <PauseBanner
+          until={stats.pausedUntil}
+          reason={stats.pauseReason ?? null}
+          lang={lang}
+          removed={stats.removed ?? 0}
+        />
       ) : null}
+
+      {/* While running: tell the user they're free to leave — the scan continues
+          in a background tab. Avoids people staring at the bar for 20 minutes. */}
+      {isRunning && (
+        <p className="text-[10px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
+      )}
 
       {/* Progress bar */}
       {isRunning && stats && stats.totalFollowers > 0 && (
@@ -160,6 +185,11 @@ export default function ControlPanel({
 
       {/* Persistent honesty note: fetching is scroll-based and caps ~5000/pass. */}
       <p className="text-[10px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
+
+      {/* Make the free-tier limits visible up front, not as a wall surprise. */}
+      {!licence.active && (
+        <p className="text-[10px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import LicencePanel from "./components/LicencePanel";
 import Toast from "./components/Toast";
 import Onboarding from "./components/Onboarding";
+import { COMMUNITY_STATS_URL } from "@shared/constants";
 import type { LicenseInfo } from "@shared/types";
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
   const [toast, setToast] = useState<string | null>(null);
+  const [communityTotal, setCommunityTotal] = useState<number | null>(null);
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
@@ -37,6 +39,19 @@ export default function App() {
     setShowTelemetryNotice(false);
     chrome.storage.local.remove("wfc_telemetry_notice_pending").catch(() => {});
   }
+
+  // Community-wide fake count, fetched once and shared with the stats banner and
+  // the licence modal (social proof). Fails silently — it's purely decorative.
+  useEffect(() => {
+    fetch(COMMUNITY_STATS_URL)
+      .then((r) => r.json())
+      .then((d: { totalFakesDetected?: number }) => {
+        if (typeof d.totalFakesDetected === "number" && d.totalFakesDetected > 0) {
+          setCommunityTotal(d.totalFakesDetected);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Initial load: settings (for onboarding gate) and licence state.
   // Split into separate effects so each has a single, obvious responsibility
@@ -172,7 +187,7 @@ export default function App() {
       )}
 
       {/* Stats */}
-      <StatCards stats={stats} lang={lang} />
+      <StatCards stats={stats} lang={lang} communityTotal={communityTotal} />
 
       {/* Community status (licensed users) */}
       <CommunityCard
@@ -214,6 +229,7 @@ export default function App() {
           onUpdate={onLicenceUpdate}
           onClose={() => setShowLicence(false)}
           showToast={setToast}
+          communityTotal={communityTotal}
         />
       )}
 

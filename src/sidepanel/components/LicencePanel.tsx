@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import { PAYMENT_LINK, COMMUNITY_STATS_URL } from "@shared/constants";
+import { PAYMENT_LINK } from "@shared/constants";
 import type { LicenseInfo } from "@shared/types";
 import { IconCheck, IconX } from "./Icons";
 import Modal from "./ui/Modal";
@@ -12,12 +12,14 @@ export default function LicencePanel({
   onUpdate,
   onClose,
   showToast,
+  communityTotal,
 }: {
   lang: string;
   licence: LicenseInfo;
   onUpdate: (l: LicenseInfo) => void;
   onClose: () => void;
   showToast?: (msg: string) => void;
+  communityTotal?: number | null;
 }) {
   const [key, setKey] = useState("");
   const [recoverEmail, setRecoverEmail] = useState("");
@@ -26,17 +28,7 @@ export default function LicencePanel({
   const [loading, setLoading] = useState(false);
   const [recoverLoading, setRecoverLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [communityTotal, setCommunityTotal] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    fetch(COMMUNITY_STATS_URL)
-      .then((r) => r.json())
-      .then((d: { totalFakesDetected?: number }) => {
-        if (d.totalFakesDetected) setCommunityTotal(d.totalFakesDetected);
-      })
-      .catch(() => {});
-  }, []);
 
   // Pull the backup payload and trigger a file download. Returns false if
   // there's nothing to back up (no active licence). Shared by the manual
@@ -283,7 +275,7 @@ export default function LicencePanel({
             </div>
 
             {/* Community stat */}
-            {communityTotal !== null && communityTotal > 0 && (
+            {typeof communityTotal === "number" && communityTotal > 0 && (
               <p className="text-[10px] text-blue-400 text-center">
                 {t("licence_community_stats", lang).replace("{0}", communityTotal.toLocaleString())}
               </p>
@@ -306,6 +298,17 @@ export default function LicencePanel({
                 </span>
                 {t("licence_launch_price", lang)}EUR — {t("licence_lifetime", lang)}
               </a>
+              <p className="text-[10px] text-gray-400">{t("licence_guarantee", lang)}</p>
+            </div>
+
+            {/* Trust block — reassures a wary buyer before they pay */}
+            <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
+              {["licence_trust_dev", "licence_trust_refund", "licence_trust_local"].map((k) => (
+                <div key={k} className="flex items-start gap-2 text-[10px] text-gray-300">
+                  <span className="text-green-400 mt-0.5 shrink-0"><IconCheck /></span>
+                  <span className="leading-snug">{t(k, lang)}</span>
+                </div>
+              ))}
             </div>
 
             {/* Activate with key */}
