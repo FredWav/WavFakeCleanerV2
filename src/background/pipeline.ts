@@ -384,21 +384,36 @@ export function runCleanCycle(): Promise<void> {
   });
 }
 
-// ── Analyse-only cycle (scan + flag, NEVER remove) ──
-// Powers the beginner "Analyser mon compte" flow: the same thorough scan as a
-// clean cycle, but it only flags fakes — the user reviews them, then removal
-// happens as an explicit second step (runRemoveFlagged).
-export function runAnalyzeCycle(): Promise<void> {
+// ── Analyse-only flow for the "Analyser mon compte" button ──
+// One lock, one abort signal: fetch the followers, then run the same thorough
+// scan as a clean cycle but FLAG fakes only (never remove). The user reviews
+// them, then removal is an explicit second step (runRemoveFlagged).
+//
+// Logs IMMEDIATELY on entry — before acquiring the lock — so a click can never
+// be silent (the previous fetch()→analyze() chaining could return with no log
+// when the pipeline lock/isRunning guard short-circuited). Also surfaces an
+// "already running" message and never swallows errors.
+export function runAnalyze(): Promise<void> {
+  log("INFO", "clean", m("analyze_start"));
   return withPipelineLock(async () => {
-    if (isRunning()) return;
+    if (isRunning()) {
+      log("WARNING", "clean", m("already_running"));
+      return;
+    }
     abortController = new AbortController();
     await startKeepAlive();
     try {
-      await runCleanCycleInternal(abortController.signal, false);
+      await runFetchInternal(abortController.signal);
+      if (!abortController.signal.aborted) {
+        await runCleanCycleInternal(abortController.signal, false);
+      }
+    } catch (e) {
+      log("ERROR", "clean", m("fetch_error", e instanceof Error ? e.message : String(e)));
     } finally {
       await closeBackgroundTab();
       await stopKeepAlive();
       abortController = null;
+      await broadcastStats();
     }
   });
 }

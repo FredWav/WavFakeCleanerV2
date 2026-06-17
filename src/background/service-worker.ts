@@ -24,7 +24,7 @@ import {
 import {
   runFetch,
   runCleanCycle,
-  runAnalyzeCycle,
+  runAnalyze,
   runRemoveFlagged,
   runContinuous,
   stopPipeline,
@@ -181,9 +181,9 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
 
     case "START_ANALYZE":
-      // Beginner flow: fetch (cheap incremental re-fetch when already known),
-      // then analyse + flag fakes WITHOUT removing anything. Fire and forget.
-      (async () => { await runFetch(); await runAnalyzeCycle(); })();
+      // Beginner flow: fetch then analyse + flag fakes WITHOUT removing.
+      // runAnalyze logs on entry (never silent) and runs under one lock/abort.
+      runAnalyze(); // fire and forget
       return { ok: true };
 
     case "START_REMOVE_FAKES":
