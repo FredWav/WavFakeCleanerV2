@@ -1080,11 +1080,13 @@ async function handleAdminBackfillEmails(request, env) {
   // "report" = read-only (tally amounts, no writes). "apply" = create/keep the
   // real licences AND delete licence rows wrongly created for other payments.
   const mode = body.mode === "apply" ? "apply" : "report";
-  // Which (currency:amount_cents) count as a real licence purchase: 799 = the
-  // 7,99€ launch price, 1499 = the 14,99€ original price (same product). Every
-  // OTHER paid Stripe session is a different payment and must NOT be a licence
-  // — the first backfill wrongly created one for every paid session.
-  const DEFAULT_KEEP = ["eur:799", "eur:1499"];
+  // Which (currency:amount_cents) count as a real licence purchase. This Stripe
+  // account also sells unrelated coaching/other products, so we whitelist ONLY
+  // the WFC licence price: 799 = 7,99€. (The 14,99€ "original" price was never
+  // actually charged — 0 sessions.) Every other paid session is a different
+  // product and must NOT be a licence — the first backfill wrongly made one for
+  // every paid session. Override with keepKeys in the body if needed.
+  const DEFAULT_KEEP = ["eur:799"];
   const keep = new Set(
     Array.isArray(body.keepKeys) && body.keepKeys.length ? body.keepKeys.map(String) : DEFAULT_KEEP
   );
@@ -1354,7 +1356,7 @@ function render(d) {
     '<span id="bfmsg" class="muted"></span>' +
     "</div>" +
     '<pre id="bfamounts" class="muted" style="margin:8px 0 0;white-space:pre-wrap;font-size:.72rem"></pre>' +
-    "<p class='muted' style='margin:8px 0 0'>Analyser = lecture seule (liste les montants pay&eacute;s). Corriger = garde les licences (7,99&euro; et 14,99&euro;), <b>supprime</b> les fausses lignes cr&eacute;&eacute;es pour d'autres paiements, et relie chaque licence &agrave; son email.</p>" +
+    "<p class='muted' style='margin:8px 0 0'>Analyser = lecture seule (liste les montants pay&eacute;s). Corriger = garde uniquement les licences &agrave; 7,99&euro;, <b>supprime</b> les fausses lignes cr&eacute;&eacute;es pour tes autres paiements, et relie chaque licence &agrave; son email.</p>" +
     "</div>";
 
   h += "<h2 class='bad'>R&eacute;voquer une licence</h2>" +
@@ -1428,7 +1430,7 @@ function bfRun(mode, confirmMsg) {
 }
 function backfillReport() { bfRun("report", null); }
 function backfillApply() {
-  bfRun("apply", "Corriger les licences ? Les paiements qui ne sont PAS le produit licence (ni 7,99\\u20ac ni 14,99\\u20ac) verront leur fausse licence supprim\\u00e9e. Action d\\u00e9finitive.");
+  bfRun("apply", "Corriger les licences ? Tout paiement qui n'est PAS \\u00e0 7,99\\u20ac (tes autres produits) verra sa fausse licence supprim\\u00e9e. Action d\\u00e9finitive.");
 }
 if (getTok()) load();
 </script>
