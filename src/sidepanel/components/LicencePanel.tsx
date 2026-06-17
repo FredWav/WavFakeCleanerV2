@@ -298,6 +298,7 @@ export default function LicencePanel({
                 </span>
                 {t("licence_launch_price", lang)}EUR — {t("licence_lifetime", lang)}
               </a>
+              <p className="text-[10px] text-purple-300">{t("licence_price_anchor", lang)}</p>
               <p className="text-[10px] text-gray-400">{t("licence_guarantee", lang)}</p>
             </div>
 

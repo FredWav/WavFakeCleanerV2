@@ -204,6 +204,7 @@ const translations: Record<string, Record<string, string>> = {
     pause_reason_idle: "En veille (compte propre)",
     // Lot 1 — quick wins (conversion / confiance / clarté)
     licence_guarantee: "Satisfait ou remboursé sous 14 jours — écris-nous.",
+    licence_price_anchor: "Moins cher qu'un burger — et c'est à vie.",
     licence_trust_dev: "Créé par Fred Wav, un créateur français — pas une boîte anonyme.",
     licence_trust_refund: "Satisfait ou remboursé 14 jours.",
     licence_trust_local: "Tes abonnés restent sur ton ordi, rien n'est envoyé sur un serveur.",
@@ -422,6 +423,7 @@ const translations: Record<string, Record<string, string>> = {
     pause_reason_idle: "Idle (account clean)",
     // Lot 1 — quick wins (conversion / trust / clarity)
     licence_guarantee: "Satisfied or refunded within 14 days — just email us.",
+    licence_price_anchor: "Cheaper than a burger — and it's for life.",
     licence_trust_dev: "Made by Fred Wav, a French creator — not a faceless company.",
     licence_trust_refund: "Satisfied or refunded, 14 days.",
     licence_trust_local: "Your followers stay on your computer — nothing is sent to a server.",
@@ -640,6 +642,7 @@ const translations: Record<string, Record<string, string>> = {
     pause_reason_idle: "En espera (cuenta limpia)",
     // Lot 1 — quick wins (conversión / confianza / claridad)
     licence_guarantee: "Satisfecho o reembolsado en 14 días — escríbenos.",
+    licence_price_anchor: "Más barato que una hamburguesa — y es de por vida.",
     licence_trust_dev: "Creado por Fred Wav, un creador francés — no una empresa anónima.",
     licence_trust_refund: "Satisfecho o reembolsado, 14 días.",
     licence_trust_local: "Tus seguidores se quedan en tu ordenador — nada se envía a un servidor.",
