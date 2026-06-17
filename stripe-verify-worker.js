@@ -1079,22 +1079,13 @@ async function handleAdminBackfillEmails(request, env) {
   try { body = await request.json(); } catch { /* empty body is fine */ }
   let startingAfter = typeof body.startingAfter === "string" ? body.startingAfter : null;
 
-  const MAX_PAGES = 5; // up to 500 sessions/call → ≤5 Stripe subrequests
-
-  // Licences still missing an email hash, keyed by their session hash. We can
-  // then match each Stripe session by its id-hash without a per-session query.
-  const nullRows = await env.DB.prepare(
-    "SELECT code, session_id_hash FROM licenses WHERE email_hash IS NULL AND revoked = 0"
-  ).all();
-  const bySession = new Map();
-  for (const row of (nullRows.results || [])) bySession.set(row.session_id_hash, row.code);
+  const MAX_PAGES = 5; // bound Stripe subrequests + D1 work per call
 
   let scanned = 0;
   let paid = 0;
-  let matched = 0;
+  let linked = 0;
   let pages = 0;
   let done = false;
-  const updates = [];
 
   while (pages < MAX_PAGES) {
     const params = new URLSearchParams({ limit: "100" });
@@ -1114,32 +1105,26 @@ async function handleAdminBackfillEmails(request, env) {
       paid++;
       const email = normalizeEmail(s.customer_details && s.customer_details.email);
       if (!email) continue;
-      const sessionIdHash = await hmacHex(env.HMAC_SALT, s.id);
-      const code = bySession.get(sessionIdHash);
-      if (!code) continue; // no licence row for this session (or already filled)
-      const emailHash = await hmacHex(env.HMAC_SALT, email);
-      updates.push(
-        env.DB.prepare("UPDATE licenses SET email_hash = ? WHERE code = ? AND email_hash IS NULL").bind(emailHash, code)
-      );
-      bySession.delete(sessionIdHash); // don't queue the same row twice
-      matched++;
+      // Idempotent (keyed on the session hash): creates the WFC code + the
+      // community-vote token for a legacy cs_live customer who never had a
+      // licence row, or backfills email_hash on an existing row. Either way
+      // the customer becomes recoverable by email.
+      try {
+        await getOrCreateLicenseCode(env, s.id, email);
+        linked++;
+      } catch (e) {
+        console.error("[worker] backfill failed for a session:", e);
+      }
     }
     if (data.length > 0) startingAfter = data[data.length - 1].id;
     if (!page.has_more || data.length === 0) { done = true; break; }
-  }
-
-  let updated = 0;
-  for (let i = 0; i < updates.length; i += 50) {
-    const res = await env.DB.batch(updates.slice(i, i + 50));
-    for (const r of res) updated += (r.meta && typeof r.meta.changes === "number") ? r.meta.changes : 0;
   }
 
   return json({
     ok: true,
     scanned,
     paid,
-    matched,
-    updated,
+    linked,
     done,
     nextStartingAfter: done ? null : startingAfter,
   }, 200);
@@ -1370,7 +1355,7 @@ function backfillEmails() {
   var msg = document.getElementById("bfmsg");
   if (!confirm("Lancer le backfill des emails depuis Stripe ? Sans danger, r\\u00e9ex\\u00e9cutable.")) return;
   msg.className = "muted"; msg.textContent = "Backfill en cours\\u2026";
-  var totals = { scanned: 0, paid: 0, matched: 0, updated: 0 };
+  var totals = { scanned: 0, paid: 0, linked: 0 };
   function step(after) {
     fetch("/admin/api/backfill-emails", {
       method: "POST",
@@ -1382,13 +1367,12 @@ function backfillEmails() {
         if (r.s !== 200 || !r.j || !r.j.ok) {
           msg.textContent = "Erreur: " + (r.j && r.j.error ? r.j.error : r.s); msg.className = "bad"; return;
         }
-        totals.scanned += num(r.j.scanned); totals.paid += num(r.j.paid);
-        totals.matched += num(r.j.matched); totals.updated += num(r.j.updated);
+        totals.scanned += num(r.j.scanned); totals.paid += num(r.j.paid); totals.linked += num(r.j.linked);
         if (r.j.done) {
-          msg.textContent = "Termin\\u00e9 : " + totals.scanned + " sessions, " + totals.paid + " pay\\u00e9es, " + totals.matched + " licences li\\u00e9es \\u00e0 un email.";
+          msg.textContent = "Termin\\u00e9 : " + totals.scanned + " sessions Stripe, " + totals.paid + " pay\\u00e9es, " + totals.linked + " clients reli\\u00e9s \\u00e0 leur email.";
           msg.className = "ok";
         } else {
-          msg.textContent = totals.scanned + " sessions analys\\u00e9es\\u2026 (" + totals.matched + " li\\u00e9es)";
+          msg.textContent = totals.scanned + " sessions analys\\u00e9es\\u2026 (" + totals.linked + " reli\\u00e9s)";
           step(r.j.nextStartingAfter);
         }
       })
