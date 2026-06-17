@@ -297,6 +297,7 @@ export default {
       if (url.pathname === "/admin" && request.method === "GET") return handleAdminPage();
       if (url.pathname === "/admin/api/overview" && request.method === "GET") return handleAdminOverview(request, env, url);
       if (url.pathname === "/admin/api/revoke" && request.method === "POST") return handleAdminRevoke(request, env);
+      if (url.pathname === "/admin/api/backfill-emails" && request.method === "POST") return handleAdminBackfillEmails(request, env);
       return json({ error: "not_found" }, 404, request);
     } catch (e) {
       // Log the real error to worker logs (visible only to the operator);
@@ -1061,6 +1062,89 @@ async function handleAdminRevoke(request, env) {
   return json({ ok: true, code, alreadyRevoked: !!row.revoked }, 200);
 }
 
+// Server-side recover-by-email backfill. Walks Stripe checkout sessions and
+// fills licenses.email_hash for legacy rows (issued before recover-by-email),
+// using the Worker's own HMAC_SALT + STRIPE_SECRET_KEY secrets — the operator
+// never needs to know either. Idempotent (only fills NULLs) and safe to re-run.
+//
+// Paginates in bounded chunks per call (MAX_PAGES) so we stay well under the
+// Worker subrequest/CPU limits; the dashboard loops with `nextStartingAfter`
+// until `done`.
+async function handleAdminBackfillEmails(request, env) {
+  if (!(await isAdminAuthorized(request, env))) return json({ error: "unauthorized" }, 403);
+  if (!env.DB) return json({ error: "db_not_configured" }, 503);
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "stripe_not_configured" }, 503);
+
+  let body = {};
+  try { body = await request.json(); } catch { /* empty body is fine */ }
+  let startingAfter = typeof body.startingAfter === "string" ? body.startingAfter : null;
+
+  const MAX_PAGES = 5; // up to 500 sessions/call → ≤5 Stripe subrequests
+
+  // Licences still missing an email hash, keyed by their session hash. We can
+  // then match each Stripe session by its id-hash without a per-session query.
+  const nullRows = await env.DB.prepare(
+    "SELECT code, session_id_hash FROM licenses WHERE email_hash IS NULL AND revoked = 0"
+  ).all();
+  const bySession = new Map();
+  for (const row of (nullRows.results || [])) bySession.set(row.session_id_hash, row.code);
+
+  let scanned = 0;
+  let paid = 0;
+  let matched = 0;
+  let pages = 0;
+  let done = false;
+  const updates = [];
+
+  while (pages < MAX_PAGES) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (startingAfter) params.set("starting_after", startingAfter);
+    const res = await fetch(`https://api.stripe.com/v1/checkout/sessions?${params}`, {
+      headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+    });
+    if (!res.ok) {
+      return json({ error: "stripe_error", status: res.status }, 502);
+    }
+    const page = await res.json();
+    pages++;
+    const data = page.data || [];
+    for (const s of data) {
+      scanned++;
+      if (s.payment_status !== "paid") continue;
+      paid++;
+      const email = normalizeEmail(s.customer_details && s.customer_details.email);
+      if (!email) continue;
+      const sessionIdHash = await hmacHex(env.HMAC_SALT, s.id);
+      const code = bySession.get(sessionIdHash);
+      if (!code) continue; // no licence row for this session (or already filled)
+      const emailHash = await hmacHex(env.HMAC_SALT, email);
+      updates.push(
+        env.DB.prepare("UPDATE licenses SET email_hash = ? WHERE code = ? AND email_hash IS NULL").bind(emailHash, code)
+      );
+      bySession.delete(sessionIdHash); // don't queue the same row twice
+      matched++;
+    }
+    if (data.length > 0) startingAfter = data[data.length - 1].id;
+    if (!page.has_more || data.length === 0) { done = true; break; }
+  }
+
+  let updated = 0;
+  for (let i = 0; i < updates.length; i += 50) {
+    const res = await env.DB.batch(updates.slice(i, i + 50));
+    for (const r of res) updated += (r.meta && typeof r.meta.changes === "number") ? r.meta.changes : 0;
+  }
+
+  return json({
+    ok: true,
+    scanned,
+    paid,
+    matched,
+    updated,
+    done,
+    nextStartingAfter: done ? null : startingAfter,
+  }, 200);
+}
+
 function handleAdminPage() {
   // Static shell: zero data, zero secrets. The inline JS asks for the admin
   // token (sessionStorage), calls /admin/api/overview, and renders tables.
@@ -1248,6 +1332,14 @@ function render(d) {
     ["Pression heure courante", pres || "—"],
   ]);
 
+  h += "<h2>R&eacute;cup&eacute;ration par email <span class='muted'>(backfill)</span></h2>" +
+    '<div class="card"><div class="row">' +
+    '<button onclick="backfillEmails()">Lancer le backfill Stripe</button>' +
+    '<span id="bfmsg" class="muted"></span>' +
+    "</div>" +
+    "<p class='muted' style='margin:8px 0 0'>Lie chaque licence existante &agrave; l'email Stripe du client (hash&eacute;) pour la r&eacute;cup&eacute;ration par email. &Agrave; lancer une fois ; sans danger, r&eacute;ex&eacute;cutable.</p>" +
+    "</div>";
+
   h += "<h2 class='bad'>R&eacute;voquer une licence</h2>" +
     '<div class="card"><div class="row">' +
     '<input id="rvk" placeholder="WFC-XXXX-XXXX" style="width:170px">' +
@@ -1273,6 +1365,36 @@ function revoke() {
       else { msg.textContent = "Erreur: " + (r.j && r.j.error ? r.j.error : r.s); msg.className = "bad"; }
     })
     .catch(function () { msg.textContent = "Erreur r\\u00e9seau"; msg.className = "bad"; });
+}
+function backfillEmails() {
+  var msg = document.getElementById("bfmsg");
+  if (!confirm("Lancer le backfill des emails depuis Stripe ? Sans danger, r\\u00e9ex\\u00e9cutable.")) return;
+  msg.className = "muted"; msg.textContent = "Backfill en cours\\u2026";
+  var totals = { scanned: 0, paid: 0, matched: 0, updated: 0 };
+  function step(after) {
+    fetch("/admin/api/backfill-emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + getTok() },
+      body: JSON.stringify({ startingAfter: after || null }),
+    })
+      .then(function (res) { return res.json().then(function (j) { return { s: res.status, j: j }; }); })
+      .then(function (r) {
+        if (r.s !== 200 || !r.j || !r.j.ok) {
+          msg.textContent = "Erreur: " + (r.j && r.j.error ? r.j.error : r.s); msg.className = "bad"; return;
+        }
+        totals.scanned += num(r.j.scanned); totals.paid += num(r.j.paid);
+        totals.matched += num(r.j.matched); totals.updated += num(r.j.updated);
+        if (r.j.done) {
+          msg.textContent = "Termin\\u00e9 : " + totals.scanned + " sessions, " + totals.paid + " pay\\u00e9es, " + totals.matched + " licences li\\u00e9es \\u00e0 un email.";
+          msg.className = "ok";
+        } else {
+          msg.textContent = totals.scanned + " sessions analys\\u00e9es\\u2026 (" + totals.matched + " li\\u00e9es)";
+          step(r.j.nextStartingAfter);
+        }
+      })
+      .catch(function () { msg.textContent = "Erreur r\\u00e9seau"; msg.className = "bad"; });
+  }
+  step(null);
 }
 if (getTok()) load();
 </script>

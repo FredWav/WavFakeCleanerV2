@@ -51,7 +51,16 @@ npx wrangler d1 execute wfc-community --remote --file migrations/0005-licenses-e
 # 3. Déploiement Worker
 npx wrangler deploy
 
-# 4. Backfill rétroactif des licences existantes (une fois)
+# 4. Backfill rétroactif des licences existantes (une fois) — DEUX options :
+
+#   Option A (recommandée, aucun secret à connaître) : le dashboard admin.
+#   Ouvre https://<worker>/admin, entre ton ADMIN_TOKEN, clique
+#   « Lancer le backfill Stripe ». Le Worker utilise ses propres secrets
+#   (HMAC_SALT + STRIPE_SECRET_KEY) — idempotent, réexécutable.
+#   (Si tu n'as pas d'ADMIN_TOKEN : npx wrangler secret put ADMIN_TOKEN)
+
+#   Option B (script local) : nécessite la valeur de HMAC_SALT (illisible
+#   depuis Cloudflare). À n'utiliser que si tu l'as sauvegardée.
 $env:STRIPE_SECRET_KEY = "sk_live_..."   # même clé que le secret Worker
 $env:HMAC_SALT = "..."                   # MÊME valeur que le secret Worker
 node scripts/backfill-license-emails.mjs
