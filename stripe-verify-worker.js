@@ -1077,15 +1077,28 @@ async function handleAdminBackfillEmails(request, env) {
 
   let body = {};
   try { body = await request.json(); } catch { /* empty body is fine */ }
+  // "report" = read-only (tally amounts, no writes). "apply" = create/keep the
+  // real licences AND delete licence rows wrongly created for other payments.
+  const mode = body.mode === "apply" ? "apply" : "report";
+  // Which (currency:amount_cents) count as a real licence purchase: 799 = the
+  // 7,99€ launch price, 1499 = the 14,99€ original price (same product). Every
+  // OTHER paid Stripe session is a different payment and must NOT be a licence
+  // — the first backfill wrongly created one for every paid session.
+  const DEFAULT_KEEP = ["eur:799", "eur:1499"];
+  const keep = new Set(
+    Array.isArray(body.keepKeys) && body.keepKeys.length ? body.keepKeys.map(String) : DEFAULT_KEEP
+  );
   let startingAfter = typeof body.startingAfter === "string" ? body.startingAfter : null;
 
   const MAX_PAGES = 5; // bound Stripe subrequests + D1 work per call
 
   let scanned = 0;
   let paid = 0;
-  let linked = 0;
+  let linked = 0;   // real licence sessions ensured (row + email hash)
+  let deleted = 0;  // wrong licence rows removed
   let pages = 0;
   let done = false;
+  const amounts = {}; // histogram "currency:amount_cents" -> count of paid sessions
 
   while (pages < MAX_PAGES) {
     const params = new URLSearchParams({ limit: "100" });
@@ -1103,17 +1116,31 @@ async function handleAdminBackfillEmails(request, env) {
       scanned++;
       if (s.payment_status !== "paid") continue;
       paid++;
-      const email = normalizeEmail(s.customer_details && s.customer_details.email);
-      if (!email) continue;
-      // Idempotent (keyed on the session hash): creates the WFC code + the
-      // community-vote token for a legacy cs_live customer who never had a
-      // licence row, or backfills email_hash on an existing row. Either way
-      // the customer becomes recoverable by email.
-      try {
-        await getOrCreateLicenseCode(env, s.id, email);
-        linked++;
-      } catch (e) {
-        console.error("[worker] backfill failed for a session:", e);
+      const key = String(s.currency || "?").toLowerCase() + ":" + (s.amount_total ?? "?");
+      amounts[key] = (amounts[key] || 0) + 1;
+      if (mode !== "apply") continue;
+
+      const sessionIdHash = await hmacHex(env.HMAC_SALT, s.id);
+      if (keep.has(key)) {
+        // Real licence: ensure the row exists and carries the email hash.
+        const email = normalizeEmail(s.customer_details && s.customer_details.email);
+        if (email) {
+          try { await getOrCreateLicenseCode(env, s.id, email); linked++; }
+          catch (e) { console.error("[worker] backfill apply failed:", e); }
+        }
+      } else {
+        // Not a licence purchase → undo any licence row the first backfill made.
+        const row = await env.DB.prepare(
+          "SELECT code FROM licenses WHERE session_id_hash = ?"
+        ).bind(sessionIdHash).first();
+        if (row) {
+          const tokenHash = await hmacHex(env.HMAC_SALT, row.code);
+          await env.DB.batch([
+            env.DB.prepare("DELETE FROM licenses WHERE session_id_hash = ?").bind(sessionIdHash),
+            env.DB.prepare("DELETE FROM tokens WHERE token_hash = ?").bind(tokenHash),
+          ]);
+          deleted++;
+        }
       }
     }
     if (data.length > 0) startingAfter = data[data.length - 1].id;
@@ -1122,9 +1149,12 @@ async function handleAdminBackfillEmails(request, env) {
 
   return json({
     ok: true,
+    mode,
     scanned,
     paid,
     linked,
+    deleted,
+    amounts,
     done,
     nextStartingAfter: done ? null : startingAfter,
   }, 200);
@@ -1317,12 +1347,14 @@ function render(d) {
     ["Pression heure courante", pres || "—"],
   ]);
 
-  h += "<h2>R&eacute;cup&eacute;ration par email <span class='muted'>(backfill)</span></h2>" +
+  h += "<h2>Licences &amp; r&eacute;cup&eacute;ration par email <span class='muted'>(analyse / correction)</span></h2>" +
     '<div class="card"><div class="row">' +
-    '<button onclick="backfillEmails()">Lancer le backfill Stripe</button>' +
+    '<button onclick="backfillReport()">Analyser les paiements</button>' +
+    '<button class="danger" onclick="backfillApply()">Corriger : ne garder que les licences</button>' +
     '<span id="bfmsg" class="muted"></span>' +
     "</div>" +
-    "<p class='muted' style='margin:8px 0 0'>Lie chaque licence existante &agrave; l'email Stripe du client (hash&eacute;) pour la r&eacute;cup&eacute;ration par email. &Agrave; lancer une fois ; sans danger, r&eacute;ex&eacute;cutable.</p>" +
+    '<pre id="bfamounts" class="muted" style="margin:8px 0 0;white-space:pre-wrap;font-size:.72rem"></pre>' +
+    "<p class='muted' style='margin:8px 0 0'>Analyser = lecture seule (liste les montants pay&eacute;s). Corriger = garde les licences (7,99&euro; et 14,99&euro;), <b>supprime</b> les fausses lignes cr&eacute;&eacute;es pour d'autres paiements, et relie chaque licence &agrave; son email.</p>" +
     "</div>";
 
   h += "<h2 class='bad'>R&eacute;voquer une licence</h2>" +
@@ -1351,34 +1383,52 @@ function revoke() {
     })
     .catch(function () { msg.textContent = "Erreur r\\u00e9seau"; msg.className = "bad"; });
 }
-function backfillEmails() {
+function bfRun(mode, confirmMsg) {
   var msg = document.getElementById("bfmsg");
-  if (!confirm("Lancer le backfill des emails depuis Stripe ? Sans danger, r\\u00e9ex\\u00e9cutable.")) return;
-  msg.className = "muted"; msg.textContent = "Backfill en cours\\u2026";
-  var totals = { scanned: 0, paid: 0, linked: 0 };
+  var pre = document.getElementById("bfamounts");
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  msg.className = "muted";
+  msg.textContent = (mode === "apply" ? "Correction" : "Analyse") + " en cours\\u2026";
+  pre.textContent = "";
+  var tot = { scanned: 0, paid: 0, linked: 0, deleted: 0, amounts: {} };
+  function render() {
+    var keys = Object.keys(tot.amounts).sort(function (x, y) { return tot.amounts[y] - tot.amounts[x]; });
+    var lines = [];
+    for (var i = 0; i < keys.length; i++) lines.push("  " + keys[i] + "  \\u00d7 " + tot.amounts[keys[i]]);
+    pre.textContent = "Montants pay\\u00e9s (devise:centimes) \\u00d7 nb :\\n" + lines.join("\\n");
+  }
   function step(after) {
     fetch("/admin/api/backfill-emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + getTok() },
-      body: JSON.stringify({ startingAfter: after || null }),
+      body: JSON.stringify({ mode: mode, startingAfter: after || null }),
     })
       .then(function (res) { return res.json().then(function (j) { return { s: res.status, j: j }; }); })
       .then(function (r) {
         if (r.s !== 200 || !r.j || !r.j.ok) {
           msg.textContent = "Erreur: " + (r.j && r.j.error ? r.j.error : r.s); msg.className = "bad"; return;
         }
-        totals.scanned += num(r.j.scanned); totals.paid += num(r.j.paid); totals.linked += num(r.j.linked);
+        tot.scanned += num(r.j.scanned); tot.paid += num(r.j.paid);
+        tot.linked += num(r.j.linked); tot.deleted += num(r.j.deleted);
+        var a = r.j.amounts || {};
+        for (var k in a) { if (Object.prototype.hasOwnProperty.call(a, k)) tot.amounts[k] = (tot.amounts[k] || 0) + num(a[k]); }
+        render();
         if (r.j.done) {
-          msg.textContent = "Termin\\u00e9 : " + totals.scanned + " sessions Stripe, " + totals.paid + " pay\\u00e9es, " + totals.linked + " clients reli\\u00e9s \\u00e0 leur email.";
+          if (mode === "apply") msg.textContent = "Termin\\u00e9 : " + tot.linked + " licences valides reli\\u00e9es, " + tot.deleted + " fausses supprim\\u00e9es (sur " + tot.paid + " paiements).";
+          else msg.textContent = "Analyse termin\\u00e9e : " + tot.scanned + " sessions, " + tot.paid + " pay\\u00e9es (voir montants ci-dessous).";
           msg.className = "ok";
         } else {
-          msg.textContent = totals.scanned + " sessions analys\\u00e9es\\u2026 (" + totals.linked + " reli\\u00e9s)";
+          msg.textContent = tot.scanned + " sessions\\u2026";
           step(r.j.nextStartingAfter);
         }
       })
       .catch(function () { msg.textContent = "Erreur r\\u00e9seau"; msg.className = "bad"; });
   }
   step(null);
+}
+function backfillReport() { bfRun("report", null); }
+function backfillApply() {
+  bfRun("apply", "Corriger les licences ? Les paiements qui ne sont PAS le produit licence (ni 7,99\\u20ac ni 14,99\\u20ac) verront leur fausse licence supprim\\u00e9e. Action d\\u00e9finitive.");
 }
 if (getTok()) load();
 </script>
