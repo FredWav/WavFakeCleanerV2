@@ -44,21 +44,28 @@ export const SELECTORS = {
     // both common wordings per locale. Strict-ish to limit false positives
     // from user-generated bios containing the word "private".
     privatePatterns: [
-      // EN
+      // EN — Threads now says "This profile is private" (older builds: "account")
       /this account is private/i,
       /this is a private account/i,
       /account is private/i,
-      // FR
+      /this profile is private/i,
+      /profile is private/i,
+      // FR — Threads affiche "Ce profil est privé." (et non plus "compte")
       /ce compte est priv/i,
       /cette page est priv/i,
       /profil priv/i,
+      /profil est priv/i,
       /compte priv[ée]/i,
-      // ES
+      // ES — "Este perfil es privado"
       /esta cuenta es privada/i,
       /cuenta privada/i,
-      // PT
+      /perfil es privado/i,
+      /perfil privado/i,
+      // PT — "Este perfil é privado"
       /esta conta [eé] privada/i,
       /conta privada/i,
+      /perfil [eé] privado/i,
+      /perfil privado/i,
       // DE
       /dieses konto ist privat/i,
       /privates konto/i,
