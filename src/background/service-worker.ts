@@ -134,10 +134,10 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
     }
 
     case "GET_PRESCAN_ESTIMATE": {
-      // Count fakes we can already be confident about WITHOUT visiting any
-      // profile: obvious metadata fakes (preScoreFromMetadata returns a score)
-      // plus anything a full scan already flagged. Excludes already-removed
-      // accounts. Pure read — never mutates, never touches the daily limit.
+      // Compte les faux dont on est déjà sûr SANS visiter aucun profil : faux
+      // évidents par métadonnées (preScoreFromMetadata renvoie un score) plus tout
+      // ce qu'un scan complet a déjà flaggé. Exclut les comptes déjà supprimés.
+      // Lecture pure — ne modifie rien, ne touche jamais la limite quotidienne.
       const all = await getFollowers();
       let likelyFakes = 0;
       for (const f of all) {
@@ -181,13 +181,13 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
 
     case "START_ANALYZE":
-      // Beginner flow: fetch then analyse + flag fakes WITHOUT removing.
-      // runAnalyze logs on entry (never silent) and runs under one lock/abort.
-      runAnalyze(); // fire and forget
+      // Flux débutant : récupère puis analyse + flagge les faux SANS supprimer.
+      // runAnalyze logue à l'entrée (jamais silencieux) et tourne sous un seul verrou/abort.
+      runAnalyze(); // lancé sans attendre
       return { ok: true };
 
     case "START_REMOVE_FAKES":
-      runRemoveFlagged(); // fire and forget — deletes only already-flagged fakes
+      runRemoveFlagged(); // lancé sans attendre — supprime uniquement les faux déjà flaggés
       return { ok: true };
 
     case "START_CONTINUOUS":

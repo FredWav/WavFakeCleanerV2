@@ -112,9 +112,9 @@ export default function StatCards({
   const healthScore = evaluated > 0 ? Math.min(100, Math.round((clean / evaluated) * 100)) : null;
   const coverage = total > 0 ? Math.min(100, Math.round((evaluated / total) * 100)) : 0;
 
-  // Extrapolate the share of fakes from the scanned sample to the whole account,
-  // so a partial scan already hints at the full scale of the problem. Only shown
-  // when we have a real sample, some fakes, and the scan isn't already complete.
+  // Extrapole la proportion de faux de l'échantillon scanné à tout le compte,
+  // pour qu'un scan partiel donne déjà une idée de l'ampleur. Affiché seulement si
+  // on a un vrai échantillon, des faux, et que le scan n'est pas déjà terminé.
   const fakesCount = stats.fakes ?? 0;
   const estimatedFakes =
     evaluated > 0 && fakesCount > 0 && total > evaluated

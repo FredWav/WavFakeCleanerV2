@@ -34,8 +34,8 @@ function PauseBanner({ until, reason, lang, removed }: { until: number; reason: 
           ? t("pause_resume_in", lang).replace("{0}", formatMMSS(remaining))
           : t("running", lang)}
       </div>
-      {/* Reframe a long pause as deliberate protection, not a freeze, and show
-          the work already done so the wait feels earned. */}
+      {/* Présente une longue pause comme une protection voulue, pas un blocage,
+          et montre le travail déjà fait pour que l'attente paraisse méritée. */}
       <div className="mt-1 font-normal opacity-80">{t("pause_reassure", lang)}</div>
       {removed > 0 && (
         <div className="font-normal opacity-80">
@@ -61,8 +61,8 @@ export default function ControlPanel({
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const isRunning = stats?.isRunning;
-  // Flagged fakes still present (not yet removed) — the count for the
-  // explicit "Supprimer les faux" step after an analysis.
+  // Faux flaggés encore présents (pas encore supprimés) — le compteur de
+  // l'étape explicite « Supprimer les faux » après une analyse.
   const fakesToRemove = stats?.fakes ?? 0;
 
   async function run(action: string) {
@@ -95,14 +95,14 @@ export default function ControlPanel({
 
   return (
     <div className="space-y-2">
-      {/* Permanent reassurance: real followers are never touched. Eases the n.1
-          fear that blocks both usage and conversion. */}
+      {/* Réassurance permanente : les vrais abonnés ne sont jamais touchés. Calme
+          la peur n°1 qui bloque l'usage et la conversion. */}
       <p className="text-[10px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
         {t("safety_promise", lang)}
       </p>
 
-      {/* Primary beginner flow: ONE button that fetches + analyses and NEVER
-          deletes. Removal is an explicit, reviewable second step below. */}
+      {/* Flux débutant principal : UN bouton qui récupère + analyse et ne supprime
+          JAMAIS. La suppression est une 2e étape explicite et vérifiable, plus bas. */}
       <button
         onClick={() => run("analyze")}
         disabled={!!loading || !!isRunning}
@@ -117,7 +117,7 @@ export default function ControlPanel({
       </button>
       <p className="text-[10px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
 
-      {/* Step 2: delete ONLY the flagged fakes the user can see and reviewed. */}
+      {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et validés. */}
       {!isRunning && fakesToRemove > 0 && (
         <button
           onClick={() => run("removeFakes")}
@@ -142,8 +142,8 @@ export default function ControlPanel({
         {isRunning ? t("stop", lang) : t("stopped", lang)}
       </button>
 
-      {/* Advanced: original two-step manual controls (power users / paid
-          continuous mode). Hidden by default to keep the beginner flow clean. */}
+      {/* Avancé : contrôles manuels d'origine en 2 temps (utilisateurs avertis /
+          mode continu payant). Masqués par défaut pour garder le flux débutant clair. */}
       <button
         onClick={() => setShowAdvanced((v) => !v)}
         className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
@@ -192,8 +192,8 @@ export default function ControlPanel({
         />
       ) : null}
 
-      {/* While running: tell the user they're free to leave — the scan continues
-          in a background tab. Avoids people staring at the bar for 20 minutes. */}
+      {/* Pendant l'exécution : dire à l'utilisateur qu'il peut partir — le scan
+          continue dans un onglet de fond. Évite de fixer la barre pendant 20 min. */}
       {isRunning && (
         <p className="text-[10px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
       )}
@@ -229,7 +229,7 @@ export default function ControlPanel({
       {/* Persistent honesty note: fetching is scroll-based and caps ~5000/pass. */}
       <p className="text-[10px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
 
-      {/* Make the free-tier limits visible up front, not as a wall surprise. */}
+      {/* Rendre les limites du plan gratuit visibles d'emblée, pas en mur surprise. */}
       {!licence.active && (
         <p className="text-[10px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
       )}

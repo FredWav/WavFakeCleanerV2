@@ -16,8 +16,8 @@ export type RequestMessage =
   | { type: "UPDATE_SETTINGS"; payload: Partial<Settings> }
   | { type: "START_FETCH" }
   | { type: "START_CLEAN" }
-  // Guided beginner flow: analyse (fetch + scan + flag, no removal), then a
-  // separate remove-only pass over the flagged fakes.
+  // Flux débutant guidé : analyse (récup + scan + flag, sans suppression), puis
+  // une passe séparée de suppression seule sur les faux flaggés.
   | { type: "START_ANALYZE" }
   | { type: "START_REMOVE_FAKES" }
   | { type: "START_CONTINUOUS" }
@@ -31,8 +31,9 @@ export type RequestMessage =
   // Sent by the sidepanel when its community-score lookup fails, so the
   // failure is counted/surfaced instead of dying in a silent catch.
   | { type: "COMMUNITY_LOOKUP_FAILED"; payload: { httpStatus: number | null } }
-  // Read-only: count obvious fakes from already-fetched metadata (no profile
-  // visits, no removal, no daily-limit cost) — powers the post-fetch teaser.
+  // Lecture seule : compte les faux évidents à partir des métadonnées déjà
+  // récupérées (sans visite de profil, sans suppression, sans coût quotidien) —
+  // alimente l'accroche post-fetch.
   | { type: "GET_PRESCAN_ESTIMATE" }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }

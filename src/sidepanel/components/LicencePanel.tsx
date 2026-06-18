@@ -302,7 +302,7 @@ export default function LicencePanel({
               <p className="text-[10px] text-gray-400">{t("licence_guarantee", lang)}</p>
             </div>
 
-            {/* Trust block — reassures a wary buyer before they pay */}
+            {/* Bloc confiance — rassure un acheteur méfiant avant de payer */}
             <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
               {["licence_trust_dev", "licence_trust_refund", "licence_trust_local"].map((k) => (
                 <div key={k} className="flex items-start gap-2 text-[10px] text-gray-300">

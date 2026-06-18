@@ -41,8 +41,8 @@ export default function App() {
     chrome.storage.local.remove("wfc_telemetry_notice_pending").catch(() => {});
   }
 
-  // Community-wide fake count, fetched once and shared with the stats banner and
-  // the licence modal (social proof). Fails silently — it's purely decorative.
+  // Total communautaire de faux, récupéré une fois et partagé avec la bannière de
+  // stats et la fenêtre Licence (preuve sociale). Échoue en silence — purement décoratif.
   useEffect(() => {
     fetch(COMMUNITY_STATS_URL)
       .then((r) => r.json())
@@ -54,9 +54,10 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Free "chiffre choc": once followers are fetched (and we're idle), count the
-  // obvious fakes from metadata alone — no scan, no removal, no daily cost — so
-  // the user sees the scale of the problem in seconds, not after a long clean.
+  // « Chiffre choc » gratuit : une fois les abonnés récupérés (et à l'arrêt), on
+  // compte les faux évidents à partir des seules métadonnées — sans scan, sans
+  // suppression, sans coût quotidien — pour que l'utilisateur voie l'ampleur du
+  // problème en quelques secondes, et non après un long nettoyage.
   useEffect(() => {
     if (!stats || stats.isRunning || (stats.totalFollowers ?? 0) <= 0) return;
     let cancelled = false;
@@ -66,10 +67,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [stats?.isRunning, stats?.totalFollowers]);
 
-  // Live-react to a licence becoming active in storage — e.g. the /success page
-  // content script activates after payment while this panel is open. Without
-  // this, the panel keeps showing the locked state and the buyer thinks it
-  // failed. Mirrors both storage areas (local + sync backup).
+  // Réagit en direct à une licence qui devient active dans le stockage — ex. le
+  // content script de la page /success l'active après paiement pendant que ce
+  // panneau est ouvert. Sans ça, le panneau reste verrouillé et l'acheteur croit
+  // que ça a échoué. Surveille les deux zones de stockage (local + sauvegarde sync).
   useEffect(() => {
     function onChanged(
       changes: Record<string, chrome.storage.StorageChange>,
@@ -230,7 +231,7 @@ export default function App() {
         showToast={setToast}
       />
 
-      {/* Post-fetch teaser: how many fakes we already spotted from metadata */}
+      {/* Accroche post-fetch : combien de faux déjà repérés via les métadonnées */}
       {prescan && prescan.likelyFakes > 0 && !stats?.isRunning && (
         <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 leading-snug">
           {t("prescan_banner", lang)

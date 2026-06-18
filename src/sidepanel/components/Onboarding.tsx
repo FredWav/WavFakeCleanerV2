@@ -28,8 +28,8 @@ export default function Onboarding({
           {t("onboarding_title", lang)}
         </h2>
 
-        {/* Explain WHAT the product does and WHY fakes matter, before the
-            practical steps — otherwise a beginner has no reason to care. */}
+        {/* Explique CE QUE fait le produit et POURQUOI les faux comptent, avant les
+            étapes pratiques — sinon un débutant n'a aucune raison de s'y intéresser. */}
         <div className="space-y-1.5 text-[11px] text-gray-300 leading-snug">
           <p>{t("onboarding_intro_1", lang)}</p>
           <p>{t("onboarding_intro_2", lang)}</p>

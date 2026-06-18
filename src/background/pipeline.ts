@@ -392,15 +392,16 @@ export function runCleanCycle(): Promise<void> {
   });
 }
 
-// ── Analyse-only flow for the "Analyser mon compte" button ──
-// One lock, one abort signal: fetch the followers, then run the same thorough
-// scan as a clean cycle but FLAG fakes only (never remove). The user reviews
-// them, then removal is an explicit second step (runRemoveFlagged).
+// ── Flux « analyse seule » pour le bouton « Analyser mon compte » ──
+// Un seul verrou, un seul signal d'annulation : on récupère les abonnés, puis on
+// fait le même scan complet qu'un cycle de nettoyage mais on FLAGGE seulement les
+// faux (jamais de suppression). L'utilisateur les relit, puis la suppression est
+// une 2e étape explicite (runRemoveFlagged).
 //
-// Logs IMMEDIATELY on entry — before acquiring the lock — so a click can never
-// be silent (the previous fetch()→analyze() chaining could return with no log
-// when the pipeline lock/isRunning guard short-circuited). Also surfaces an
-// "already running" message and never swallows errors.
+// Logue IMMÉDIATEMENT à l'entrée — avant de prendre le verrou — pour qu'un clic ne
+// soit jamais silencieux (l'ancien enchaînement fetch()→analyze() pouvait sortir
+// sans rien logguer quand le verrou/isRunning court-circuitait). Affiche aussi
+// « déjà en cours » et n'avale jamais les erreurs.
 export function runAnalyze(): Promise<void> {
   log("INFO", "clean", m("analyze_start"));
   return withPipelineLock(async () => {
@@ -426,9 +427,9 @@ export function runAnalyze(): Promise<void> {
   });
 }
 
-// ── Remove-only pass over already-flagged fakes ──
-// Second step of the guided flow: deletes exactly the accounts already flagged
-// "fake" (and shown to the user in the Faux list). No scanning/scoring here.
+// ── Passe « suppression seule » sur les faux déjà flaggés ──
+// 2e étape du flux guidé : supprime exactement les comptes déjà marqués « faux »
+// (et montrés à l'utilisateur dans la liste Faux). Aucun scan/score ici.
 export function runRemoveFlagged(): Promise<void> {
   return withPipelineLock(async () => {
     if (isRunning()) return;
@@ -518,8 +519,9 @@ async function runRemoveFlaggedInternal(signal: AbortSignal): Promise<void> {
   log("INFO", "clean", m("cycle_done", 0, removed, 0));
 }
 
-// When removeFlagged is false the cycle scans + flags fakes but never deletes
-// (the "Analyser mon compte" flow) — the user removes them in an explicit step.
+// Quand removeFlagged vaut false, le cycle scanne et FLAGGE les faux mais ne
+// supprime jamais (flux « Analyser mon compte ») — l'utilisateur les supprime
+// ensuite dans une étape explicite.
 async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true): Promise<number> {
   await loadLang();
   await rateTracker.load();
@@ -941,7 +943,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
               errorDetail: removeResult.error || null, durationMs: null, createdAt: Date.now(),
             });
           }
-          } // end if (removeFlagged)
+          } // fin if (removeFlagged)
           scanned++;
         } else if (scored.toReview) {
           // TO REVIEW
