@@ -854,11 +854,6 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
         cycleSightings.add(follower.username);
       } else {
         // 4. Score the profile (passer followingCount + cross-user sightings)
-        // L'API is_private (liste d'abonnés) fait foi : le scan DOM rate parfois
-        // le span "Ce profil est privé." (hydratation partielle en onglet de
-        // fond) et renvoie isPrivate=false. Ne jamais laisser un scan raté
-        // repasser un compte connu-privé en public au moment du score.
-        profileData.isPrivate = profileData.isPrivate || follower.isPrivate;
         const scored = scoreProfile(profileData, settings.scoreThreshold, !!settings.privateAlwaysReview, follower.followingCount, entry.seenByCount);
         const score = scored.score;
 
