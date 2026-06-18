@@ -333,7 +333,15 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
     // via FOLLOWERS_PAGE messages while the content script was running, but we
     // re-upsert here as a safety net (idempotent) in case the final batch
     // arrived in this response and not via fire-and-forget.
-    const newCount = await persistFollowerPage(successResult.collected, username);
+    await persistFollowerPage(successResult.collected, username);
+
+    // "Nouveaux" = pseudos collectés absents de l'instantané d'AVANT le fetch
+    // (knownUsernames). On NE se fie PAS au retour de persistFollowerPage : les
+    // pages ayant déjà été insérées en incrémental via FOLLOWERS_PAGE, ce retour
+    // vaut 0 même pour un fetch entièrement nouveau (bug du double-persist).
+    const newCount = Object.keys(successResult.collected).filter(
+      (u) => !knownUsernames.has(u)
+    ).length;
 
     log("INFO", "fetch", m("fetch_done", total, newCount));
 
@@ -846,6 +854,11 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
         cycleSightings.add(follower.username);
       } else {
         // 4. Score the profile (passer followingCount + cross-user sightings)
+        // L'API is_private (liste d'abonnés) fait foi : le scan DOM rate parfois
+        // le span "Ce profil est privé." (hydratation partielle en onglet de
+        // fond) et renvoie isPrivate=false. Ne jamais laisser un scan raté
+        // repasser un compte connu-privé en public au moment du score.
+        profileData.isPrivate = profileData.isPrivate || follower.isPrivate;
         const scored = scoreProfile(profileData, settings.scoreThreshold, !!settings.privateAlwaysReview, follower.followingCount, entry.seenByCount);
         const score = scored.score;
 
