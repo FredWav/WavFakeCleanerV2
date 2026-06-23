@@ -91,6 +91,11 @@ function json(body, status = 200, request = null) {
 
 const STRIPE_RE = /^cs_(live|test)_[A-Za-z0-9]{20,80}$/;
 const HEX64_RE = /^[a-f0-9]{64}$/;
+// Nonce communautaire : hex 16–64 caractères (S-M2). Borne le format/longueur
+// avant insertion en base pour éviter une croissance non bornée de `nonces`.
+const NONCE_RE = /^[a-f0-9]{16,64}$/;
+// anonId télémétrie : UUID v4 strict (S-L2) au lieu d'une simple borne 16–100.
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Short licence codes issued to customers after payment.
 // Alphabet excludes 0/O/1/I/L to avoid dictation/typing confusion.
@@ -189,6 +194,9 @@ const RATE_LIMITS = {
   community_stats: 60,
   recover: 10,          // recover-by-email attempts per hour per IP
   recover_email: 5,     // recover-by-email attempts per hour per email
+  admin: 120,           // admin requests per hour per IP (S-M4). Généreux car le
+                        // backfill pagine en plusieurs appels ; la vraie défense
+                        // anti-bruteforce est ADMIN_TOKEN>=32 (token incassable).
 };
 
 // Collapse an IPv6 address to its /64 network prefix before bucketing, so a
@@ -583,6 +591,9 @@ async function handleVote(request, env) {
   if (!clientTargetHash || !communityToken || !verdict || score === undefined || !ts || !nonce) {
     return json({ error: "missing_fields" }, 400, request);
   }
+  if (!NONCE_RE.test(String(nonce))) {
+    return json({ error: "invalid_nonce" }, 400, request);
+  }
   if (!HEX64_RE.test(String(clientTargetHash))) {
     return json({ error: "invalid_target_hash" }, 400, request);
   }
@@ -732,6 +743,9 @@ async function handleReportSightings(request, env) {
   const { communityToken, targetHashes: clientTargetHashes, ts, nonce } = body || {};
   if (!communityToken || !Array.isArray(clientTargetHashes) || !ts || !nonce) {
     return json({ error: "missing_fields" }, 400, request);
+  }
+  if (!NONCE_RE.test(String(nonce))) {
+    return json({ error: "invalid_nonce" }, 400, request);
   }
   if (clientTargetHashes.length === 0 || clientTargetHashes.length > 50) {
     return json({ error: "invalid_batch_size" }, 400, request);
@@ -896,7 +910,7 @@ async function handleTelemetry(request, env) {
 
   const { anonId, v, lang, ts, category, errorCode, reason, stage, value } = body || {};
 
-  if (typeof anonId !== "string" || anonId.length < 16 || anonId.length > 100) {
+  if (typeof anonId !== "string" || !UUID_V4_RE.test(anonId)) {
     return json({ error: "invalid_anon_id" }, 400, request);
   }
   if (typeof errorCode !== "string" || errorCode.length === 0 || errorCode.length > 80) {
@@ -954,6 +968,16 @@ async function handleTelemetry(request, env) {
 
 async function isAdminAuthorized(request, env) {
   if (!env.ADMIN_TOKEN || !env.HMAC_SALT) return false;
+  // S-M4 — défense principale : refuser un ADMIN_TOKEN trop court (≥32 imposés),
+  // pour qu'une mauvaise config serveur ne laisse jamais un secret bruteforçable.
+  if (env.ADMIN_TOKEN.length < 32) {
+    console.error("[worker] ADMIN_TOKEN trop court (<32) — auth admin desactivee");
+    return false;
+  }
+  // S-M4 — défense en profondeur : rate-limit IP sur /admin/api/* (auparavant les
+  // SEULES routes sans limite) AVANT toute comparaison de token.
+  const rl = await checkAndBumpRateLimit(env, await ipHash(env, request), "admin");
+  if (!rl.allowed) return false;
   const auth = request.headers.get("Authorization") || "";
   if (!auth.startsWith("Bearer ")) return false;
   const provided = auth.slice(7).trim();
@@ -1080,6 +1104,12 @@ async function handleAdminBackfillEmails(request, env) {
   // "report" = read-only (tally amounts, no writes). "apply" = create/keep the
   // real licences AND delete licence rows wrongly created for other payments.
   const mode = body.mode === "apply" ? "apply" : "report";
+  // S-L4 : l'apply CRÉE/SUPPRIME des licences réelles (irréversible). On exige
+  // une confirmation explicite côté serveur — plus seulement un confirm() côté
+  // client JS, qui ne protège pas un appel direct à l'endpoint.
+  if (mode === "apply" && body.confirm !== true) {
+    return json({ error: "confirmation_required" }, 400);
+  }
   // Which (currency:amount_cents) count as a real licence purchase. This Stripe
   // account also sells unrelated coaching/other products, so we whitelist ONLY
   // the WFC licence price: 799 = 7,99€. (The 14,99€ "original" price was never
@@ -1403,7 +1433,7 @@ function bfRun(mode, confirmMsg) {
     fetch("/admin/api/backfill-emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + getTok() },
-      body: JSON.stringify({ mode: mode, startingAfter: after || null }),
+      body: JSON.stringify({ mode: mode, startingAfter: after || null, confirm: mode === "apply" }),
     })
       .then(function (res) { return res.json().then(function (j) { return { s: res.status, j: j }; }); })
       .then(function (r) {

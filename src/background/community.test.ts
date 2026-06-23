@@ -134,7 +134,7 @@ describe("submitVote", () => {
     expect(body.verdict).toBe("fake");
     expect(body.score).toBe(88);
     expect(body.ts as number).toBeGreaterThanOrEqual(before);
-    expect(body.nonce).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.nonce).toMatch(/^[0-9a-f]{32}$/);
 
     expect(await getQueue()).toHaveLength(0);
     const status = await getStatus();
@@ -275,7 +275,7 @@ describe("processCommunityQueue", () => {
     expect(body.ts as number).toBeGreaterThanOrEqual(before);
     expect(body.ts).not.toBe(original.body.ts);
     expect(body.nonce).not.toBe(original.body.nonce);
-    expect(body.nonce).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(await getQueue()).toHaveLength(0);
     expect((await getStatus()).sent).toBe(1);
   });

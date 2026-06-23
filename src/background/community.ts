@@ -34,7 +34,10 @@ async function sha256Hex(str: string): Promise<string> {
 }
 
 function randomNonce(): string {
-  const arr = new Uint8Array(8);
+  // 16 octets (128 bits) → 32 hex (S-M3). 8 octets (64 bits) exposaient au
+  // paradoxe des anniversaires : collisions possibles à mesure que la table
+  // `nonces` se remplit, rejetant à tort un vote légitime (nonce_replayed).
+  const arr = new Uint8Array(16);
   crypto.getRandomValues(arr);
   return Array.from(arr)
     .map((b) => b.toString(16).padStart(2, "0"))

@@ -1,6 +1,6 @@
 # Privacy Policy — Wav Fake Cleaner
 
-_Last updated: 2026-06-10_
+_Last updated: 2026-06-24_
 
 ## Who we are
 
@@ -44,6 +44,19 @@ exceptions described below.
    checkout session ID is sent to our Cloudflare Worker, which calls
    the Stripe API to confirm that the payment was completed. We do
    not see, store, or transmit any payment card information.
+
+   At checkout, the email address you used to pay is stored on our
+   Cloudflare D1 database **only as a salted HMAC-SHA256 hash** (never
+   in plaintext, never logged), so that a license can later be matched
+   back to a purchase.
+
+5. **License recovery by email (optional).** If you lose your license
+   code, you can enter the email used at purchase to recover it. That
+   email is sent over HTTPS in the request body (never in the URL) to
+   our Cloudflare Worker, which hashes it (HMAC-SHA256) and compares it
+   to the hash stored at checkout. The submitted email is never stored
+   in plaintext and never logged. Recovery attempts are rate-limited
+   per IP address and per email to deter abuse.
 
 4. **Anonymous technical diagnostics (on by default, opt-out).**
    Since version 3.0, the extension sends minimal technical health
