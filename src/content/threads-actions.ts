@@ -205,23 +205,47 @@ export async function clickConfirm(): Promise<boolean> {
     }
   }
 
-  // Also look for red/destructive buttons as confirmation
-  const allButtons = document.querySelectorAll('button, [role="button"]');
-  for (const btn of allButtons) {
+  // Repli prudent (B-H4) : ne JAMAIS cliquer « le premier bouton rouge court »
+  // au hasard (l'ancien code matchait aussi rgb(255,255,255) blanc et n'importe
+  // quel texte rouge n'importe où sur la page → risque de mauvaise action).
+  // On se limite à la boîte de confirmation (role=dialog / aria-modal) et on
+  // exige un signal FIABLE : libellé de confirmation OU vrai rouge destructif.
+  // Hors d'un dialog identifié, on exige les DEUX. À défaut, on échoue plutôt
+  // que de cliquer une cible non vérifiée.
+  const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') as HTMLElement | null;
+  const scope: ParentNode = modal || document;
+  for (const btn of scope.querySelectorAll('button, [role="button"]')) {
     const el = btn as HTMLElement;
     if (el.offsetHeight <= 0) continue;
+    const text = (el.textContent || "").trim();
+    if (!text || text.length >= 30) continue;
     const style = window.getComputedStyle(el);
-    const color = style.color || "";
-    const bg = style.backgroundColor || "";
-    if ((color.includes("rgb(255") || bg.includes("rgb(255")) && el.textContent && el.textContent.trim().length < 30) {
+    const red = isDestructiveRed(style.color) || isDestructiveRed(style.backgroundColor);
+    const wordy = CONFIRM_WORD_RE.test(text);
+    const accept = modal ? (red || wordy) : (red && wordy);
+    if (accept) {
       await humanClick(el);
-      console.log("[WFC] Clicked red button as confirm:", el.textContent?.trim());
+      console.log("[WFC] Clicked confirm button (fallback):", text);
       return true;
     }
   }
 
   console.log("[WFC] clickConfirm: no confirm button found");
   return false;
+}
+
+// Libellés de confirmation multilingues (sur-ensemble des confirmPatterns) pour
+// le repli prudent de clickConfirm. Volontairement large mais borné.
+const CONFIRM_WORD_RE =
+  /\b(supprimer|retirer|remove|delete|bloquer|block|bloquear|blockieren|confirmer|confirm|confirmar|oui|yes|s[ií]|ok)\b/i;
+
+// Vrai rouge destructif (boutons « Supprimer » de Threads), PAS du blanc
+// rgb(255,255,255) ni un texte rouge décoratif : canal rouge élevé, vert/bleu bas.
+function isDestructiveRed(rgb: string): boolean {
+  const m = (rgb || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return false;
+  const r = +m[1], g = +m[2], b = +m[3];
+  return r >= 180 && g <= 120 && b <= 120;
 }
 
 // ── Full remove flow with blocking detection ──
@@ -289,6 +313,18 @@ export async function performRemoveFollower(
         action,
         error: "threads_blocked",
         blocked: true,
+      };
+    }
+
+    // B-H5 : pas de preuve de retrait (boîte de confirmation encore ouverte) →
+    // on NE marque PAS removed. L'abonné reste en file pour un nouvel essai.
+    if (verifyResult.removed === false) {
+      consecutiveFailures++;
+      return {
+        success: false,
+        action,
+        error: "remove_unconfirmed",
+        blocked: false,
       };
     }
 
@@ -373,14 +409,37 @@ export async function recoverFromErrorPage(): Promise<boolean> {
 
 // ── Verify removal ──
 
-async function verifyRemoval(_username: string): Promise<{ blocked: boolean; reason: string }> {
+// Toast/texte de SUCCÈS explicite de retrait (multilingue) — preuve positive.
+const REMOVED_TOAST_RE =
+  /removed|supprim[ée]|retir[ée]|ne (?:vous|te) suit plus|no longer follows|eliminad[oa]|entfernt|rimoss[oa]/i;
+
+// La boîte de confirmation est-elle ENCORE ouverte (libellé supprimer/confirmer
+// toujours visible) ? Si oui, le clic « Confirmer » n'a rien fait → non confirmé.
+function removalUiStillOpen(): boolean {
+  const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]') as HTMLElement | null;
+  if (!dialog || dialog.offsetHeight <= 0) return false;
+  const txt = (dialog.innerText || "").toLowerCase();
+  return /supprimer|retirer|remove|confirm|bloquer|block/i.test(txt);
+}
+
+/**
+ * Vérifie le résultat du clic « Confirmer ».
+ *
+ * B-H5 : avant, la fonction concluait « succès » par simple ABSENCE de message
+ * de blocage — un clic qui n'avait rien supprimé (UI qui n'a pas réagi, mauvais
+ * bouton) était compté comme succès et l'abonné marqué removed alors qu'il
+ * restait. Désormais : si la boîte de confirmation est toujours ouverte, on
+ * renvoie removed:false (→ retry, jamais de faux succès). On garde removed:true
+ * uniquement quand l'UI de confirmation a bien disparu (ou sur toast de succès).
+ */
+async function verifyRemoval(_username: string): Promise<{ removed?: boolean; blocked: boolean; reason: string }> {
   const bodyText = (document.body?.innerText || "").toLowerCase();
 
   // Transient error page = action likely succeeded
   if (isTransientErrorPage()) {
     console.log("[WFC] Transient error page after removal — action likely succeeded");
     await recoverFromErrorPage();
-    return { blocked: false, reason: "" };
+    return { removed: true, blocked: false, reason: "" };
   }
 
   const blockPatterns = [
@@ -414,9 +473,17 @@ async function verifyRemoval(_username: string): Promise<{ blocked: boolean; rea
     ) {
       return { blocked: true, reason: `toast: ${text.substring(0, 80)}` };
     }
+    if (REMOVED_TOAST_RE.test(text)) {
+      return { removed: true, blocked: false, reason: "removed_toast" };
+    }
   }
 
-  return { blocked: false, reason: "" };
+  // Pas de blocage : exiger une preuve que l'action a bien été prise en compte.
+  if (removalUiStillOpen()) {
+    return { removed: false, blocked: false, reason: "confirm_ui_still_open" };
+  }
+
+  return { removed: true, blocked: false, reason: "" };
 }
 
 // ── Pattern matching click helper ──

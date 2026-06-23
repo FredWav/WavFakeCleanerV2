@@ -124,10 +124,16 @@ export async function closeBackgroundTab(): Promise<void> {
  * Wait until chrome.tabs reports `status === "complete"` for the given tab,
  * with a hard timeout so a stuck navigation never blocks the pipeline forever.
  *
+ * Renvoie `true` si la page a vraiment atteint l'état "complete", `false` si le
+ * timeout a expiré sans confirmation (B-H6). Avant, le timeout résolvait
+ * silencieusement comme un succès : l'appelant scannait alors une page à
+ * demi-chargée (DOM vide → 0 post → faux positif, cf B-C1). Les appelants qui
+ * ignorent la valeur de retour continuent de fonctionner.
+ *
  * If signal is provided, aborting it rejects the promise.
  */
-export async function waitForTabLoad(tabId: number, signal?: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+export async function waitForTabLoad(tabId: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
     let abortHandler: (() => void) | null = null;
 
     function cleanup(): void {
@@ -138,7 +144,7 @@ export async function waitForTabLoad(tabId: number, signal?: AbortSignal): Promi
 
     const timeout = setTimeout(() => {
       cleanup();
-      resolve();
+      resolve(false); // timeout : page PAS confirmée chargée
     }, TAB.loadTimeoutMs);
 
     if (signal) {
@@ -155,7 +161,7 @@ export async function waitForTabLoad(tabId: number, signal?: AbortSignal): Promi
     ) => {
       if (updatedTabId === tabId && changeInfo.status === "complete") {
         cleanup();
-        resolve();
+        resolve(true);
       }
     };
 

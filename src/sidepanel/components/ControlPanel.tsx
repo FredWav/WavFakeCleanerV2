@@ -2,6 +2,11 @@ import { useState, useEffect } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { Stats, LicenseInfo } from "@shared/types";
+import Modal from "./ui/Modal";
+
+// Au-delà de ce nombre de suppressions, on exige une case « j'ai compris »
+// explicite avant d'activer le bouton de confirmation (U-C1).
+const CONFIRM_ACK_THRESHOLD = 20;
 
 function formatMMSS(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -60,6 +65,12 @@ export default function ControlPanel({
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // U-C1 : aucune suppression irréversible sans une étape de confirmation
+  // explicite (nombre exact, échantillon des @, rappel du caractère définitif).
+  const [confirm, setConfirm] = useState<
+    null | { action: "removeFakes" | "clean" | "continuous"; count: number; sample: string[] }
+  >(null);
+  const [ack, setAck] = useState(false);
   const isRunning = stats?.isRunning;
   // Faux flaggés encore présents (pas encore supprimés) — le compteur de
   // l'étape explicite « Supprimer les faux » après une analyse.
@@ -80,13 +91,38 @@ export default function ControlPanel({
     }
   }
 
-  // For licensed users, "Nettoyer" launches continuous mode
-  function handleClean() {
-    if (licence.active) {
-      run("continuous");
-    } else {
-      run("clean");
+  // Ouvre la modale de confirmation pour la suppression explicite des faux
+  // flaggés. Récupère un échantillon des @ concernés pour que l'utilisateur
+  // voie QUI va partir avant de confirmer.
+  async function requestRemoveFakes() {
+    let sample: string[] = [];
+    try {
+      const fakes = await api.getFollowers("fake", 8);
+      sample = fakes.map((f) => f.username);
+    } catch {
+      // échantillon best-effort — la confirmation reste possible sans
     }
+    setAck(false);
+    setConfirm({ action: "removeFakes", count: fakesToRemove, sample });
+  }
+
+  // For licensed users, "Nettoyer" launches continuous mode. Les deux variantes
+  // suppriment → confirmation obligatoire aussi.
+  function handleClean() {
+    setAck(false);
+    setConfirm({
+      action: licence.active ? "continuous" : "clean",
+      count: fakesToRemove,
+      sample: [],
+    });
+  }
+
+  // Confirme l'action destructive en attente et la lance réellement.
+  function confirmProceed() {
+    const action = confirm?.action;
+    setConfirm(null);
+    setAck(false);
+    if (action) run(action);
   }
 
   const progress = stats && stats.totalFollowers > 0
@@ -120,11 +156,10 @@ export default function ControlPanel({
       {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et validés. */}
       {!isRunning && fakesToRemove > 0 && (
         <button
-          onClick={() => run("removeFakes")}
+          onClick={requestRemoveFakes}
           disabled={!!loading}
           className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
-            bg-red-600/90 text-white hover:bg-red-500 active:scale-95
-            ${loading === "removeFakes" ? "animate-pulse" : ""}`}
+            bg-red-600/90 text-white hover:bg-red-500 active:scale-95`}
         >
           {t("remove_fakes_btn", lang)} ({fakesToRemove.toLocaleString()})
         </button>
@@ -233,6 +268,69 @@ export default function ControlPanel({
       {!licence.active && (
         <p className="text-[10px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
       )}
+
+      {/* U-C1 : confirmation obligatoire avant toute suppression irréversible. */}
+      {confirm && (() => {
+        const ackRequired =
+          confirm.action === "continuous" || confirm.count >= CONFIRM_ACK_THRESHOLD;
+        const title =
+          confirm.action === "removeFakes"
+            ? t("confirm_remove_title", lang).replace("{0}", confirm.count.toLocaleString())
+            : confirm.action === "continuous"
+              ? t("confirm_continuous_title", lang)
+              : t("confirm_clean_title", lang);
+        const body =
+          confirm.action === "removeFakes"
+            ? t("confirm_remove_body", lang)
+            : confirm.action === "continuous"
+              ? t("confirm_continuous_body", lang)
+              : t("confirm_clean_body", lang);
+        const close = () => { setConfirm(null); setAck(false); };
+        return (
+          <Modal onClose={close}>
+            <h3 className="text-sm font-bold text-white">{title}</h3>
+            <p className="text-xs text-gray-300 leading-snug">{body}</p>
+            {confirm.sample.length > 0 && (
+              <p className="text-[11px] text-gray-400 leading-snug break-words">
+                {t("confirm_remove_sample", lang).replace(
+                  "{0}",
+                  confirm.sample.map((u) => "@" + u).join(", "),
+                )}
+                {confirm.count > confirm.sample.length ? " …" : ""}
+              </p>
+            )}
+            {ackRequired && (
+              <label className="flex items-start gap-2 text-xs text-gray-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ack}
+                  onChange={(e) => setAck(e.target.checked)}
+                  className="mt-0.5 accent-red-600"
+                />
+                <span>{t("confirm_remove_ack", lang)}</span>
+              </label>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={close}
+                className="flex-1 px-3 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-200 hover:bg-gray-700 active:scale-95 transition-all"
+              >
+                {t("confirm_cancel", lang)}
+              </button>
+              <button
+                onClick={confirmProceed}
+                disabled={ackRequired && !ack}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-all
+                  ${ackRequired && !ack
+                    ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                    : "bg-red-600 text-white hover:bg-red-500 active:scale-95"}`}
+              >
+                {t("confirm_remove_confirm", lang)}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

@@ -43,6 +43,7 @@ const MSG: Record<string, Record<string, string>> = {
   scan_result:          { fr: "@{0} : score={1} {2}", en: "@{0}: score={1} {2}" },
   scan_error:           { fr: "@{0} : {1}", en: "@{0}: {1}" },
   scan_no_data:         { fr: "@{0} : aucune donnée retournée", en: "@{0}: no data returned" },
+  scan_not_loaded:      { fr: "@{0} : page non chargée (onglet throttlé ?) — re-scan au prochain cycle, pas de verdict", en: "@{0}: page didn't load (throttled tab?) — re-scan next cycle, no verdict" },
   scan_done:            { fr: "Analyse terminée : {0} profils analysés, {1} fakes détectés", en: "Analysis complete: {0} profiles analyzed, {1} fakes detected" },
   scan_rate_limit:      { fr: "@{0} : limite 429 (blocages : {1})", en: "@{0}: 429 rate limit (blocked: {1})" },
   scan_tab_lost:        { fr: "@{0} : onglet perdu ({1}), recréation…", en: "@{0}: tab lost ({1}), will recreate…" },

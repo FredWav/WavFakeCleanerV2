@@ -87,6 +87,15 @@ let abortController: AbortController | null = null;
 const rateTracker = new RateTracker();
 const pacer = new HumanPacer(15, 30);
 
+// ── Génération de run — fix de la race au Stop (B-C2) ──
+// Chaque runner capture la génération courante AU MOMENT où il est mis en file
+// (synchrone, avant d'attendre le verrou). stopPipeline() incrémente la
+// génération : tout run dont la génération capturée est périmée (= un Stop est
+// survenu depuis son enfilement) se court-circuite en tête de verrou, même s'il
+// était déjà en file derrière le run interrompu. Sans ça, « Analyser » puis
+// « Nettoyer » en file puis Stop laissait le nettoyage démarrer APRÈS le Stop.
+let runGeneration = 0;
+
 // ── Verrou pipeline — empêche les opérations concurrentes ──
 let pipelineLock: Promise<void> = Promise.resolve();
 
@@ -98,6 +107,12 @@ function withPipelineLock<T>(fn: () => Promise<T>): Promise<T> {
 
 function isRunning(): boolean {
   return abortController !== null && !abortController.signal.aborted;
+}
+
+// Un run mis en file à la génération `gen` doit-il être abandonné parce qu'un
+// Stop est survenu entre temps ? Consulté en TÊTE de chaque runner, sous verrou.
+function stopRequestedSince(gen: number): boolean {
+  return gen !== runGeneration;
 }
 
 /**
@@ -165,6 +180,8 @@ export async function persistFollowerPage(
 }
 
 export function stopPipeline(): void {
+  // Invalide à la fois le run en cours ET tout run déjà en file (B-C2).
+  runGeneration++;
   abortController?.abort();
   abortController = null;
   // tab-manager handles STOP_CONTENT broadcast + remove + state clear
@@ -186,8 +203,9 @@ configureStateProviders({
 // ── Fetch phase ──
 
 export function runFetch(): Promise<void> {
+  const myGen = runGeneration;
   return withPipelineLock(async () => {
-    if (isRunning()) return;
+    if (stopRequestedSince(myGen) || isRunning()) return;
     abortController = new AbortController();
     await startKeepAlive();
     try {
@@ -378,8 +396,9 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 // ── Clean cycle (scan + remove in one pass) ──
 
 export function runCleanCycle(): Promise<void> {
+  const myGen = runGeneration;
   return withPipelineLock(async () => {
-    if (isRunning()) return;
+    if (stopRequestedSince(myGen) || isRunning()) return;
     abortController = new AbortController();
     await startKeepAlive();
     try {
@@ -403,8 +422,10 @@ export function runCleanCycle(): Promise<void> {
 // sans rien logguer quand le verrou/isRunning court-circuitait). Affiche aussi
 // « déjà en cours » et n'avale jamais les erreurs.
 export function runAnalyze(): Promise<void> {
+  const myGen = runGeneration;
   log("INFO", "clean", m("analyze_start"));
   return withPipelineLock(async () => {
+    if (stopRequestedSince(myGen)) return;
     if (isRunning()) {
       log("WARNING", "clean", m("already_running"));
       return;
@@ -431,8 +452,9 @@ export function runAnalyze(): Promise<void> {
 // 2e étape du flux guidé : supprime exactement les comptes déjà marqués « faux »
 // (et montrés à l'utilisateur dans la liste Faux). Aucun scan/score ici.
 export function runRemoveFlagged(): Promise<void> {
+  const myGen = runGeneration;
   return withPipelineLock(async () => {
-    if (isRunning()) return;
+    if (stopRequestedSince(myGen) || isRunning()) return;
     abortController = new AbortController();
     await startKeepAlive();
     try {
@@ -538,7 +560,17 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
   }
 
   const pending = await getFollowersPending(CYCLE_SIZE);
-  if (pending.length === 0) {
+
+  // B-C3 : les faux DÉJÀ flaggés mais jamais supprimés (échec 429/blocage/crash
+  // au cycle précédent) ont le statut "fake", pas "pending" — getFollowersPending
+  // ne les renvoie donc PAS. En mode continu/nettoyage ils restaient orphelins
+  // (ré-attrapés uniquement par le bouton manuel « Supprimer »). On les ré-injecte
+  // dans la passe de suppression de chaque cycle pour qu'ils soient retentés.
+  const leftoverFakes = removeFlagged
+    ? (await getFollowers({ status: "fake" })).filter((f) => !f.removed)
+    : [];
+
+  if (pending.length === 0 && leftoverFakes.length === 0) {
     log("INFO", "clean", m("cycle_no_pending"));
     return 0;
   }
@@ -590,6 +622,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
   // ── Phase 1 : trier les followers en 3 catégories ──
   let autoSkipped = 0;
   let fakesFound = 0; // fakes NEWLY detected this cycle (distinct from removed)
+  let reviewedPreScore = 0; // privés pré-scorés ≥80 routés vers « à vérifier » (B-M4)
   const needsVisit: typeof preSorted = [];
   const needsRemoveOnly: FollowerRecord[] = []; // Déjà scorés fake, juste supprimer
 
@@ -607,8 +640,26 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       continue;
     }
 
-    // Cas B : pré-score évident fake → marquer sans visiter, MAIS supprimer dans le même cycle
+    // Cas B : pré-score évident fake (≥80) à partir des seules métadonnées.
     if (metaScore !== null && metaScore >= 80) {
+      // B-M4 : un compte PRIVÉ ne peut PAS être vérifié sans visite (ni posts ni
+      // replies visibles). Un vrai compte privé neuf (sans bio/photo) peut
+      // pré-scorer ≥80 et serait supprimé à tort. On le route vers « à vérifier »
+      // (l'utilisateur tranche), JAMAIS en suppression automatique.
+      if (follower.isPrivate) {
+        await updateFollower(follower.username, {
+          score: metaScore,
+          scoreBreakdown: JSON.stringify([...metaDetails, "private → review (pas de suppression auto)"]),
+          isFake: false,
+          toReview: true,
+          scanned: true,
+          status: "scanned" as const,
+          scannedAt: Date.now(),
+        });
+        autoSkipped++;
+        reviewedPreScore++;
+        continue;
+      }
       const updates = {
         score: metaScore,
         scoreBreakdown: JSON.stringify(metaDetails),
@@ -644,6 +695,15 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
 
   if (autoSkipped > 0) {
     log("INFO", "clean", m("cycle_auto_skip", autoSkipped));
+  }
+
+  // B-C3 : fusionne les faux orphelins (flaggés mais jamais supprimés) dans la
+  // file de suppression de ce cycle, sans doublon avec ceux marqués à l'instant.
+  if (leftoverFakes.length > 0) {
+    const already = new Set(needsRemoveOnly.map((f) => f.username));
+    for (const f of leftoverFakes) {
+      if (!already.has(f.username)) needsRemoveOnly.push(f);
+    }
   }
 
   // ── Phase 2 : supprimer les profils déjà scorés fake (retry après crash/429) ──
@@ -752,10 +812,12 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       // 1. Navigate to profile
       const navSpan = span("profile_nav");
       await chrome.tabs.update(currentTabId, { url: profileUrl });
-      await waitForTabLoad(currentTabId, signal);
+      const navLoaded = await waitForTabLoad(currentTabId, signal);
       workMs += navSpan.end();
-      // Laisse React hydrater puis simule une lecture humaine rapide
-      await sleep(6 + Math.random() * 8, signal);
+      // Laisse React hydrater puis simule une lecture humaine rapide. Si la
+      // navigation n'a PAS confirmé "complete" (B-H6), on laisse plus de temps
+      // pour limiter les scans sur page à demi-chargée.
+      await sleep((navLoaded ? 6 : 12) + Math.random() * 8, signal);
       await ensureContentScript(currentTabId);
 
       // 1b. Check if Threads returned an error page instead of the profile
@@ -842,6 +904,25 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       }
 
       consecutiveBlocked = 0;
+
+      // B-C1/B-H6 : page manifestement non chargée (aucun post connu ET aucun
+      // compteur d'abonnés lu, compte non privé/non 404) → on ne score PAS (un
+      // DOM vide donnerait 0 post → faux positif). On retente une fois (status
+      // pending) ; si déjà retenté, on laisse le scan suivre (le scorer
+      // neutralise déjà les signaux posts quand postCount<0).
+      if (
+        !profileData.notFound &&
+        !profileData.isPrivate &&
+        profileData.postCount < 0 &&
+        profileData.followerCount === null &&
+        follower.scanError !== "not_loaded"
+      ) {
+        await markScanError(follower.username, "not_loaded");
+        consecutiveBlocked++;
+        log("WARNING", "clean", m("scan_not_loaded", follower.username));
+        await sleep(3 + Math.random() * 4, signal).catch(() => {});
+        continue;
+      }
 
       // 3. Handle not found (404)
       if (profileData.notFound) {
@@ -1021,7 +1102,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
     finishedAt: Date.now(),
   });
 
-  log("INFO", "clean", m("cycle_done", scanned, removed, reviewed));
+  log("INFO", "clean", m("cycle_done", scanned, removed, reviewed + reviewedPreScore));
 
   // Perf summary: net work vs wall time. Wall time includes the deliberate
   // pacing — the gap between the two is the anti-block budget, by design.
@@ -1064,8 +1145,9 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
 // ── Continuous mode (replaces Autopilot) ──
 
 export function runContinuous(): Promise<void> {
+  const myGen = runGeneration;
   return withPipelineLock(async () => {
-    if (isRunning()) return;
+    if (stopRequestedSince(myGen) || isRunning()) return;
     abortController = new AbortController();
     const signal = abortController.signal;
 

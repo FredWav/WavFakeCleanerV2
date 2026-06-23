@@ -42,7 +42,7 @@ import {
   checkReplies,
   navigateToTab,
   markScrollContainer,
-  startScroll,
+  scrollStep,
   stopScroll,
   extractFollowerLinks,
   clickFollowersButton,
@@ -267,10 +267,11 @@ async function scrollFetch(
     };
   }
 
-  startScroll(120);
   const pseudos = new Set<string>();
   let lastCount = 0;
   let noChange = 0;
+  let stagnant = 0;     // consecutive scroll steps where scrollTop didn't advance
+  let rawHrefs = 0;     // links seen on the last extraction (for diagnostics)
   const startTime = Date.now();
   const maxDuration = 1800_000;
   const maxFollowers = 5000;
@@ -282,41 +283,58 @@ async function scrollFetch(
     if (Date.now() - startTime > maxDuration) { truncReason = "timeout"; break; }
     if (pseudos.size >= maxFollowers) { truncReason = "cap_5000"; break; }
 
-    await sleep(500);
+    // Drive the scroll with one explicit jump (robust under hidden-tab timer
+    // throttling), then let the lazily-loaded rows mount before reading them.
+    const step = scrollStep();
+    if (step.advanced) stagnant = 0; else stagnant++;
+    await sleep(700);
 
     const hrefs = extractFollowerLinks();
+    rawHrefs = hrefs.length;
     for (const href of hrefs) {
       // CRITICAL: do NOT strip the slash. A href like "/@fredwav/media" must
-      // be REJECTED (it's the owner's own profile sub-page, not a follower),
-      // not coerced into "fredwavmedia". Strip query string, then require
-      // the result to be a clean alpha-num username with no path segments.
-      const tail = href.split("/@").pop() || "";
-      const pseudo = tail.split("?")[0]; // drop ?query but keep / so the guard below catches sub-pages
+      // be REJECTED (owner's own sub-page, not a follower), not coerced into
+      // "fredwavmedia". Drop the query, then require a clean username.
+      const pseudo = (href.split("/@").pop() || "").split("?")[0];
       if (
         pseudo &&
         !pseudo.includes("/") &&         // sub-page (replies, media, followers…) → reject
-        !pseudo.includes("?") &&         // safety belt — shouldn't happen after split above
+        !pseudo.includes("?") &&         // safety belt
         pseudo !== username              // owner's own profile → reject
       ) {
         pseudos.add(pseudo);
       }
     }
 
-    if (pseudos.size === lastCount) {
-      noChange++;
-    } else {
-      noChange = 0;
-      lastCount = pseudos.size;
+    if (pseudos.size === lastCount) noChange++;
+    else { noChange = 0; lastCount = pseudos.size; }
+
+    // Fast-fail a wrong/non-scrollable container: nothing collected AND either
+    // the list never moved or several reads found no new rows. Bail so the
+    // pipeline re-runs on the dedicated /@user/followers page. Skipped on the
+    // followers page itself (there, 0 means a genuinely empty list — terminal).
+    if (pseudos.size === 0 && (stagnant >= 3 || noChange >= 3) && !onFollowersPage) {
+      stopScroll();
+      return {
+        error: "scroll_container_not_found",
+        reason: stagnant >= 3 ? "scrolltop_not_advancing" : "zero_extracted",
+        linksFound: rawHrefs,
+      };
     }
 
-    if (noChange >= 6) break;
-
-    stopScroll();
-    await sleep(1200);
-    startScroll(120);
+    // Natural end: scrolled but no NEW followers across several reads.
+    if (noChange >= 6 && pseudos.size > 0) break;
+    // Backstop: don't spin forever once the list clearly stopped producing.
+    if (noChange >= 8) break;
   }
 
   stopScroll();
+
+  // A scroll that collected nothing off the dedicated page is a failure, not a
+  // success-with-0 — surface it so the /@user/followers retry fires.
+  if (pseudos.size === 0 && !onFollowersPage) {
+    return { error: "scroll_container_not_found", reason: "zero_extracted", linksFound: rawHrefs };
+  }
 
   const collected: Record<string, ContentFollowerMeta> = {};
   for (const p of pseudos) {
@@ -349,6 +367,22 @@ async function handleScanProfile(username: string): Promise<ContentProfileData> 
 
   const data = extractProfileFromDom(username);
 
+  // La bannière « Ce profil est privé » est rendue côté client et un onglet de
+  // fond throttlé ne la peint souvent jamais : lire le texte du DOM seul rate les
+  // comptes privés et les scanne comme des fantômes publics (0 post → faux
+  // verdict). On confirme la confidentialité depuis les données PROPRES du profil
+  // (web_profile_info, le champ que Threads utilise pour la bannière ; repli sur
+  // le JSON embarqué de la page). Indépendant du rendu → fiable même sur un
+  // onglet de fond throttlé.
+  if (!data.isPrivate) {
+    try {
+      const prof = await resolveUserProfile(username);
+      if (prof?.isPrivate) data.isPrivate = true;
+    } catch {
+      // échec réseau/parsing — on garde le résultat du DOM
+    }
+  }
+
   if (!data.isPrivate) {
     // ── Step 1: Check posts on the Threads tab ──
     // Ensure we're on the Threads tab first
@@ -363,13 +397,24 @@ async function handleScanProfile(username: string): Promise<ContentProfileData> 
     const isEmpty = SELECTORS_NO_THREADS.some((p) => p.test(noThreads));
 
     if (isEmpty) {
+      // « Aucun thread » explicite → vrai 0 post confirmé.
       data.postCount = 0;
     } else {
       const postInfo = countPosts();
-      data.postCount = postInfo.count;
-      data.allPostsRecent = postInfo.allRecent;
-      data.duplicateRatio = postInfo.duplicateRatio;
-      data.hasSpamKeywords = postInfo.hasSpamKeywords;
+      if (postInfo.count > 0 || profileContentRendered(data)) {
+        // Soit on a trouvé des posts, soit la page de profil a bien chargé
+        // (en-tête peint / signal de feed présent) → le « 0 » est réel.
+        data.postCount = postInfo.count;
+        data.allPostsRecent = postInfo.allRecent;
+        data.duplicateRatio = postInfo.duplicateRatio;
+        data.hasSpamKeywords = postInfo.hasSpamKeywords;
+      } else {
+        // B-C1 : 0 article trouvé ET aucune preuve que la page a réellement
+        // chargé (onglet de fond throttlé, DOM non hydraté). On NE croit PAS
+        // au « 0 post » : -1 = inconnu → le scorer neutralise tous les signaux
+        // liés aux posts au lieu de marquer faux à tort un vrai abonné.
+        data.postCount = -1;
+      }
     }
 
     // ── Step 2: Navigate to Media tab and check for media ──
@@ -431,6 +476,24 @@ const SELECTORS_NO_THREADS = [
   /hasn.t posted/i,
   /n.a pas encore publi/i,
 ];
+
+/**
+ * Preuve que la page de profil a RÉELLEMENT été peinte (et pas juste un onglet
+ * de fond throttlé dont le HTML est servi mais React jamais hydraté). Sert à
+ * distinguer un vrai « 0 post » d'une page non chargée — cœur du fix B-C1.
+ *
+ * On n'utilise QUE des signaux rendus côté client (jamais og:title/meta, qui
+ * sont dans le HTML statique et présents même sur un onglet non hydraté) :
+ *   - un post/horodatage du feed effectivement monté ;
+ *   - le compteur d'abonnés lu dans le DOM (rendu par React dans l'en-tête) ;
+ *   - une vraie photo de profil détectée.
+ */
+function profileContentRendered(data: Partial<ContentProfileData>): boolean {
+  if (document.querySelector("article, [data-pressable-container], time[datetime]")) return true;
+  if (data.followerCount !== null && data.followerCount !== undefined) return true;
+  if (data.hasRealPic) return true;
+  return false;
+}
 
 // ── Remove follower ──
 
