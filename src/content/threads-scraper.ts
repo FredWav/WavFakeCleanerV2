@@ -441,112 +441,153 @@ function reportScrollDrift(source: string): void {
   }
 }
 
+// Owner username from the current path (/@owner or /@owner/followers). Used to
+// exclude the profile owner's own links when scoring scroll-container density.
+function currentOwnerFromPath(): string | null {
+  const m = location.pathname.match(/^\/@([\w.]+)/);
+  return m ? m[1] : null;
+}
+
+// Is this href a *real* follower link — a clean "/@username", not the owner and
+// not a sub-page like "/@owner/media"? Mirrors the filter scrollFetch applies,
+// so container detection and link extraction agree on what counts.
+export function isFollowerHref(href: string | null | undefined, owner: string | null): boolean {
+  if (!href || !href.includes("/@")) return false;
+  const pseudo = (href.split("/@").pop() || "").split("?")[0];
+  if (!pseudo || pseudo.includes("/")) return false;
+  if (owner && pseudo === owner) return false;
+  return true;
+}
+
+// Nearest scrollable ancestor of a node: overflow scroll/auto that already
+// overflows, OR a large overflow:hidden wrapper that overflows (common with
+// React virtualized lists whose outer wrapper hides overflow and an inner
+// spacer drives the scroll). Returns null if none within `maxDepth`.
+function nearestScrollableAncestor(node: Element, maxDepth = 25): HTMLElement | null {
+  let el: HTMLElement | null = node.parentElement;
+  let depth = 0;
+  while (el && el !== document.body && depth < maxDepth) {
+    const oy = window.getComputedStyle(el).overflowY;
+    const overflows = el.scrollHeight > el.clientHeight + 10;
+    if ((oy === "scroll" || oy === "auto") && overflows) return el;
+    if (oy === "hidden" && overflows && el.clientHeight > 200) return el;
+    el = el.parentElement;
+    depth++;
+  }
+  return null;
+}
+
+// Minimum distinct follower links a container must hold before we trust it as
+// the list. Page chrome (nav, footer, suggested, owner header) is sparse (1-3);
+// the real followers list is dense. Below this we fail so the pipeline retries
+// on the dedicated /@user/followers page instead of marking the wrong element.
+const MIN_CONTAINER_LINKS = 5;
+
 export function markScrollContainer(): {
   ok: boolean;
   links: number;
   reason?: MarkScrollReason;
   source?: "dialog" | "modal" | "testid" | "page" | "global";
 } {
-  // 1) Try DOM variants for modal/page containers, in order of specificity
   const onFollowersPage = SELECTORS.scroll.followersUrlPattern.test(location.pathname);
+  const owner = currentOwnerFromPath();
 
-  type Candidate = { source: NonNullable<ReturnType<typeof markScrollContainer>["source"]>; nodes: Element[] };
-  const candidates: Candidate[] = [];
+  // Drift attribution: the most specific selector class that still matches.
+  // "global" means the canonical modal anchors are gone — operator should refresh.
+  const source: NonNullable<ReturnType<typeof markScrollContainer>["source"]> =
+    document.querySelector(SELECTORS.scroll.dialogLinks) ? "dialog"
+    : document.querySelector(SELECTORS.scroll.modalLinks) ? "modal"
+    : document.querySelector(SELECTORS.scroll.testIdLinks) ? "testid"
+    : onFollowersPage ? "page" : "global";
 
-  const dialog = Array.from(document.querySelectorAll(SELECTORS.scroll.dialogLinks));
-  if (dialog.length) candidates.push({ source: "dialog", nodes: dialog });
-
-  const modal = Array.from(document.querySelectorAll(SELECTORS.scroll.modalLinks));
-  if (modal.length) candidates.push({ source: "modal", nodes: modal });
-
-  const testId = Array.from(document.querySelectorAll(SELECTORS.scroll.testIdLinks));
-  if (testId.length) candidates.push({ source: "testid", nodes: testId });
-
-  // Fallback: all profile-shaped links on the page (regex-filtered)
-  const globalLinks = Array.from(
-    document.querySelectorAll(SELECTORS.scroll.profileLinks)
-  ).filter((a) => /^\/@[\w.]+$/.test(a.getAttribute("href") || ""));
-  if (globalLinks.length) {
-    candidates.push({ source: onFollowersPage ? "page" : "global", nodes: globalLinks });
-  }
-
-  if (!candidates.length) {
-    console.log("[WFC] markScrollContainer: no_links (none of dialog/modal/testid/global matched)");
-    return { ok: false, links: 0, reason: "no_links" };
-  }
-
-  // On the dedicated /followers page the document itself is the scroller
+  // On the dedicated /followers page the document itself is the scroller — no
+  // modal, no density guessing needed.
   if (onFollowersPage) {
     const root = (document.scrollingElement || document.documentElement) as HTMLElement;
     if (root) {
       root.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
-      const totalLinks = candidates.reduce((acc, c) => acc + c.nodes.length, 0);
-      console.log(`[WFC] markScrollContainer: ok via dedicated followers page (${totalLinks} links)`);
+      const links = document.querySelectorAll('a[href*="/@"]').length;
+      console.log(`[WFC] markScrollContainer: ok via dedicated followers page (${links} links)`);
       reportScrollDrift("page");
-      return { ok: true, links: totalLinks, source: "page" };
+      return { ok: true, links, source: "page" };
     }
   }
 
-  // 2) For each candidate set, walk up the DOM looking for a scrollable parent
-  let lastLinkCount = 0;
-  let sawTooSmall = false;
-  for (const cand of candidates) {
-    lastLinkCount = cand.nodes.length;
-    const anchor = cand.nodes[cand.nodes.length - 1] as HTMLElement;
-    let el: HTMLElement | null = anchor.parentElement;
-    let depth = 0;
+  // DENSITY SELECTION: tally how many distinct *real* follower links each
+  // scrollable ancestor contains, then mark the densest one. This locks onto the
+  // followers list (dozens-to-hundreds of rows) and ignores the last stray "/@"
+  // link in page chrome that the old "walk up from the last link" approach hit.
+  const byContainer = new Map<HTMLElement, Set<string>>();
+  for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="/@"]')) {
+    const href = a.getAttribute("href");
+    if (!isFollowerHref(href, owner)) continue;
+    const sc = nearestScrollableAncestor(a);
+    if (!sc) continue;
+    let set = byContainer.get(sc);
+    if (!set) { set = new Set<string>(); byContainer.set(sc, set); }
+    set.add(href!);
+  }
 
-    while (el && el !== document.body && depth < 25) {
-      const cs = window.getComputedStyle(el);
-      const oy = cs.overflowY;
-      const hasOverflowSetting = oy === "scroll" || oy === "auto";
-      const overflowsContent = el.scrollHeight > el.clientHeight + 10;
-
-      if (hasOverflowSetting && overflowsContent) {
-        el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
-        console.log(`[WFC] markScrollContainer: ok via ${cand.source} (${cand.nodes.length} links, depth=${depth})`);
-        reportScrollDrift(cand.source);
-        return { ok: true, links: cand.nodes.length, source: cand.source };
-      }
-
-      // Relaxed: accept overflow:hidden when the element is large and content
-      // already overflows — common with React virtualized lists where the
-      // outer wrapper has overflow:hidden and an inner spacer drives scroll.
-      if (oy === "hidden" && overflowsContent && el.clientHeight > 200) {
-        el.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
-        console.log(`[WFC] markScrollContainer: ok via ${cand.source} relaxed (overflow:hidden, depth=${depth})`);
-        reportScrollDrift(cand.source);
-        return { ok: true, links: cand.nodes.length, source: cand.source };
-      }
-
-      if (hasOverflowSetting && !overflowsContent && el.clientHeight > 200) {
-        // Overflow is set up but content not (yet) tall enough. Track this so
-        // we report a more specific reason if nothing else works.
-        sawTooSmall = true;
-      }
-
-      el = el.parentElement;
-      depth++;
+  let best: HTMLElement | null = null;
+  let bestCount = 0;
+  for (const [el, set] of byContainer) {
+    if (set.size > bestCount || (set.size === bestCount && best !== null && el.scrollHeight > best.scrollHeight)) {
+      best = el;
+      bestCount = set.size;
     }
   }
 
-  const reason: MarkScrollReason = sawTooSmall ? "container_too_small" : "no_scrollable_parent";
-  console.log(`[WFC] markScrollContainer: failed (${reason}, links=${lastLinkCount})`);
-  return { ok: false, links: lastLinkCount, reason };
+  if (best && bestCount >= MIN_CONTAINER_LINKS) {
+    best.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
+    console.log(`[WFC] markScrollContainer: ok via ${source} density (${bestCount} follower links)`);
+    reportScrollDrift(source);
+    return { ok: true, links: bestCount, source };
+  }
+
+  // Not enough density: a wrong/page-chrome scroller. Fail so the pipeline's
+  // /@user/followers re-navigation fallback fires (deterministic page scroller).
+  const reason: MarkScrollReason = byContainer.size > 0 ? "container_too_small" : "no_scrollable_parent";
+  console.log(`[WFC] markScrollContainer: failed (${reason}, best=${bestCount} links, need ${MIN_CONTAINER_LINKS})`);
+  return { ok: false, links: bestCount, reason };
 }
 
 let autoScrollId: ReturnType<typeof setInterval> | null = null;
 
-export function startScroll(speed: number): void {
-  const el = document.querySelector(`[${SELECTORS.scroll.scrollableAttr}="true"]`);
-  if (!el) return;
-  if (autoScrollId) clearInterval(autoScrollId);
-  autoScrollId = setInterval(() => {
-    el.scrollTop += speed;
-  }, 16);
+/**
+ * Advance the marked scroll container by ONE explicit jump.
+ *
+ * Driven from the awaited scrollFetch loop rather than a high-frequency
+ * setInterval — the fetch runs in a HIDDEN (active:false) background tab where
+ * Chrome clamps setInterval to ~1/s and pauses requestAnimationFrame, so a
+ * 16ms timer barely moved the list. One synchronous jump per loop turn is
+ * immune to that throttling. We also fire a `scroll` event and pull the last
+ * row into view to wake observer-driven lazy loaders that won't otherwise tick
+ * in an unpainted tab.
+ *
+ * Returns whether scrollTop actually advanced (false ⇒ the marked element is
+ * not really scrollable, so the caller can bail and re-route).
+ */
+export function scrollStep(): { advanced: boolean; height: number } {
+  const el = document.querySelector(
+    `[${SELECTORS.scroll.scrollableAttr}="true"]`,
+  ) as HTMLElement | null;
+  if (!el) return { advanced: false, height: 0 };
+
+  const before = el.scrollTop;
+  el.scrollTop = el.scrollHeight; // jump to the bottom to force the next window
+  try { el.dispatchEvent(new Event("scroll", { bubbles: true })); } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event("scroll")); } catch { /* ignore */ }
+  try {
+    const rows = el.querySelectorAll('a[href*="/@"]');
+    (rows[rows.length - 1] as HTMLElement | undefined)?.scrollIntoView({ block: "end" });
+  } catch { /* ignore — last row can be unmounted by virtualization mid-read */ }
+
+  return { advanced: el.scrollTop > before, height: el.scrollHeight };
 }
 
 export function stopScroll(): void {
+  // No interval is started anymore, but clear any legacy one defensively so the
+  // STOP_CONTENT abort path stays correct.
   if (autoScrollId) {
     clearInterval(autoScrollId);
     autoScrollId = null;
@@ -554,26 +595,29 @@ export function stopScroll(): void {
 }
 
 export function extractFollowerLinks(): string[] {
-  // Prefer the marked scroller's subtree (set by markScrollContainer).
-  // Falls back to dialog/modal/global selectors if no marker is present.
-  const scroller = document.querySelector(
-    `[${SELECTORS.scroll.scrollableAttr}="true"]`
-  );
-  let links: NodeListOf<Element> | Element[] | null = null;
+  // Prefer the marked scroller's subtree (set by markScrollContainer), but if it
+  // yields implausibly few links (a wrong/over-narrow container), UNION in the
+  // document-wide candidates so the real followers stay reachable even when
+  // container detection is imperfect. scrollFetch filters out owner/sub-page
+  // hrefs afterwards, so over-collecting here is harmless.
+  const hrefs = new Set<string>();
+  const collect = (nodes: ArrayLike<Element>): void => {
+    for (let i = 0; i < nodes.length; i++) {
+      const h = nodes[i].getAttribute("href");
+      if (h) hrefs.add(h);
+    }
+  };
 
-  if (scroller) {
-    links = scroller.querySelectorAll('a[href*="/@"]');
+  const scroller = document.querySelector(`[${SELECTORS.scroll.scrollableAttr}="true"]`);
+  if (scroller) collect(scroller.querySelectorAll('a[href*="/@"]'));
+
+  if (hrefs.size < 3) {
+    collect(document.querySelectorAll(SELECTORS.scroll.dialogLinks));
+    collect(document.querySelectorAll(SELECTORS.scroll.modalLinks));
+    collect(document.querySelectorAll('a[href*="/@"]'));
   }
-  if (!links || !links.length) {
-    links = document.querySelectorAll(SELECTORS.scroll.dialogLinks);
-  }
-  if (!links.length) {
-    links = document.querySelectorAll(SELECTORS.scroll.modalLinks);
-  }
-  if (!links.length) {
-    links = document.querySelectorAll('a[href*="/@"]');
-  }
-  return Array.from(links, (a) => a.getAttribute("href") || "");
+
+  return Array.from(hrefs);
 }
 
 /**

@@ -12,6 +12,8 @@
  *     becoming an open SSRF for malicious code in the isolated world.
  */
 
+import { isAllowedApiUrl } from "../shared/api-allowlist";
+
 const WFC_REQUEST = "WFC_API_REQUEST";
 const WFC_RESPONSE = "WFC_API_RESPONSE";
 
@@ -27,10 +29,11 @@ const WFC_SECRET = (() => {
   return null;
 })();
 
-// Only Threads API endpoints are allowed. Anything else is rejected so the
-// bridge can never be coerced into fetching attacker-controlled URLs with
-// the user's auth cookies attached.
-const ALLOWED_URL_PATTERN = /^https:\/\/(?:www\.)?threads\.(?:net|com)\/api\//;
+// Only Threads API endpoints are allowed (absolute or same-origin relative).
+// Anything else is rejected so the bridge can never be coerced into fetching
+// attacker-controlled URLs with the user's auth cookies attached. The matcher
+// lives in @shared/api-allowlist so a regression test can assert the URLs the
+// interceptor actually builds pass it.
 
 // ── Lazy header enrichment (auth tokens visible only from MAIN world) ──
 
@@ -133,7 +136,10 @@ window.addEventListener("message", async (event) => {
   const { id, url, headers } = event.data;
 
   // URL allowlist: refuse non-Threads-API URLs outright.
-  if (typeof url !== "string" || !ALLOWED_URL_PATTERN.test(url)) {
+  if (!isAllowedApiUrl(url)) {
+    // Surface this — a silently-rejected URL is exactly how the API fast-path
+    // died unnoticed once before (relative URLs vs an https-only allowlist).
+    console.warn("[WFC] bridge: url_not_allowed", url);
     window.postMessage(
       { type: WFC_RESPONSE, id, status: 0, body: null, error: "url_not_allowed", secret: WFC_SECRET },
       "*",

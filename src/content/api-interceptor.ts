@@ -84,6 +84,19 @@ export function injectMainWorldBridge(): void {
 
 // ── Helpers ──
 
+/**
+ * Resolve a relative Threads API path ("/api/v1/...") to an absolute URL against
+ * the current page origin. Content scripts share the page's `location`, so on a
+ * Threads tab this yields https://www.threads.com/... (or threads.net).
+ */
+function apiUrl(path: string): string {
+  try {
+    return new URL(path, location.origin).toString();
+  } catch {
+    return path; // fall back to the relative form; the bridge allowlist accepts it
+  }
+}
+
 function isDefaultPic(url: string): boolean {
   if (!url) return true;
   return DEFAULT_PIC_PATTERNS.some((p) => url.includes(p));
@@ -149,6 +162,11 @@ async function fetchWithBackoff(
 export interface UserProfile {
   userId: string;
   followerCount: number; // 0 if unknown — caller MUST treat 0 as "do not trust"
+  // Confidentialité de référence, depuis web_profile_info / le JSON embarqué de
+  // la page — le champ que Threads utilise pour afficher « Ce profil est privé ».
+  // Indépendant du rendu, contrairement à la bannière qu'un onglet de fond
+  // throttlé peut ne jamais peindre.
+  isPrivate: boolean;
 }
 
 export async function resolveUserId(username: string): Promise<string | null> {
@@ -159,9 +177,12 @@ export async function resolveUserId(username: string): Promise<string | null> {
 export async function resolveUserProfile(username: string): Promise<UserProfile | null> {
   const headers = apiHeaders();
 
+  // Absolutise against the page origin (https://www.threads.com). The bridge's
+  // allowlist accepts the relative form too, but an explicit absolute URL is
+  // unambiguous and removes any dependency on how fetch resolves a bare path.
   const endpoints = [
-    `${THREADS_API.profileEndpoint}?username=${username}`,
-    `${THREADS_API.searchEndpoint}?q=${username}`,
+    apiUrl(`${THREADS_API.profileEndpoint}?username=${encodeURIComponent(username)}`),
+    apiUrl(`${THREADS_API.searchEndpoint}?q=${encodeURIComponent(username)}`),
   ];
 
   for (const url of endpoints) {
@@ -187,7 +208,7 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
         const fc = Number(userObj.follower_count ?? 0);
         if (uid) {
           console.log("[WFC] resolveUserProfile: uid=", uid, "followerCount=", fc);
-          return { userId: String(uid), followerCount: fc };
+          return { userId: String(uid), followerCount: fc, isPrivate: !!userObj.is_private };
         }
       }
 
@@ -197,7 +218,7 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
         const uid = match.pk || match.id;
         const fc = Number(match.follower_count ?? 0);
         console.log("[WFC] resolveUserProfile: via search uid=", uid, "followerCount=", fc);
-        return { userId: String(uid), followerCount: fc };
+        return { userId: String(uid), followerCount: fc, isPrivate: !!match.is_private };
       }
 
       console.log("[WFC] resolveUserProfile: no uid in response =", JSON.stringify(j).substring(0, 500));
@@ -213,13 +234,17 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
     for (const s of scripts) {
       const text = s.textContent || "";
       if (text.includes(username)) {
+        // Lit is_private dans le MÊME JSON embarqué, près de ce pseudo (le blob
+        // peut lister plusieurs comptes → on limite la recherche à une fenêtre après).
+        const uIdx = text.indexOf(`"username":"${username}"`);
+        const priv = uIdx >= 0 && /"is_private":\s*true/.test(text.slice(uIdx, uIdx + 600));
         const pkM = text.match(/"pk":"?(\d+)"?/);
         if (pkM) {
           console.log("[WFC] resolveUserProfile: found pk in script tag:", pkM[1]);
-          return { userId: pkM[1], followerCount: 0 };
+          return { userId: pkM[1], followerCount: 0, isPrivate: priv };
         }
         const idM = text.match(/"user_id":"?(\d+)"?/);
-        if (idM) return { userId: idM[1], followerCount: 0 };
+        if (idM) return { userId: idM[1], followerCount: 0, isPrivate: priv };
       }
     }
   } catch {
@@ -235,9 +260,10 @@ export async function fetchFollowersPage(
   maxId?: string
 ): Promise<{ users: Record<string, ContentFollowerMeta>; nextMaxId: string | null } | null> {
   const headers = apiHeaders();
-  let url = THREADS_API.followersEndpoint.replace("{user_id}", userId);
-  url += `?count=${THREADS_API.pageSize}&search_surface=follow_list_page`;
-  if (maxId) url += `&max_id=${maxId}`;
+  let path = THREADS_API.followersEndpoint.replace("{user_id}", userId);
+  path += `?count=${THREADS_API.pageSize}&search_surface=follow_list_page`;
+  if (maxId) path += `&max_id=${encodeURIComponent(maxId)}`;
+  const url = apiUrl(path);
 
   try {
     console.log("[WFC] fetchFollowersPage:", url);
