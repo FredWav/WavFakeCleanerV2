@@ -59,16 +59,51 @@ function PauseBanner({ until, reason, lang, removed }: { until: number; reason: 
   );
 }
 
+/**
+ * Bandeau de suppression différée (U-H1) : compte à rebours avant l'exécution,
+ * avec un bouton « Annuler » bien visible. Donne le filet de sécurité réclamé
+ * sans dépendre d'un undo côté Threads (impossible).
+ */
+function PendingDeleteBanner({
+  until, count, lang, onCancel,
+}: { until: number; count: number; lang: string; onCancel: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  const secs = Math.max(0, Math.ceil((until - now) / 1000));
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1.5">
+      <span className="flex-1 text-xs text-red-200 leading-snug">
+        {t("pending_delete", lang)
+          .replace("{0}", count.toLocaleString())
+          .replace("{1}", String(secs))}
+      </span>
+      <button
+        onClick={onCancel}
+        className="shrink-0 px-2 py-1 rounded-lg text-xs font-bold bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all"
+      >
+        {t("cancel_delete", lang)}
+      </button>
+    </div>
+  );
+}
+
 export default function ControlPanel({
   stats,
   lang,
   licence,
   onRefresh,
+  fakeSelection = null,
 }: {
   stats: Stats | null;
   lang: string;
   licence: LicenseInfo;
   onRefresh: () => void;
+  // U-C2 : sélection explicite des faux à supprimer (cases cochées dans la
+  // table). null = pas de sélection active → on supprime tous les faux flaggés.
+  fakeSelection?: string[] | null;
 }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,10 +114,17 @@ export default function ControlPanel({
     null | { action: "removeFakes" | "clean" | "continuous"; count: number; sample: string[] }
   >(null);
   const [ack, setAck] = useState(false);
+  // U-H1 : suppression différée annulable (le vrai « undo » est impossible —
+  // Threads ne réajoute pas un abonné — donc on offre une fenêtre AVANT exécution).
+  const [pendingDelete, setPendingDelete] = useState<
+    null | { usernames: string[] | null; count: number; until: number }
+  >(null);
+  const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isRunning = stats?.isRunning;
-  // Faux flaggés encore présents (pas encore supprimés) — le compteur de
-  // l'étape explicite « Supprimer les faux » après une analyse.
-  const fakesToRemove = stats?.fakes ?? 0;
+  // Faux flaggés encore présents (pas encore supprimés). Si une sélection est
+  // active (cases cochées), c'est elle qui pilote le compteur et la suppression.
+  const selectionActive = Array.isArray(fakeSelection);
+  const fakesToRemove = selectionActive ? fakeSelection!.length : (stats?.fakes ?? 0);
 
   async function run(action: string) {
     setLoading(action);
@@ -101,14 +143,18 @@ export default function ControlPanel({
 
   // Ouvre la modale de confirmation pour la suppression explicite des faux
   // flaggés. Récupère un échantillon des @ concernés pour que l'utilisateur
-  // voie QUI va partir avant de confirmer.
+  // voie QUI va partir avant de confirmer (la sélection si active, sinon la DB).
   async function requestRemoveFakes() {
     let sample: string[] = [];
-    try {
-      const fakes = await api.getFollowers("fake", 8);
-      sample = fakes.map((f) => f.username);
-    } catch {
-      // échantillon best-effort — la confirmation reste possible sans
+    if (selectionActive) {
+      sample = fakeSelection!.slice(0, 8);
+    } else {
+      try {
+        const fakes = await api.getFollowers("fake", 8);
+        sample = fakes.map((f) => f.username);
+      } catch {
+        // échantillon best-effort — la confirmation reste possible sans
+      }
     }
     setAck(false);
     setConfirm({ action: "removeFakes", count: fakesToRemove, sample });
@@ -125,12 +171,52 @@ export default function ControlPanel({
     });
   }
 
-  // Confirme l'action destructive en attente et la lance réellement.
+  // Lance la suppression différée (U-H1) : fenêtre de 8s annulable, puis exécution.
+  function startDeferredDelete(usernames: string[] | null, count: number) {
+    if (pendingTimer.current) clearTimeout(pendingTimer.current);
+    setPendingDelete({ usernames, count, until: Date.now() + 8000 });
+    pendingTimer.current = setTimeout(() => {
+      pendingTimer.current = null;
+      setPendingDelete(null);
+      void runRemove(usernames);
+    }, 8000);
+  }
+
+  function cancelDeferredDelete() {
+    if (pendingTimer.current) clearTimeout(pendingTimer.current);
+    pendingTimer.current = null;
+    setPendingDelete(null);
+  }
+
+  async function runRemove(usernames: string[] | null) {
+    setLoading("removeFakes");
+    setError(null);
+    try {
+      await api.removeFakes(usernames ?? undefined);
+      setTimeout(onRefresh, 500);
+    } catch (e) {
+      console.error("[WFC] removeFakes failed:", e);
+      setError(t("action_failed", lang));
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  // Nettoie le timer si le composant est démonté pendant l'attente.
+  useEffect(() => () => { if (pendingTimer.current) clearTimeout(pendingTimer.current); }, []);
+
+  // Confirme l'action en attente. La suppression explicite passe par la file
+  // différée annulable ; le nettoyage/continu (scan + suppression) démarre direct.
   function confirmProceed() {
-    const action = confirm?.action;
+    const c = confirm;
     setConfirm(null);
     setAck(false);
-    if (action) run(action);
+    if (!c) return;
+    if (c.action === "removeFakes") {
+      startDeferredDelete(selectionActive ? fakeSelection! : null, c.count);
+    } else {
+      run(c.action);
+    }
   }
 
   const scanned = stats?.scanned ?? 0;
@@ -181,16 +267,29 @@ export default function ControlPanel({
       </button>
       <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
 
-      {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et validés. */}
-      {!isRunning && fakesToRemove > 0 && (
+      {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et
+          validés (sélection cochée si active, U-C2). Masqué pendant la fenêtre
+          d'annulation différée (U-H1). */}
+      {!isRunning && !pendingDelete && fakesToRemove > 0 && (
         <button
           onClick={requestRemoveFakes}
           disabled={!!loading}
           className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
             bg-red-600/90 text-white hover:bg-red-500 active:scale-95`}
         >
-          {t("remove_fakes_btn", lang)} ({fakesToRemove.toLocaleString()})
+          {(selectionActive ? t("remove_selection_btn", lang) : t("remove_fakes_btn", lang))}{" "}
+          ({fakesToRemove.toLocaleString()})
         </button>
+      )}
+
+      {/* U-H1 : fenêtre d'annulation avant exécution (le seul « undo » possible). */}
+      {pendingDelete && (
+        <PendingDeleteBanner
+          until={pendingDelete.until}
+          count={pendingDelete.count}
+          lang={lang}
+          onCancel={cancelDeferredDelete}
+        />
       )}
 
       <button

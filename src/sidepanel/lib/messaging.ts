@@ -31,7 +31,12 @@ export const api = {
 
   analyze: () => send<{ ok: boolean }>({ type: "START_ANALYZE" }),
 
-  removeFakes: () => send<{ ok: boolean }>({ type: "START_REMOVE_FAKES" }),
+  // usernames = sélection explicite (U-C2). Omis = supprime tous les faux flaggés.
+  removeFakes: (usernames?: string[]) =>
+    send<{ ok: boolean }>({
+      type: "START_REMOVE_FAKES",
+      payload: usernames && usernames.length ? { usernames } : undefined,
+    }),
 
   continuous: () => send<{ ok: boolean }>({ type: "START_CONTINUOUS" }),
 

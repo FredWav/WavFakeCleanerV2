@@ -230,12 +230,16 @@ export default function FollowerTable({
   onShowLicence,
   showToast,
   refreshTrigger,
+  onFakeSelectionChange,
 }: {
   lang: string;
   licence?: LicenseInfo;
   onShowLicence?: () => void;
   showToast?: (msg: string) => void;
   refreshTrigger?: number;
+  // U-C2 : remonte la sélection des faux à supprimer (cases cochées) au parent.
+  // null = pas en mode sélection (filtre ≠ « faux ») → suppression de tous les faux.
+  onFakeSelectionChange?: (usernames: string[] | null) => void;
 }) {
   const [followers, setFollowers] = useState<FollowerWithUrl[]>([]);
   const [loading, setLoading] = useState(false);
@@ -247,6 +251,9 @@ export default function FollowerTable({
   const [myVotes, setMyVotes] = useState<Map<string, "fake" | "ok">>(new Map());
   const [voteLoading, setVoteLoading] = useState<string | null>(null);
   const [licencePrompt, setLicencePrompt] = useState<string | null>(null);
+  // U-C2 : cases décochées dans la vue « faux ». On stocke les EXCLUS (plutôt que
+  // les inclus) pour que tout nouveau faux soit coché par défaut sans resynchro.
+  const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
 
   // Skip the community-score refetch when the visible username set hasn't
   // changed (e.g. expanding a row, toggling a vote) — one Worker call per
@@ -279,6 +286,25 @@ export default function FollowerTable({
     const timer = setTimeout(() => load(), search ? 300 : 0);
     return () => clearTimeout(timer);
   }, [load, refreshTrigger]);
+
+  // U-C2 : reporte la sélection (faux affichés moins les décochés) au parent
+  // quand on est dans la vue « faux » ; null sinon (= supprimer tous les faux).
+  useEffect(() => {
+    if (filter !== "fake") { onFakeSelectionChange?.(null); return; }
+    onFakeSelectionChange?.(followers.map((f) => f.username).filter((u) => !unchecked.has(u)));
+  }, [filter, followers, unchecked, onFakeSelectionChange]);
+
+  function toggleChecked(username: string) {
+    setUnchecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username); else next.add(username);
+      return next;
+    });
+  }
+  const allChecked = followers.length > 0 && followers.every((f) => !unchecked.has(f.username));
+  function toggleAll() {
+    setUnchecked(() => (allChecked ? new Set(followers.map((f) => f.username)) : new Set()));
+  }
 
   async function handleApprove(e: React.MouseEvent, username: string) {
     e.stopPropagation();
@@ -382,6 +408,23 @@ export default function FollowerTable({
         </div>
       )}
 
+      {/* U-C2 : sélection « tout/aucun » pour la suppression. Tout coché par
+          défaut ; l'utilisateur décoche ce qu'il garde. */}
+      {filter === "fake" && followers.length > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5 border-b border-gray-800 text-[11px]">
+          <label className="flex items-center gap-1.5 text-gray-400 cursor-pointer">
+            <input type="checkbox" checked={allChecked} onChange={toggleAll} className="align-middle accent-accent" />
+            {t("select_all", lang)}
+          </label>
+          <span className="ml-auto text-gray-500 tabular-nums">
+            {t("selected_count", lang).replace(
+              "{0}",
+              String(followers.filter((f) => !unchecked.has(f.username)).length),
+            )}
+          </span>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto max-h-72 overflow-y-auto">
         <table className="w-full text-xs">
@@ -462,6 +505,16 @@ export default function FollowerTable({
                       className="border-t border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors animate-row-in"
                     >
                       <td className="px-2 py-1.5 font-mono text-gray-300">
+                        {isFakeFilter && (
+                          <input
+                            type="checkbox"
+                            checked={!unchecked.has(f.username)}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleChecked(f.username)}
+                            aria-label={t("select_one", lang)}
+                            className="mr-1.5 align-middle accent-accent"
+                          />
+                        )}
                         <a
                           href={f.profile_url}
                           rel="noopener noreferrer"

@@ -39,6 +39,9 @@ export default function App() {
   }, []);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
   const [prescan, setPrescan] = useState<{ likelyFakes: number; total: number } | null>(null);
+  // U-C2 : sélection des faux à supprimer, partagée entre la table (cases à
+  // cocher) et le ControlPanel (bouton Supprimer). null = pas de sélection active.
+  const [fakeSelection, setFakeSelection] = useState<string[] | null>(null);
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
@@ -259,7 +262,7 @@ export default function App() {
       )}
 
       {/* Controls */}
-      <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} />
+      <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} />
 
       {/* Logs */}
       <LogConsole logs={logs} connected={connected} onClear={clearLogs} lang={lang} />
@@ -271,6 +274,7 @@ export default function App() {
         onShowLicence={() => setShowLicence(true)}
         showToast={pushToast}
         refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
+        onFakeSelectionChange={setFakeSelection}
       />
 
       {/* Settings modal */}

@@ -19,7 +19,8 @@ export type RequestMessage =
   // Flux débutant guidé : analyse (récup + scan + flag, sans suppression), puis
   // une passe séparée de suppression seule sur les faux flaggés.
   | { type: "START_ANALYZE" }
-  | { type: "START_REMOVE_FAKES" }
+  // usernames optionnel = sélection explicite (U-C2) ; absent = tous les faux flaggés.
+  | { type: "START_REMOVE_FAKES"; payload?: { usernames?: string[] } }
   | { type: "START_CONTINUOUS" }
   | { type: "STOP" }
   | { type: "RESET_SCANNED" }

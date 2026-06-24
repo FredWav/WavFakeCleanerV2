@@ -187,7 +187,8 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
 
     case "START_REMOVE_FAKES":
-      runRemoveFlagged(); // lancé sans attendre — supprime uniquement les faux déjà flaggés
+      // Sélection explicite (U-C2) si fournie, sinon tous les faux flaggés.
+      runRemoveFlagged(msg.payload?.usernames); // lancé sans attendre
       return { ok: true };
 
     case "START_CONTINUOUS":

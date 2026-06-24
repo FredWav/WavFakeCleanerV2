@@ -451,14 +451,14 @@ export function runAnalyze(): Promise<void> {
 // ── Passe « suppression seule » sur les faux déjà flaggés ──
 // 2e étape du flux guidé : supprime exactement les comptes déjà marqués « faux »
 // (et montrés à l'utilisateur dans la liste Faux). Aucun scan/score ici.
-export function runRemoveFlagged(): Promise<void> {
+export function runRemoveFlagged(usernames?: string[]): Promise<void> {
   const myGen = runGeneration;
   return withPipelineLock(async () => {
     if (stopRequestedSince(myGen) || isRunning()) return;
     abortController = new AbortController();
     await startKeepAlive();
     try {
-      await runRemoveFlaggedInternal(abortController.signal);
+      await runRemoveFlaggedInternal(abortController.signal, usernames);
     } finally {
       await closeBackgroundTab();
       await stopKeepAlive();
@@ -467,11 +467,15 @@ export function runRemoveFlagged(): Promise<void> {
   });
 }
 
-async function runRemoveFlaggedInternal(signal: AbortSignal): Promise<void> {
+async function runRemoveFlaggedInternal(signal: AbortSignal, usernames?: string[]): Promise<void> {
   await loadLang();
   await rateTracker.load();
 
-  const fakes = (await getFollowers({ status: "fake" })).filter((f) => !f.removed);
+  // U-C2 : si une sélection explicite est fournie, ne supprimer QUE ces comptes
+  // (l'utilisateur a décoché ceux qu'il garde). Sinon, tous les faux flaggés.
+  const selected = usernames && usernames.length ? new Set(usernames) : null;
+  const fakes = (await getFollowers({ status: "fake" }))
+    .filter((f) => !f.removed && (!selected || selected.has(f.username)));
   if (fakes.length === 0) {
     log("INFO", "clean", m("cycle_no_pending"));
     return;
