@@ -42,6 +42,9 @@ export default function App() {
   // U-C2 : sélection des faux à supprimer, partagée entre la table (cases à
   // cocher) et le ControlPanel (bouton Supprimer). null = pas de sélection active.
   const [fakeSelection, setFakeSelection] = useState<string[] | null>(null);
+  // U-H3 : onglets. Les panneaux restent MONTÉS (masqués en CSS) pour préserver
+  // l'état (sélection U-C2, file de suppression) en changeant d'onglet.
+  const [tab, setTab] = useState<"cleanup" | "results" | "community">("cleanup");
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
@@ -241,41 +244,77 @@ export default function App() {
         </div>
       )}
 
-      {/* Stats */}
+      {/* Stats — dashboard persistant au-dessus des onglets */}
       <StatCards stats={stats} lang={lang} communityTotal={communityTotal} />
 
-      {/* Community status (licensed users) */}
-      <CommunityCard
-        lang={lang}
-        licence={licence}
-        onShowLicence={() => setShowLicence(true)}
-        showToast={pushToast}
-      />
+      {/* Onglets (U-H3) : Nettoyage / Résultats / Communauté */}
+      <div role="tablist" className="flex gap-1 rounded-lg bg-gray-900 p-1 border border-gray-800">
+        {([
+          ["cleanup", "tab_cleanup"],
+          ["results", "tab_results"],
+          ["community", "tab_community"],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={`flex-1 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+              ${tab === key ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            {t(label, lang)}
+            {key === "results" && (stats?.fakes ?? 0) > 0 && (
+              <span className="ml-1 px-1 rounded bg-red-600/30 text-red-300 tabular-nums">
+                {stats!.fakes}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      {/* Accroche post-fetch : combien de faux déjà repérés via les métadonnées */}
-      {prescan && prescan.likelyFakes > 0 && !stats?.isRunning && (
-        <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 leading-snug">
-          {t("prescan_banner", lang)
-            .replace("{0}", prescan.likelyFakes.toLocaleString())
-            .replace("{1}", prescan.total.toLocaleString())}
+      {/* Onglet Nettoyage : accroche post-fetch + contrôles */}
+      <div className={tab === "cleanup" ? "space-y-4" : "hidden"}>
+        {prescan && prescan.likelyFakes > 0 && !stats?.isRunning && (
+          <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 leading-snug">
+            {t("prescan_banner", lang)
+              .replace("{0}", prescan.likelyFakes.toLocaleString())
+              .replace("{1}", prescan.total.toLocaleString())}
+          </div>
+        )}
+        <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} />
+      </div>
+
+      {/* Onglet Résultats : la table des abonnés / faux / à vérifier */}
+      <div className={tab === "results" ? "" : "hidden"}>
+        <FollowerTable
+          lang={lang}
+          licence={licence}
+          onShowLicence={() => setShowLicence(true)}
+          showToast={pushToast}
+          refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
+          onFakeSelectionChange={setFakeSelection}
+        />
+      </div>
+
+      {/* Onglet Communauté */}
+      <div className={tab === "community" ? "" : "hidden"}>
+        <CommunityCard
+          lang={lang}
+          licence={licence}
+          onShowLicence={() => setShowLicence(true)}
+          showToast={pushToast}
+        />
+      </div>
+
+      {/* Journal d'activité — replié par défaut, en bas (U-M4 : plus au milieu) */}
+      <details className="group">
+        <summary className="cursor-pointer select-none text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+          {t("activity_toggle", lang)}
+        </summary>
+        <div className="mt-1">
+          <LogConsole logs={logs} connected={connected} onClear={clearLogs} lang={lang} />
         </div>
-      )}
-
-      {/* Controls */}
-      <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} />
-
-      {/* Logs */}
-      <LogConsole logs={logs} connected={connected} onClear={clearLogs} lang={lang} />
-
-      {/* Follower table */}
-      <FollowerTable
-        lang={lang}
-        licence={licence}
-        onShowLicence={() => setShowLicence(true)}
-        showToast={pushToast}
-        refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
-        onFakeSelectionChange={setFakeSelection}
-      />
+      </details>
 
       {/* Settings modal */}
       {showSettings && (
