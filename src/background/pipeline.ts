@@ -188,6 +188,18 @@ export function stopPipeline(): void {
   void tearDownBackgroundTab();
 }
 
+/**
+ * Interruption douce pour onSuspend (B-M8) : avorte les boucles en cours SANS
+ * fermer l'onglet de fond (volontairement préservé pour réattachement au reboot,
+ * cf. service-worker). Avant, onSuspend ne marquait que l'état idle et laissait
+ * l'AbortController vivant — les boucles continuaient jusqu'à la mort du worker.
+ */
+export function interruptForSuspend(): void {
+  runGeneration++;
+  abortController?.abort();
+  abortController = null;
+}
+
 // Configure the providers used by pipeline/state.ts to compute live stats.
 // Done once at module load so log/broadcastStats can reach back into the
 // running pipeline for current rate stats.

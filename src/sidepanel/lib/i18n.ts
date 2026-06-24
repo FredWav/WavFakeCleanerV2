@@ -766,7 +766,12 @@ const translations: Record<string, Record<string, string>> = {
 
 export function getStoredLang(): string {
   try {
-    return localStorage.getItem("wav_lang") || "fr";
+    const stored = localStorage.getItem("wav_lang");
+    if (stored) return stored;
+    // U-L1 : à défaut de choix enregistré, initialise sur la langue du navigateur
+    // (mappée fr/en/es) au lieu de forcer le français.
+    const nav = (navigator.language || "").slice(0, 2).toLowerCase();
+    return ["fr", "en", "es"].includes(nav) ? nav : "fr";
   } catch {
     return "fr";
   }

@@ -29,6 +29,7 @@ import {
   runRemoveFlagged,
   runContinuous,
   stopPipeline,
+  interruptForSuspend,
   isRunning,
   rateTracker,
   persistFollowerPage,
@@ -192,9 +193,15 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       runRemoveFlagged(msg.payload?.usernames); // lancé sans attendre
       return { ok: true };
 
-    case "START_CONTINUOUS":
+    case "START_CONTINUOUS": {
+      // B-H1 : le mode continu est réservé aux licenciés. L'UI le verrouille déjà,
+      // mais un message direct ne doit pas faire boucler un free-user à vide
+      // (quota épuisé après 1 cycle → re-fetch sans fin).
+      const lic = await getLicense();
+      if (!lic.active) return { ok: false, error: "licence_required" };
       runContinuous(); // fire and forget
       return { ok: true };
+    }
 
     case "STOP":
       stopPipeline();
@@ -577,6 +584,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onSuspend.addListener(() => {
   if (isRunning()) {
     console.log("[WFC] Service worker suspending while pipeline is running");
+    // B-M8 : avorte les boucles en cours (sans fermer l'onglet de fond, qu'on
+    // préserve pour réattachement) avant de marquer l'état interrompu.
+    interruptForSuspend();
     void savePipelineState({
       stage: "idle",
       sessionId: null,
