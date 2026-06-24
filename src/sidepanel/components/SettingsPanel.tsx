@@ -4,6 +4,7 @@ import { t } from "../lib/i18n";
 import type { Settings } from "@shared/types";
 import Modal from "./ui/Modal";
 import Button from "./ui/Button";
+import { IconX } from "./Icons";
 
 export default function SettingsPanel({
   lang,
@@ -38,7 +39,9 @@ export default function SettingsPanel({
       showToast?.(t("toast_settings_saved", lang));
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
-      setError(String(e));
+      // U-H7 : message humain traduit pour l'utilisateur, détail technique en console.
+      console.error("[WFC] settings save failed:", e);
+      setError(t("settings_save_failed", lang));
     } finally {
       setSaving(false);
     }
@@ -48,8 +51,8 @@ export default function SettingsPanel({
     <Modal onClose={onClose}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">{t("settings", lang)}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">
-            ×
+          <button onClick={onClose} aria-label={t("confirm_cancel", lang)} className="text-gray-500 hover:text-white p-1">
+            <IconX />
           </button>
         </div>
 
@@ -60,9 +63,14 @@ export default function SettingsPanel({
             <input
               type="text"
               value={form.threadsUsername}
-              onChange={(e) => setForm({ ...form, threadsUsername: e.target.value })}
+              placeholder={t("username_placeholder", lang)}
+              // U-M2 : normalise à la saisie — retire le @ initial et les espaces
+              // (l'utilisateur colle souvent « @fredwav »).
+              onChange={(e) =>
+                setForm({ ...form, threadsUsername: e.target.value.replace(/\s+/g, "").replace(/^@+/, "") })
+              }
               className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
-                text-xs text-white w-36 focus:border-purple-500 outline-none"
+                text-xs text-white w-36 placeholder-gray-600 focus:border-purple-500 outline-none"
             />
           </div>
           {/* Threshold */}
@@ -83,6 +91,9 @@ export default function SettingsPanel({
             <label className="text-gray-400">{t("setting_private_review", lang)}</label>
             <button
               onClick={() => setForm({ ...form, privateAlwaysReview: !form.privateAlwaysReview })}
+              role="switch"
+              aria-checked={!!form.privateAlwaysReview}
+              aria-label={t("setting_private_review", lang)}
               className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${form.privateAlwaysReview ? "bg-purple-600" : "bg-gray-700"}`}
             >
               <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.privateAlwaysReview ? "translate-x-4" : "translate-x-0"}`} />
@@ -96,6 +107,9 @@ export default function SettingsPanel({
             </div>
             <button
               onClick={() => setForm({ ...form, telemetry: !form.telemetry })}
+              role="switch"
+              aria-checked={!!form.telemetry}
+              aria-label={t("setting_telemetry", lang)}
               className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 mt-0.5 ${form.telemetry ? "bg-purple-600" : "bg-gray-700"}`}
             >
               <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.telemetry ? "translate-x-4" : "translate-x-0"}`} />

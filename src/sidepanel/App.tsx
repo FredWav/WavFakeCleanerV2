@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useStats } from "./hooks/useStats";
 import { useLog } from "./hooks/useLog";
 import { t, getStoredLang, setStoredLang } from "./lib/i18n";
@@ -12,8 +12,13 @@ import SettingsPanel from "./components/SettingsPanel";
 import LicencePanel from "./components/LicencePanel";
 import Toast from "./components/Toast";
 import Onboarding from "./components/Onboarding";
+import { IconX } from "./components/Icons";
 import { COMMUNITY_STATS_URL } from "@shared/constants";
 import type { LicenseInfo } from "@shared/types";
+
+// Logo de marque (icône Chrome existante) — affiché dans l'en-tête (D2 :
+// l'identité dormait dans le dossier /design et n'apparaissait jamais dans l'UI).
+const LOGO_URL = chrome.runtime?.getURL?.("icons/icon128.png") ?? "icons/icon128.png";
 
 export default function App() {
   const [lang, setLang] = useState(getStoredLang);
@@ -21,7 +26,17 @@ export default function App() {
   const [showLicence, setShowLicence] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
-  const [toast, setToast] = useState<string | null>(null);
+  // U-L2 : file de toasts empilables (avant : un seul toast, le suivant écrasait
+  // le précédent). Cap à 4 affichés ; chaque toast s'auto-efface.
+  const toastId = useRef(0);
+  const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
+  const pushToast = useCallback((msg: string) => {
+    const id = ++toastId.current;
+    setToasts((q) => [...q, { id, msg }].slice(-4));
+  }, []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((q) => q.filter((to) => to.id !== id));
+  }, []);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
   const [prescan, setPrescan] = useState<{ likelyFakes: number; total: number } | null>(null);
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
@@ -79,7 +94,7 @@ export default function App() {
       if ((area === "local" || area === "sync") && changes.license) {
         api.getLicense().then((lic) => {
           setLicence(lic);
-          if (!licence.active && lic.active) setToast(t("licence_success", lang));
+          if (!licence.active && lic.active) pushToast(t("licence_success", lang));
         }).catch(() => {});
       }
     }
@@ -136,7 +151,7 @@ export default function App() {
       if (message.type !== "LOG_EVENT") return;
       if (message.payload?.category !== "drift") return;
       shown = true;
-      setToast(t("drift_detected", lang));
+      pushToast(t("drift_detected", lang));
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -158,19 +173,22 @@ export default function App() {
     <div className="w-full px-3 py-4 space-y-4">
       {/* Header */}
       <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-white">Wav Fake Cleaner</h1>
-          <p className="text-[10px] text-gray-500">
-            by{" "}
-            <a
-              href="https://fredwav.com/contact"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-purple-400 hover:text-purple-300 transition-colors"
-            >
-              Fred Wav
-            </a>
-          </p>
+        <div className="flex items-center gap-2">
+          <img src={LOGO_URL} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
+          <div>
+            <h1 className="text-lg font-bold text-white leading-none">Wav Fake Cleaner</h1>
+            <p className="text-[10px] text-gray-500">
+              by{" "}
+              <a
+                href="https://fredwav.com/contact"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-400 hover:text-purple-300 transition-colors"
+              >
+                Fred Wav
+              </a>
+            </p>
+          </div>
         </div>
         <div className="flex gap-1.5 items-center">
           <button
@@ -212,10 +230,10 @@ export default function App() {
           </button>
           <button
             onClick={dismissTelemetryNotice}
-            className="shrink-0 text-purple-400 hover:text-white transition-colors text-sm leading-none"
-            aria-label="Dismiss"
+            className="shrink-0 text-purple-400 hover:text-white transition-colors p-0.5"
+            aria-label={t("confirm_cancel", lang)}
           >
-            ×
+            <IconX />
           </button>
         </div>
       )}
@@ -228,7 +246,7 @@ export default function App() {
         lang={lang}
         licence={licence}
         onShowLicence={() => setShowLicence(true)}
-        showToast={setToast}
+        showToast={pushToast}
       />
 
       {/* Accroche post-fetch : combien de faux déjà repérés via les métadonnées */}
@@ -251,7 +269,7 @@ export default function App() {
         lang={lang}
         licence={licence}
         onShowLicence={() => setShowLicence(true)}
-        showToast={setToast}
+        showToast={pushToast}
         refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
       />
 
@@ -260,7 +278,7 @@ export default function App() {
         <SettingsPanel
           lang={lang}
           onClose={() => setShowSettings(false)}
-          showToast={setToast}
+          showToast={pushToast}
         />
       )}
 
@@ -271,7 +289,7 @@ export default function App() {
           licence={licence}
           onUpdate={onLicenceUpdate}
           onClose={() => setShowLicence(false)}
-          showToast={setToast}
+          showToast={pushToast}
           communityTotal={communityTotal}
         />
       )}
@@ -285,8 +303,12 @@ export default function App() {
         />
       )}
 
-      {/* Toast */}
-      <Toast message={toast} onDismiss={() => setToast(null)} />
+      {/* Toasts empilés (U-L2) */}
+      <div className="fixed bottom-3 left-3 right-3 z-50 flex flex-col items-center gap-1.5 pointer-events-none">
+        {toasts.map((to) => (
+          <Toast key={to.id} message={to.msg} onDismiss={() => dismissToast(to.id)} />
+        ))}
+      </div>
     </div>
   );
 }

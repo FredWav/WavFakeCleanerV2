@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { t } from "../lib/i18n";
 import type { LogEntry } from "@shared/types";
+import { IconDot, IconWarn, IconX } from "./Icons";
 
-const levelStyles: Record<string, { color: string; icon: string }> = {
-  INFO: { color: "text-blue-400", icon: ">" },
-  WARNING: { color: "text-yellow-400", icon: "!" },
-  ERROR: { color: "text-red-400", icon: "x" },
-  DEBUG: { color: "text-gray-500", icon: "~" },
+// D6 : icônes SVG du set maison au lieu des glyphes texte « > ! x ~ ».
+const levelStyles: Record<string, { color: string; icon: ReactNode }> = {
+  INFO: { color: "text-blue-400", icon: <IconDot /> },
+  WARNING: { color: "text-yellow-400", icon: <IconWarn /> },
+  ERROR: { color: "text-red-400", icon: <IconX /> },
+  DEBUG: { color: "text-gray-500", icon: <IconDot /> },
 };
 
 function formatTs(iso: string): string {

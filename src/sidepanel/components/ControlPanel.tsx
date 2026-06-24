@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import type { Stats, LicenseInfo } from "@shared/types";
 import Modal from "./ui/Modal";
+import { IconChevronDown, IconChevronRight } from "./Icons";
 
 // Au-delà de ce nombre de suppressions, on exige une case « j'ai compris »
 // explicite avant d'activer le bouton de confirmation (U-C1).
@@ -13,6 +14,13 @@ function formatMMSS(ms: number): string {
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+// ETA lisible : au-delà de 90s on arrondit en minutes (« ~25 min »), sinon mm:ss.
+function formatEta(ms: number, lang: string): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  if (totalSec < 90) return formatMMSS(ms);
+  return t("eta_minutes", lang).replace("{0}", String(Math.round(totalSec / 60)));
 }
 
 /**
@@ -125,9 +133,29 @@ export default function ControlPanel({
     if (action) run(action);
   }
 
-  const progress = stats && stats.totalFollowers > 0
-    ? Math.min(100, Math.round((stats.scanned / stats.totalFollowers) * 100))
+  const scanned = stats?.scanned ?? 0;
+  const totalFollowers = stats?.totalFollowers ?? 0;
+  const progress = totalFollowers > 0
+    ? Math.min(100, Math.round((scanned / totalFollowers) * 100))
     : 0;
+
+  // U-H4 : ETA basée sur le débit MOYEN depuis le début du run en cours (stable,
+  // contrairement à un débit instantané qui sauterait à chaque tick de 3s).
+  const runStartRef = useRef<{ scanned: number; ts: number } | null>(null);
+  const [etaMs, setEtaMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isRunning) { runStartRef.current = null; setEtaMs(null); return; }
+    const now = Date.now();
+    if (!runStartRef.current) { runStartRef.current = { scanned, ts: now }; return; }
+    const start = runStartRef.current;
+    const done = scanned - start.scanned;
+    const elapsed = now - start.ts;
+    if (done > 0 && elapsed > 0) {
+      const rate = done / elapsed; // profils par ms
+      const remaining = Math.max(0, totalFollowers - scanned);
+      setEtaMs(rate > 0 ? remaining / rate : null);
+    }
+  }, [scanned, totalFollowers, isRunning]);
 
   return (
     <div className="space-y-2">
@@ -147,7 +175,7 @@ export default function ControlPanel({
             ? "bg-gray-800 text-gray-600 cursor-not-allowed"
             : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
           }
-          ${loading === "analyze" ? "animate-pulse" : ""}`}
+          ${loading === "analyze" ? "opacity-70 cursor-wait" : ""}`}
       >
         {t("analyze_btn", lang)}
       </button>
@@ -170,7 +198,7 @@ export default function ControlPanel({
         disabled={!!loading || !isRunning}
         className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
           ${isRunning
-            ? "bg-red-600 text-white hover:bg-red-500 active:scale-95 animate-pulse"
+            ? "bg-red-600 text-white hover:bg-red-500 active:scale-95"
             : "bg-gray-800 text-gray-600 cursor-not-allowed"
           }`}
       >
@@ -181,9 +209,10 @@ export default function ControlPanel({
           mode continu payant). Masqués par défaut pour garder le flux débutant clair. */}
       <button
         onClick={() => setShowAdvanced((v) => !v)}
-        className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+        className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors inline-flex items-center gap-1"
       >
-        {showAdvanced ? "▾ " : "▸ "}{t("advanced_toggle", lang)}
+        {showAdvanced ? <IconChevronDown /> : <IconChevronRight />}
+        {t("advanced_toggle", lang)}
       </button>
       {showAdvanced && (
         <div className="flex gap-2">
@@ -195,7 +224,7 @@ export default function ControlPanel({
                 ? "bg-gray-800 text-gray-600 cursor-not-allowed"
                 : "bg-blue-600 text-white hover:bg-blue-500 active:scale-95"
               }
-              ${loading === "fetch" ? "animate-pulse" : ""}`}
+              ${loading === "fetch" ? "opacity-70 cursor-wait" : ""}`}
           >
             {t("fetch", lang)}
           </button>
@@ -207,7 +236,7 @@ export default function ControlPanel({
                 ? "bg-gray-800 text-gray-600 cursor-not-allowed"
                 : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
               }
-              ${loading === "clean" || loading === "continuous" ? "animate-pulse" : ""}`}
+              ${loading === "clean" || loading === "continuous" ? "opacity-70 cursor-wait" : ""}`}
           >
             {t("clean_btn", lang)}
             {licence.active && (
@@ -233,12 +262,14 @@ export default function ControlPanel({
         <p className="text-[10px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
       )}
 
-      {/* Progress bar */}
-      {isRunning && stats && stats.totalFollowers > 0 && (
+      {/* Progress bar — U-H4 : compteur X/Y + ETA, pas juste un % */}
+      {isRunning && totalFollowers > 0 && (
         <div className="space-y-1">
           <div className="flex justify-between text-[10px] text-gray-500">
             <span>{t("progress_label", lang)}</span>
-            <span>{progress}%</span>
+            <span className="tabular-nums">
+              {scanned.toLocaleString()}/{totalFollowers.toLocaleString()} · {progress}%
+            </span>
           </div>
           <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
             <div
@@ -246,6 +277,11 @@ export default function ControlPanel({
               style={{ width: `${progress}%` }}
             />
           </div>
+          {etaMs !== null && etaMs > 0 && (
+            <p className="text-[10px] text-gray-500 tabular-nums">
+              {t("eta_label", lang).replace("{0}", formatEta(etaMs, lang))}
+            </p>
+          )}
         </div>
       )}
 

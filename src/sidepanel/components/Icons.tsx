@@ -5,9 +5,9 @@ export const IconGlobe = () => (
     <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
   </svg>
 );
-export const IconBolt = () => (
-  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="inline-block">
-    <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+export const IconDot = () => (
+  <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" className="inline-block align-middle">
+    <circle cx="12" cy="12" r="6"/>
   </svg>
 );
 export const IconWarn = () => (

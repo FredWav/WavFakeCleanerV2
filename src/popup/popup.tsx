@@ -18,20 +18,26 @@ function Popup() {
     window.close();
   }
 
+  const logoUrl = chrome.runtime?.getURL?.("icons/icon128.png") ?? "icons/icon128.png";
   return (
     <div className="w-64 p-4 bg-gray-950 text-white space-y-3">
-      <h1 className="text-sm font-bold">Wav Fake Cleaner V2</h1>
-      <p className="text-[10px] text-gray-500">
-        by{" "}
-        <a
-          href="https://www.threads.net/@fredwavoff"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-purple-400"
-        >
-          Fred Wav
-        </a>
-      </p>
+      <div className="flex items-center gap-2">
+        <img src={logoUrl} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
+        <div>
+          <h1 className="text-sm font-bold leading-none">Wav Fake Cleaner</h1>
+          <p className="text-[10px] text-gray-500">
+            by{" "}
+            <a
+              href="https://www.threads.net/@fredwavoff"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-purple-400"
+            >
+              Fred Wav
+            </a>
+          </p>
+        </div>
+      </div>
       <div className="space-y-2">
         <button
           onClick={openSidePanel}

@@ -189,8 +189,8 @@ export default function LicencePanel({
     <Modal onClose={onClose}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">{t("licence", lang)}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">
-            ×
+          <button onClick={onClose} aria-label={t("confirm_cancel", lang)} className="text-gray-500 hover:text-white p-1">
+            <IconX />
           </button>
         </div>
 
@@ -294,9 +294,9 @@ export default function LicencePanel({
                   text-center hover:bg-purple-500 transition-colors"
               >
                 <span className="line-through text-gray-400 text-[10px] mr-1">
-                  {t("licence_original_price", lang)}EUR
+                  {t("licence_original_price", lang)}{" €"}
                 </span>
-                {t("licence_launch_price", lang)}EUR — {t("licence_lifetime", lang)}
+                {t("licence_launch_price", lang)}{" €"} — {t("licence_lifetime", lang)}
               </a>
               <p className="text-[10px] text-purple-300">{t("licence_price_anchor", lang)}</p>
               <p className="text-[10px] text-gray-400">{t("licence_guarantee", lang)}</p>

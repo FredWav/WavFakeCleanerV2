@@ -448,11 +448,23 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
         message: `Page ${page} : ${total} followers récupérés…`,
       };
       chrome.runtime.sendMessage({ type: "LOG_EVENT", payload: logEntry }).catch(() => {});
-      // Also update pipeline state for progress display
-      chrome.runtime.sendMessage({
-        type: "PIPELINE_STATE",
-        payload: { stage: "fetching", progress: total, total: 0, sessionId: null, lastError: null },
-      }).catch(() => {});
+      // B-H2 : fusionner la progression dans l'état persistant au lieu d'émettre
+      // un PIPELINE_STATE brut avec total:0 et lastError:null — ça faisait osciller
+      // la barre (total retombait à 0) et effaçait l'erreur du run en cours.
+      try {
+        const cur = await getPipelineState();
+        const merged = {
+          stage: "fetching" as const,
+          sessionId: cur?.sessionId ?? null,
+          progress: total,
+          total: cur?.total ?? 0,
+          lastError: cur?.lastError ?? null,
+          pausedUntil: cur?.pausedUntil ?? null,
+          pauseReason: cur?.pauseReason ?? null,
+        };
+        await savePipelineState(merged);
+        chrome.runtime.sendMessage({ type: "PIPELINE_STATE", payload: merged }).catch(() => {});
+      } catch { /* best effort — la barre se resynchronise au prochain GET_STATS */ }
       return { ok: true };
     }
 
@@ -524,7 +536,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // ── Install handler ──
 
 chrome.runtime.onInstalled.addListener((details) => {
-  console.log("Wav Fake Cleaner V2 installed", details.reason);
+  console.log("Wav Fake Cleaner V3 installed", details.reason);
 
   void (async () => {
     try {

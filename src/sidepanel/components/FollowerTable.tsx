@@ -269,11 +269,11 @@ export default function FollowerTable({
         }
       }
     } catch {
-      // silent
+      showToast?.(t("action_failed", lang)); // U-M1 : ne plus avaler en silence
     } finally {
       setLoading(false);
     }
-  }, [filter, search]);
+  }, [filter, search, showToast, lang]);
 
   useEffect(() => {
     const timer = setTimeout(() => load(), search ? 300 : 0);
@@ -286,7 +286,7 @@ export default function FollowerTable({
     try {
       await api.approveFollower(username);
       await load();
-    } catch { /* silent */ } finally {
+    } catch { showToast?.(t("action_failed", lang)); } finally {
       setActionLoading(null);
     }
   }
@@ -297,7 +297,7 @@ export default function FollowerTable({
     try {
       await api.rejectFollower(username);
       await load();
-    } catch { /* silent */ } finally {
+    } catch { showToast?.(t("action_failed", lang)); } finally {
       setActionLoading(null);
     }
   }
@@ -335,7 +335,7 @@ export default function FollowerTable({
         })
         .catch(() => {});
       await load();
-    } catch { /* silent */ } finally {
+    } catch { showToast?.(t("action_failed", lang)); } finally {
       setVoteLoading(null);
     }
   }
@@ -362,7 +362,7 @@ export default function FollowerTable({
           className="ml-auto px-2 py-0.5 rounded-lg text-[10px] bg-gray-800 border border-gray-700
             text-gray-300 placeholder-gray-600 outline-none focus:border-purple-500 w-28"
         />
-        <button onClick={load} className="text-gray-500 hover:text-gray-300 px-1">
+        <button onClick={load} aria-label={t("refresh", lang)} title={t("refresh", lang)} className="text-gray-500 hover:text-gray-300 px-1">
           <IconRefresh />
         </button>
       </div>
@@ -565,6 +565,8 @@ export default function FollowerTable({
                                     <button
                                       onClick={(e) => handleVote(e, f.username, myVotes.get(f.username) === "fake" ? "ok" : "fake", f.score!)}
                                       disabled={voteLoading === f.username}
+                                      aria-label={t("vote_change", lang)}
+                                      title={t("vote_change", lang)}
                                       className="px-1 py-0.5 rounded text-[9px] bg-gray-700/50 text-gray-400
                                         hover:text-white transition-colors disabled:opacity-50"
                                     >
