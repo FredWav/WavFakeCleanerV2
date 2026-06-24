@@ -103,7 +103,7 @@ export default function SettingsPanel({
           <div className="flex items-start justify-between gap-3 py-2">
             <div className="flex-1">
               <label className="text-gray-400 block">{t("setting_telemetry", lang)}</label>
-              <p className="text-[10px] text-gray-600 mt-0.5">{t("setting_telemetry_hint", lang)}</p>
+              <p className="text-[11px] text-gray-600 mt-0.5">{t("setting_telemetry_hint", lang)}</p>
             </div>
             <button
               onClick={() => setForm({ ...form, telemetry: !form.telemetry })}

@@ -161,7 +161,7 @@ export default function ControlPanel({
     <div className="space-y-2">
       {/* Réassurance permanente : les vrais abonnés ne sont jamais touchés. Calme
           la peur n°1 qui bloque l'usage et la conversion. */}
-      <p className="text-[10px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+      <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
         {t("safety_promise", lang)}
       </p>
 
@@ -173,13 +173,13 @@ export default function ControlPanel({
         className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
           ${isRunning
             ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-            : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
+            : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
           }
           ${loading === "analyze" ? "opacity-70 cursor-wait" : ""}`}
       >
         {t("analyze_btn", lang)}
       </button>
-      <p className="text-[10px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
+      <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
 
       {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et validés. */}
       {!isRunning && fakesToRemove > 0 && (
@@ -209,7 +209,7 @@ export default function ControlPanel({
           mode continu payant). Masqués par défaut pour garder le flux débutant clair. */}
       <button
         onClick={() => setShowAdvanced((v) => !v)}
-        className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors inline-flex items-center gap-1"
+        className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors inline-flex items-center gap-1"
       >
         {showAdvanced ? <IconChevronDown /> : <IconChevronRight />}
         {t("advanced_toggle", lang)}
@@ -240,7 +240,7 @@ export default function ControlPanel({
           >
             {t("clean_btn", lang)}
             {licence.active && (
-              <span className="ml-1 text-[10px] opacity-70">{t("continuous_label", lang)}</span>
+              <span className="ml-1 text-[11px] opacity-70">{t("continuous_label", lang)}</span>
             )}
           </button>
         </div>
@@ -259,13 +259,13 @@ export default function ControlPanel({
       {/* Pendant l'exécution : dire à l'utilisateur qu'il peut partir — le scan
           continue dans un onglet de fond. Évite de fixer la barre pendant 20 min. */}
       {isRunning && (
-        <p className="text-[10px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
+        <p className="text-[11px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
       )}
 
       {/* Progress bar — U-H4 : compteur X/Y + ETA, pas juste un % */}
       {isRunning && totalFollowers > 0 && (
         <div className="space-y-1">
-          <div className="flex justify-between text-[10px] text-gray-500">
+          <div className="flex justify-between text-[11px] text-gray-500">
             <span>{t("progress_label", lang)}</span>
             <span className="tabular-nums">
               {scanned.toLocaleString()}/{totalFollowers.toLocaleString()} · {progress}%
@@ -273,12 +273,12 @@ export default function ControlPanel({
           </div>
           <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
             <div
-              className="h-full bg-purple-600 rounded-full transition-all duration-700 ease-out"
+              className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
               style={{ width: `${progress}%` }}
             />
           </div>
           {etaMs !== null && etaMs > 0 && (
-            <p className="text-[10px] text-gray-500 tabular-nums">
+            <p className="text-[11px] text-gray-500 tabular-nums">
               {t("eta_label", lang).replace("{0}", formatEta(etaMs, lang))}
             </p>
           )}
@@ -298,11 +298,11 @@ export default function ControlPanel({
       )}
 
       {/* Persistent honesty note: fetching is scroll-based and caps ~5000/pass. */}
-      <p className="text-[10px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
+      <p className="text-[11px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
 
       {/* Rendre les limites du plan gratuit visibles d'emblée, pas en mur surprise. */}
       {!licence.active && (
-        <p className="text-[10px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
+        <p className="text-[11px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
       )}
 
       {/* U-C1 : confirmation obligatoire avant toute suppression irréversible. */}

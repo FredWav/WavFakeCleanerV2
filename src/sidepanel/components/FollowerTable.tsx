@@ -210,16 +210,16 @@ function scoreBadge(score: number | null) {
   let color = "bg-green-500/20 text-green-400";
   if (score >= 70) color = "bg-red-500/20 text-red-400";
   else if (score >= 40) color = "bg-yellow-500/20 text-yellow-400";
-  return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${color}`}>{score}</span>;
+  return <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${color}`}>{score}</span>;
 }
 
 function statusBadge(f: FollowerRecord, lang: string) {
-  if (f.removed) return <span className="text-green-400 text-[10px]">{t("filter_removed", lang)}</span>;
-  if (f.toReview) return <span className="text-orange-400 text-[10px]">{t("to_review", lang)}</span>;
-  if (f.approved) return <span className="text-emerald-400 text-[10px]">{t("approved", lang)}</span>;
-  if (f.isFake) return <span className="text-red-400 text-[10px]">{t("filter_fake", lang)}</span>;
-  if (f.scanned) return <span className="text-cyan-400 text-[10px]">OK</span>;
-  return <span className="text-gray-500 text-[10px]">{t("filter_pending", lang)}</span>;
+  if (f.removed) return <span className="text-green-400 text-[11px]">{t("filter_removed", lang)}</span>;
+  if (f.toReview) return <span className="text-orange-400 text-[11px]">{t("to_review", lang)}</span>;
+  if (f.approved) return <span className="text-emerald-400 text-[11px]">{t("approved", lang)}</span>;
+  if (f.isFake) return <span className="text-red-400 text-[11px]">{t("filter_fake", lang)}</span>;
+  if (f.scanned) return <span className="text-cyan-400 text-[11px]">OK</span>;
+  return <span className="text-gray-500 text-[11px]">{t("filter_pending", lang)}</span>;
 }
 
 type FollowerWithUrl = FollowerRecord & { profile_url: string };
@@ -348,7 +348,7 @@ export default function FollowerTable({
           <button
             key={key}
             onClick={() => setFilter(param)}
-            className={`px-2 py-0.5 rounded-lg text-[10px] font-medium transition-colors
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-medium transition-colors
               ${filter === param ? "bg-gray-700 text-white" : "text-gray-500 hover:text-gray-300"}`}
           >
             {t(key, lang)}
@@ -359,7 +359,7 @@ export default function FollowerTable({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("search_placeholder", lang)}
-          className="ml-auto px-2 py-0.5 rounded-lg text-[10px] bg-gray-800 border border-gray-700
+          className="ml-auto px-2 py-0.5 rounded-lg text-[11px] bg-gray-800 border border-gray-700
             text-gray-300 placeholder-gray-600 outline-none focus:border-purple-500 w-28"
         />
         <button onClick={load} aria-label={t("refresh", lang)} title={t("refresh", lang)} className="text-gray-500 hover:text-gray-300 px-1">
@@ -369,7 +369,7 @@ export default function FollowerTable({
 
       {/* Removed journal: honesty note about re-follow + CSV export */}
       {filter === "removed" && (
-        <div className="flex items-start gap-2 px-2 py-1.5 border-b border-gray-800 text-[10px] text-gray-500">
+        <div className="flex items-start gap-2 px-2 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">
           <span className="leading-snug flex-1">{t("removed_note", lang)}</span>
           {followers.length > 0 && (
             <button
@@ -386,7 +386,7 @@ export default function FollowerTable({
       <div className="overflow-x-auto max-h-72 overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-gray-900">
-            <tr className="text-gray-500 text-[10px] uppercase">
+            <tr className="text-gray-500 text-[11px] uppercase">
               <th className="text-left px-2 py-1.5">{t("follower", lang)}</th>
               <th className="text-center px-1 py-1.5">{t("score", lang)}</th>
               <th className="text-center px-1 py-1.5">{t("status", lang)}</th>
@@ -414,7 +414,7 @@ export default function FollowerTable({
                   ) : !filter && !search ? (
                     <div className="space-y-1">
                       <p className="text-xs text-gray-400">{t("empty_no_followers", lang)}</p>
-                      <p className="text-[10px] text-gray-600">{t("empty_no_followers_hint", lang)}</p>
+                      <p className="text-[11px] text-gray-600">{t("empty_no_followers_hint", lang)}</p>
                     </div>
                   ) : (
                     <span className="text-xs text-gray-600">{t("no_data", lang)}</span>
@@ -470,9 +470,9 @@ export default function FollowerTable({
                         >
                           @{f.username}
                         </a>
-                        {f.isPrivate && <span className="ml-1 text-[10px] text-gray-600" title="Private">P</span>}
+                        {f.isPrivate && <span className="ml-1 text-[11px] text-gray-600" title="Private">P</span>}
                         {isSpotted && (
-                          <span className="ml-1 px-1 py-0.5 rounded text-[9px] bg-orange-500/20 text-orange-400 font-medium">
+                          <span className="ml-1 px-1 py-0.5 rounded text-[11px] bg-orange-500/20 text-orange-400 font-medium">
                             {t("spotted_by_community", lang)}
                           </span>
                         )}
@@ -492,7 +492,7 @@ export default function FollowerTable({
                         <td colSpan={3} className="px-3 py-2 space-y-2">
 
                           {/* Section 1: Infos compte */}
-                          <div className="text-[10px] text-gray-500 flex flex-wrap gap-x-2">
+                          <div className="text-[11px] text-gray-500 flex flex-wrap gap-x-2">
                             {f.followersCount !== null && (
                               <span>{f.followersCount} {t("info_followers", lang)}</span>
                             )}
@@ -512,14 +512,14 @@ export default function FollowerTable({
                           {/* Section 2: Analyse lisible */}
                           {readable.length > 0 && (
                             <div>
-                              <div className="text-[9px] text-gray-600 uppercase font-medium mb-0.5">
+                              <div className="text-[11px] text-gray-600 uppercase font-medium mb-0.5">
                                 {t("analysis", lang)}
                               </div>
                               <div className="flex flex-wrap gap-1">
                                 {readable.map((item, i) => (
                                   <span
                                     key={i}
-                                    className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                    className={`px-1.5 py-0.5 rounded text-[11px] ${
                                       item.suspect
                                         ? "bg-red-500/15 text-red-400"
                                         : "bg-green-500/15 text-green-400"
@@ -535,19 +535,19 @@ export default function FollowerTable({
                           {/* Section 3: Vote communautaire */}
                           {f.score !== null && f.score >= 40 && (
                             <div className="border border-blue-900/40 rounded-lg px-2 py-1.5 bg-blue-950/20">
-                              <div className="text-[9px] text-blue-400/70 uppercase font-semibold mb-1 tracking-wide flex items-center gap-1">
+                              <div className="text-[11px] text-blue-400/70 uppercase font-semibold mb-1 tracking-wide flex items-center gap-1">
                                 <IconGlobe /> {t("community_vote", lang)}
                               </div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 {licencePrompt === f.username ? (
                                   /* Upsell sans licence */
                                   <div className="flex items-center gap-1.5">
-                                    <span className="text-[10px] text-purple-300">
+                                    <span className="text-[11px] text-purple-300">
                                       {t("vote_licence_required", lang)}
                                     </span>
                                     <button
                                       onClick={(e) => { e.stopPropagation(); onShowLicence?.(); setLicencePrompt(null); }}
-                                      className="px-2 py-0.5 rounded text-[10px] bg-purple-600 text-white font-medium
+                                      className="px-2 py-0.5 rounded text-[11px] bg-purple-600 text-white font-medium
                                         hover:bg-purple-500 transition-colors"
                                     >
                                       {t("vote_licence_cta", lang)}
@@ -556,7 +556,7 @@ export default function FollowerTable({
                                 ) : myVotes.has(f.username) ? (
                                   /* Déjà voté */
                                   <div className="flex items-center gap-1.5">
-                                    <span className="text-[10px] text-gray-400">
+                                    <span className="text-[11px] text-gray-400">
                                       {t("vote_submitted", lang)}:{" "}
                                       <span className={myVotes.get(f.username) === "fake" ? "text-red-400 font-medium" : "text-green-400 font-medium"}>
                                         {myVotes.get(f.username) === "fake" ? t("vote_fake", lang) : t("vote_not_fake", lang)}
@@ -567,7 +567,7 @@ export default function FollowerTable({
                                       disabled={voteLoading === f.username}
                                       aria-label={t("vote_change", lang)}
                                       title={t("vote_change", lang)}
-                                      className="px-1 py-0.5 rounded text-[9px] bg-gray-700/50 text-gray-400
+                                      className="px-1 py-0.5 rounded text-[11px] bg-gray-700/50 text-gray-400
                                         hover:text-white transition-colors disabled:opacity-50"
                                     >
                                       <IconRefresh />
@@ -596,7 +596,7 @@ export default function FollowerTable({
                                 )}
                                 {/* Résultat communautaire */}
                                 {cs && cs.voteCount > 0 && (
-                                  <span className="text-[10px] text-gray-500 ml-auto">
+                                  <span className="text-[11px] text-gray-500 ml-auto">
                                     {cs.voteCount} votes · {Math.round(cs.fakeRatio * 100)}% fake
                                   </span>
                                 )}
@@ -616,7 +616,7 @@ export default function FollowerTable({
         </table>
       </div>
       {followers.length >= 200 && (
-        <div className="px-2 py-1 text-[9px] text-gray-600 border-t border-gray-800 text-center">
+        <div className="px-2 py-1 text-[11px] text-gray-600 border-t border-gray-800 text-center">
           {t("list_capped", lang)}
         </div>
       )}

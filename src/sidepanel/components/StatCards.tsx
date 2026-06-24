@@ -16,7 +16,7 @@ function AnimatedCard({ value, color, label }: { value: number; color: string; l
   const display = useCountUp(value);
   return (
     <div className={`rounded-xl p-3 ${color} backdrop-blur-sm`}>
-      <div className="text-[10px] uppercase tracking-wider opacity-70">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider opacity-70">{label}</div>
       <div className="text-xl font-bold mt-0.5">{display.toLocaleString()}</div>
     </div>
   );
@@ -63,9 +63,9 @@ function HealthGauge({ score, coverage, lang }: { score: number | null; coverage
           {hasScore ? "/ 100" : ""}
         </text>
       </svg>
-      <span className="text-[10px] text-gray-500 -mt-1">{t("health_score", lang)}</span>
+      <span className="text-[11px] text-gray-500 -mt-1">{t("health_score", lang)}</span>
       {coverage > 0 && coverage < 100 && (
-        <span className="text-[9px] text-gray-600">
+        <span className="text-[11px] text-gray-600">
           {t("scanned_coverage", lang).replace("{0}", String(coverage))}
         </span>
       )}
@@ -126,7 +126,7 @@ export default function StatCards({
       <HealthGauge score={healthScore} coverage={coverage} lang={lang} />
 
       {estimatedFakes !== null && (
-        <p className="text-[10px] text-red-300/90 text-center bg-red-500/5 rounded-lg px-2 py-1 leading-snug">
+        <p className="text-[11px] text-red-300/90 text-center bg-red-500/5 rounded-lg px-2 py-1 leading-snug">
           {t("fakes_estimate", lang)
             .replace("{0}", estimatedFakes.toLocaleString())
             .replace("{1}", total.toLocaleString())}
@@ -146,7 +146,7 @@ export default function StatCards({
       </div>
 
       {typeof communityTotal === "number" && communityTotal > 0 && (
-        <p className="text-[10px] text-blue-400/90 text-center leading-snug">
+        <p className="text-[11px] text-blue-400/90 text-center leading-snug">
           {t("community_total_banner", lang).replace("{0}", communityTotal.toLocaleString())}
         </p>
       )}

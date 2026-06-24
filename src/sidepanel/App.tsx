@@ -177,7 +177,7 @@ export default function App() {
           <img src={LOGO_URL} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
           <div>
             <h1 className="text-lg font-bold text-white leading-none">Wav Fake Cleaner</h1>
-            <p className="text-[10px] text-gray-500">
+            <p className="text-[11px] text-gray-500">
               by{" "}
               <a
                 href="https://fredwav.com/contact"
@@ -193,24 +193,24 @@ export default function App() {
         <div className="flex gap-1.5 items-center">
           <button
             onClick={() => setShowLicence(true)}
-            className={`px-2 py-1 rounded-lg text-[10px] font-medium transition-colors
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors
               ${licence.active
                 ? "bg-green-600/20 text-green-400 border border-green-600/30"
-                : "bg-purple-600 text-white hover:bg-purple-500"
+                : "bg-accent text-accent-ink hover:bg-accent-hover"
               }`}
           >
             {licence.active ? t("licence_active", lang) : t("licence", lang)}
           </button>
           <button
             onClick={() => setShowSettings(true)}
-            className="px-2 py-1 rounded-lg bg-gray-800 text-[10px] text-gray-400
+            className="px-2 py-1 rounded-lg bg-gray-800 text-[11px] text-gray-400
               hover:text-white transition-colors"
           >
             {t("settings", lang)}
           </button>
           <button
             onClick={toggleLang}
-            className="px-2 py-1 rounded-lg bg-gray-800 text-[10px] text-gray-400
+            className="px-2 py-1 rounded-lg bg-gray-800 text-[11px] text-gray-400
               hover:text-white transition-colors"
           >
             {t("lang_toggle", lang)}
@@ -220,7 +220,7 @@ export default function App() {
 
       {/* One-time v3 telemetry notice */}
       {showTelemetryNotice && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-purple-800/40 bg-purple-950/30 text-[10px] text-purple-200">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-purple-800/40 bg-purple-950/30 text-[11px] text-purple-200">
           <span className="flex-1 leading-snug">{t("telemetry_notice", lang)}</span>
           <button
             onClick={() => { dismissTelemetryNotice(); setShowSettings(true); }}

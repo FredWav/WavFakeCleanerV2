@@ -25,7 +25,7 @@ function Popup() {
         <img src={logoUrl} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
         <div>
           <h1 className="text-sm font-bold leading-none">Wav Fake Cleaner</h1>
-          <p className="text-[10px] text-gray-500">
+          <p className="text-[11px] text-gray-500">
             by{" "}
             <a
               href="https://www.threads.net/@fredwavoff"
@@ -41,8 +41,8 @@ function Popup() {
       <div className="space-y-2">
         <button
           onClick={openSidePanel}
-          className="w-full px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-medium
-            hover:bg-purple-500 transition-colors"
+          className="w-full px-3 py-2 rounded-lg bg-accent text-accent-ink text-xs font-bold
+            hover:bg-accent-hover transition-colors"
         >
           Ouvrir le panneau / Open Panel
         </button>

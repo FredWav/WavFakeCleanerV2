@@ -208,7 +208,7 @@ export default function LicencePanel({
                 anywhere. The portable WFC code is the durable credential. */}
             {licence.key?.startsWith("WFC-") && (
               <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
-                <p className="text-[10px] text-gray-400">{t("licence_code_label", lang)}</p>
+                <p className="text-[11px] text-gray-400">{t("licence_code_label", lang)}</p>
                 <button
                   onClick={copyCode}
                   title={t("licence_code_copy_hint", lang)}
@@ -218,7 +218,7 @@ export default function LicencePanel({
                 >
                   {licence.key}
                 </button>
-                <p className="text-[10px] text-gray-500 text-center">
+                <p className="text-[11px] text-gray-500 text-center">
                   {copied ? t("licence_code_copied", lang) : t("licence_code_copy_hint", lang)}
                 </p>
               </div>
@@ -226,7 +226,7 @@ export default function LicencePanel({
 
             {/* Backup / restore — saves the user from losing access on browser reinstall */}
             <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-2">
-              <p className="text-[10px] text-gray-400">{t("licence_backup_hint", lang)}</p>
+              <p className="text-[11px] text-gray-400">{t("licence_backup_hint", lang)}</p>
               <div className="flex gap-1.5">
                 <button
                   onClick={exportLicence}
@@ -260,13 +260,13 @@ export default function LicencePanel({
 
             {/* Feature comparison */}
             <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
-              <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1">
+              <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-1">
                 <span className="flex-1" />
                 <span className="w-10 text-center">Free</span>
                 <span className="w-10 text-center text-purple-400 font-bold">Pro</span>
               </div>
               {features.map(({ label, free }) => (
-                <div key={label} className="flex items-center gap-2 text-[10px]">
+                <div key={label} className="flex items-center gap-2 text-[11px]">
                   <span className="text-gray-400 flex-1">{label}</span>
                   <span className="w-10 text-center">{free ? <span className="text-green-400"><IconCheck /></span> : <span className="text-gray-600"><IconX /></span>}</span>
                   <span className="w-10 text-center text-green-400"><IconCheck /></span>
@@ -276,36 +276,36 @@ export default function LicencePanel({
 
             {/* Community stat */}
             {typeof communityTotal === "number" && communityTotal > 0 && (
-              <p className="text-[10px] text-blue-400 text-center">
+              <p className="text-[11px] text-blue-400 text-center">
                 {t("licence_community_stats", lang).replace("{0}", communityTotal.toLocaleString())}
               </p>
             )}
 
             {/* Launch badge + buy */}
             <div className="text-center space-y-1.5">
-              <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full font-medium">
+              <span className="text-[11px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full font-medium">
                 {t("licence_launch_badge", lang)}
               </span>
               <a
                 href={PAYMENT_LINK}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block w-full px-3 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-bold
-                  text-center hover:bg-purple-500 transition-colors"
+                className="block w-full px-3 py-2.5 rounded-xl bg-accent text-accent-ink text-xs font-bold
+                  text-center hover:bg-accent-hover transition-colors"
               >
-                <span className="line-through text-gray-400 text-[10px] mr-1">
+                <span className="line-through text-accent-ink/60 text-[11px] mr-1">
                   {t("licence_original_price", lang)}{" €"}
                 </span>
                 {t("licence_launch_price", lang)}{" €"} — {t("licence_lifetime", lang)}
               </a>
-              <p className="text-[10px] text-purple-300">{t("licence_price_anchor", lang)}</p>
-              <p className="text-[10px] text-gray-400">{t("licence_guarantee", lang)}</p>
+              <p className="text-[11px] text-purple-300">{t("licence_price_anchor", lang)}</p>
+              <p className="text-[11px] text-gray-400">{t("licence_guarantee", lang)}</p>
             </div>
 
             {/* Bloc confiance — rassure un acheteur méfiant avant de payer */}
             <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
               {["licence_trust_dev", "licence_trust_refund", "licence_trust_local"].map((k) => (
-                <div key={k} className="flex items-start gap-2 text-[10px] text-gray-300">
+                <div key={k} className="flex items-start gap-2 text-[11px] text-gray-300">
                   <span className="text-green-400 mt-0.5 shrink-0"><IconCheck /></span>
                   <span className="leading-snug">{t(k, lang)}</span>
                 </div>
@@ -333,14 +333,14 @@ export default function LicencePanel({
                   {loading ? "..." : t("licence_activate", lang)}
                 </button>
               </div>
-              {error && <p className="text-red-400 text-[10px]">{error}</p>}
+              {error && <p className="text-red-400 text-[11px]">{error}</p>}
 
               {/* Restore from a previously-saved backup file */}
               <div className="pt-1 text-center">
                 <button
                   onClick={triggerImport}
                   disabled={loading}
-                  className="text-[10px] text-purple-400 hover:text-purple-300 underline
+                  className="text-[11px] text-purple-400 hover:text-purple-300 underline
                     disabled:opacity-50"
                 >
                   {t("licence_import_link", lang)}
@@ -358,7 +358,7 @@ export default function LicencePanel({
             {/* Recover by email — for users who already bought but lost their
                 local storage (reinstall, new browser, OS reset). */}
             <div className="space-y-1.5 pt-2 border-t border-gray-800/50">
-              <p className="text-[10px] text-gray-400">{t("licence_recover_hint", lang)}</p>
+              <p className="text-[11px] text-gray-400">{t("licence_recover_hint", lang)}</p>
               <div className="flex gap-1.5">
                 <input
                   type="email"
@@ -378,13 +378,13 @@ export default function LicencePanel({
                   {recoverLoading ? "..." : t("licence_recover_button", lang)}
                 </button>
               </div>
-              {recoverError && <p className="text-red-400 text-[10px]">{recoverError}</p>}
+              {recoverError && <p className="text-red-400 text-[11px]">{recoverError}</p>}
             </div>
           </div>
         )}
 
         {/* Support contact (always visible) */}
-        <p className="text-[10px] text-gray-600 text-center pt-1 border-t border-gray-800/50">
+        <p className="text-[11px] text-gray-600 text-center pt-1 border-t border-gray-800/50">
           {t("support_help", lang)}{" "}
           <a
             href="mailto:contact@fredwav.com"

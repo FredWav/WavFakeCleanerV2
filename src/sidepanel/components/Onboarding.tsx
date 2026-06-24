@@ -29,7 +29,7 @@ export default function Onboarding({
         </h2>
         {/* D2 : signature de marque — l'argument « créateur identifiable » doit se
             voir dès l'accueil, pas seulement se lire ailleurs. */}
-        <p className="text-[10px] text-gray-500 text-center -mt-2">{t("onboarding_signature", lang)}</p>
+        <p className="text-[11px] text-gray-500 text-center -mt-2">{t("onboarding_signature", lang)}</p>
 
         {/* Explique CE QUE fait le produit et POURQUOI les faux comptent, avant les
             étapes pratiques — sinon un débutant n'a aucune raison de s'y intéresser. */}
@@ -56,7 +56,7 @@ export default function Onboarding({
           ))}
         </div>
 
-        <p className="text-[10px] text-gray-500 leading-snug text-center">
+        <p className="text-[11px] text-gray-500 leading-snug text-center">
           {t("fetch_limit_note", lang)}
         </p>
 

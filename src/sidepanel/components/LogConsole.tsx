@@ -85,14 +85,14 @@ export default function LogConsole({
         <div className="flex items-center gap-3">
           <button
             onClick={handleCopy}
-            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
             title={t("copy_report_hint", lang)}
           >
             {copied ? t("copied", lang) : t("copy_report", lang)}
           </button>
           <button
             onClick={onClear}
-            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
           >
             {t("clear", lang)}
           </button>
@@ -106,7 +106,7 @@ export default function LogConsole({
             const style = levelStyles[entry.level] || levelStyles.INFO;
             return (
               <div key={i} className="flex gap-1.5 leading-relaxed">
-                <span className="text-gray-600 shrink-0 text-[10px]">{formatTs(entry.ts)}</span>
+                <span className="text-gray-600 shrink-0 text-[11px]">{formatTs(entry.ts)}</span>
                 <span className={`shrink-0 ${style.color}`}>{style.icon}</span>
                 <span className="text-gray-300">{entry.message}</span>
               </div>

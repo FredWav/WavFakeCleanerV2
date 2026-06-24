@@ -101,13 +101,13 @@ export default function CommunityCard({
     status.tokenStatus === "invalid" ? (
       <button
         onClick={onShowLicence}
-        className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-red-500/20 text-red-400
+        className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-500/20 text-red-400
           border border-red-900/40 hover:bg-red-500/30 transition-colors"
       >
         {t("community_token_invalid", lang)}
       </button>
     ) : status.tokenStatus === "ok" ? (
-      <span className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-green-500/15 text-green-400">
+      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-500/15 text-green-400">
         {t("community_token_ok", lang)}
       </span>
     ) : null;
@@ -115,7 +115,7 @@ export default function CommunityCard({
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 px-3 py-2 space-y-1.5">
       <div className="flex items-center justify-between">
-        <div className="text-[9px] text-blue-400/70 uppercase font-semibold tracking-wide flex items-center gap-1">
+        <div className="text-[11px] text-blue-400/70 uppercase font-semibold tracking-wide flex items-center gap-1">
           <IconGlobe /> {t("community_card_title", lang)}
         </div>
         {tokenPill}
@@ -145,7 +145,7 @@ export default function CommunityCard({
           <button
             onClick={replayNow}
             disabled={replaying}
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px]
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px]
               bg-gray-800 text-gray-300 hover:text-white transition-colors disabled:opacity-50"
           >
             <IconRefresh /> {t("community_replay_now", lang)}
@@ -154,7 +154,7 @@ export default function CommunityCard({
       </div>
 
       {status.lastReplay && (status.lastReplay.replayed > 0 || status.lastReplay.dropped > 0 || status.queueLength > 0) && (
-        <div className="text-[10px] text-gray-600">
+        <div className="text-[11px] text-gray-600">
           {t("community_last_replay", lang)
             .replace("{0}", timeAgo(status.lastReplay.ts, lang))
             .replace("{1}", String(status.lastReplay.replayed))
