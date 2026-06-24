@@ -107,6 +107,26 @@ describe("scoreProfile", () => {
     expect(scoreProfile(makeProfile({ notFound: true }), 70).score).toBe(-1);
   });
 
+  it("[B-C1/TEST-c] neutralizes post signals when postCount is unknown (-1)", () => {
+    // Cœur du fix B-C1 : une page non chargée ne doit pas devenir un faux. Même
+    // profil public, seul postCount change : 0 confirmé → faux ; -1 inconnu → OK.
+    const base = {
+      username: "abcuser",
+      followerCount: 300,
+      hasBio: false,
+      hasReplies: false,
+      hasRealPic: true,
+      hasFullName: false,
+      hasMedia: false,
+    } as const;
+    // 0 post CONFIRMÉ → les signaux posts comptent → faux.
+    expect(scoreProfile(makeProfile({ ...base, postCount: 0 }), 70).isFake).toBe(true);
+    // postCount inconnu (-1) → signaux posts/replies/combos neutralisés → pas faux.
+    const unknown = scoreProfile(makeProfile({ ...base, postCount: -1 }), 70);
+    expect(unknown.isFake).toBe(false);
+    expect(unknown.breakdown.join(" ")).toContain("post? (unknown)");
+  });
+
   it("[CURRENT BEHAVIOR — A3 would change] auto-fakes a private account with 0 followers and no bio", () => {
     // Documents the false-positive risk flagged in the audit: a brand-new real
     // private user (no bio/pic yet) scores 100 and is removed. If A3 is shipped,
