@@ -205,9 +205,13 @@ export interface CommunityStatus {
 
 // ── Free tier limits ──
 
+// Source de vérité unique du plan gratuit (U-H6) : 1 nettoyage/jour de 50
+// comptes max, et la liste des faux masquée au-delà de 5 visibles. Toutes les
+// chaînes i18n et la logique de paywall doivent pointer ici, pas re-coder « 5 ».
 export const FREE_LIMITS = {
   cyclesPerDay: 1,
   cycleSize: 50,
+  visibleFakes: 5,
 } as const;
 
 // ── Log entry ──

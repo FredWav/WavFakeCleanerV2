@@ -20,6 +20,7 @@ import {
   purgeOwnerSubPageFakes,
   exportLicenseBackup,
   readLicenseBackup,
+  getDailyUsage,
 } from "./storage";
 import {
   runFetch,
@@ -262,6 +263,9 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       });
       return { ok: true };
     }
+
+    case "GET_DAILY_USAGE":
+      return await getDailyUsage();
 
     case "GET_LICENSE":
       return await getLicense();

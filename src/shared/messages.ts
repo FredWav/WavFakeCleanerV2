@@ -36,6 +36,8 @@ export type RequestMessage =
   // récupérées (sans visite de profil, sans suppression, sans coût quotidien) —
   // alimente l'accroche post-fetch.
   | { type: "GET_PRESCAN_ESTIMATE" }
+  // Consommation quotidienne du plan gratuit (compteur « X/1 nettoyage » — U-H6).
+  | { type: "GET_DAILY_USAGE" }
   | { type: "GET_LICENSE" }
   | { type: "ACTIVATE_LICENSE"; payload: { key: string } }
   | { type: "RECOVER_LICENSE"; payload: { email: string } }

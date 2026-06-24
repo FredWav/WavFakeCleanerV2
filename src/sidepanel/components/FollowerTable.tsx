@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import type { FollowerRecord, LicenseInfo } from "@shared/types";
+import { FREE_LIMITS, type FollowerRecord, type LicenseInfo } from "@shared/types";
 import { COMMUNITY_LOOKUP_URL } from "@shared/constants";
 import { IconGlobe, IconWarn, IconCheck, IconRefresh, IconChevronDown, IconChevronRight } from "./Icons";
 import Skeleton from "./ui/Skeleton";
@@ -471,19 +471,19 @@ export default function FollowerTable({
                 const cs = communityScores.get(f.username);
                 const isSpotted = cs && cs.voteCount >= 3 && cs.fakeRatio >= 0.60;
                 const isFakeFilter = filter === "fake";
-                const isLockedRow = isFakeFilter && !licence?.active && index >= 5;
+                const isLockedRow = isFakeFilter && !licence?.active && index >= FREE_LIMITS.visibleFakes;
 
                 // Unlicensed users on the Fake tab: show one clean upsell banner
-                // in place of row 5 and hide the rest — no jarring per-row blur.
+                // in place of the first hidden row and hide the rest.
                 if (isLockedRow) {
-                  if (index !== 5) return null;
+                  if (index !== FREE_LIMITS.visibleFakes) return null;
                   return (
                     <tr key="paywall">
                       <td colSpan={3} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-gray-900">
                         <p className="text-xs text-gray-300 mb-2">
                           {t("blur_banner_count", lang)
                             .replace("{0}", String(followers.length))
-                            .replace("{1}", String(Math.max(0, followers.length - 5)))}
+                            .replace("{1}", String(Math.max(0, followers.length - FREE_LIMITS.visibleFakes)))}
                         </p>
                         <button
                           onClick={() => onShowLicence?.()}

@@ -64,6 +64,9 @@ export const api = {
   getPrescanEstimate: () =>
     send<{ likelyFakes: number; total: number }>({ type: "GET_PRESCAN_ESTIMATE" }),
 
+  getDailyUsage: () =>
+    send<{ dayKey: string; cycles: number }>({ type: "GET_DAILY_USAGE" }),
+
   getLicense: () => send<LicenseInfo>({ type: "GET_LICENSE" }),
 
   activateLicense: (key: string) =>
