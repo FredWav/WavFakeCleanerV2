@@ -23,6 +23,7 @@ const WFC_RESPONSE = "WFC_API_RESPONSE";
 const WFC_SECRET = crypto.randomUUID();
 
 let requestId = 0;
+let loggedFollowerShape = false; // DIAG one-shot (cf. fetchFollowersPage)
 const pendingRequests = new Map<number, {
   resolve: (value: { status: number; body: unknown }) => void;
   reject: (reason: Error) => void;
@@ -297,6 +298,13 @@ export async function fetchFollowersPage(
 
     const data = body as Record<string, unknown>;
     const rawUsers = (data.users as Array<Record<string, unknown>>) || [];
+    // DIAG one-shot : quels champs l'endpoint followers donne par abonné ?
+    // (savoir si on a déjà follower_count / biography / media_count = postCount
+    // sans visiter le profil → scan API possible).
+    if (!loggedFollowerShape && rawUsers.length > 0) {
+      loggedFollowerShape = true;
+      dbg("api", `champs abonné brut = [${Object.keys(rawUsers[0]).join(",")}]`);
+    }
     const users: Record<string, ContentFollowerMeta> = {};
 
     for (const u of rawUsers) {
