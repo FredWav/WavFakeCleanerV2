@@ -452,11 +452,17 @@ export function runAnalyze(): Promise<void> {
       return;
     }
     abortController = new AbortController();
+    // Capturer le signal LOCALEMENT : interruptForSuspend()/stopPipeline() peuvent
+    // remettre abortController à null pendant un await (onSuspend sur un long
+    // fetch), et relire abortController.signal après planterait (« reading 'signal'
+    // of null »). Le signal capturé reste valide (juste aborted) → on saute
+    // proprement la suite. Régression du fix B-M8, corrigée ici.
+    const signal = abortController.signal;
     await startKeepAlive();
     try {
-      await runFetchInternal(abortController.signal);
-      if (!abortController.signal.aborted) {
-        await runCleanCycleInternal(abortController.signal, false);
+      await runFetchInternal(signal);
+      if (!signal.aborted) {
+        await runCleanCycleInternal(signal, false);
       }
     } catch (e) {
       log("ERROR", "clean", m("fetch_error", e instanceof Error ? e.message : String(e)));
