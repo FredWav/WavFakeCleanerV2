@@ -357,6 +357,27 @@ export default function ControlPanel({
         </div>
       )}
 
+      {/* « Tout rescanner » : passe complète (fetch sans early-stop pour capter
+          les nouveaux abonnés + remise à zéro + ré-analyse de tous). Visible dans
+          le mode avancé, jamais de suppression auto. */}
+      {showAdvanced && (
+        <>
+          <button
+            onClick={() => run("rescanAll")}
+            disabled={!!loading || !!isRunning}
+            className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+              ${isRunning
+                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                : "bg-gray-700 text-white hover:bg-gray-600 active:scale-95"
+              }
+              ${loading === "rescanAll" ? "opacity-70 cursor-wait" : ""}`}
+          >
+            {t("rescan_all_btn", lang)}
+          </button>
+          <p className="text-[11px] text-gray-500 leading-snug">{t("rescan_all_hint", lang)}</p>
+        </>
+      )}
+
       {/* Anti-block pause countdown (explains why the bar is frozen) */}
       {isRunning && stats?.pausedUntil ? (
         <PauseBanner

@@ -26,6 +26,7 @@ import {
   runFetch,
   runCleanCycle,
   runAnalyze,
+  runRescanAll,
   runRemoveFlagged,
   runContinuous,
   stopPipeline,
@@ -186,6 +187,11 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       // Flux débutant : récupère puis analyse + flagge les faux SANS supprimer.
       // runAnalyze logue à l'entrée (jamais silencieux) et tourne sous un seul verrou/abort.
       runAnalyze(); // lancé sans attendre
+      return { ok: true };
+
+    case "START_RESCAN_ALL":
+      // Tout rescanner : fetch complet (sans early-stop) + remise à zéro + scan.
+      runRescanAll(); // lancé sans attendre
       return { ok: true };
 
     case "START_REMOVE_FAKES":

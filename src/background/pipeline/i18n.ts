@@ -23,6 +23,8 @@ export function getCurrentLang(): string {
 const MSG: Record<string, Record<string, string>> = {
   no_username:          { fr: "Aucun nom d'utilisateur configuré", en: "No username configured" },
   analyze_start:        { fr: "Analyse lancée — récupération des abonnés puis détection (aucune suppression)…", en: "Analysis started — fetching followers then detecting (no removal)…" },
+  rescan_all_start:     { fr: "Tout rescanner — récupération complète puis ré-analyse de tous les abonnés…", en: "Rescan all — full fetch then re-analyzing every follower…" },
+  rescan_all_reset:     { fr: "{0} abonnés remis à zéro pour ré-analyse", en: "{0} followers reset for re-analysis" },
   already_running:      { fr: "Une opération est déjà en cours — patiente ou clique Arrêter.", en: "An operation is already running — wait or click Stop." },
   fetch_start:          { fr: "Récupération de tes followers (@{0})…", en: "Fetching your followers list (@{0})…" },
   fetch_found:          { fr: "{0} followers trouvés, sauvegarde…", en: "{0} followers found, saving…" },

@@ -236,6 +236,8 @@ const translations: Record<string, Record<string, string>> = {
     analyze_hint: "On récupère tes abonnés et on repère les faux — sans rien supprimer. Tu valides ensuite.",
     remove_fakes_btn: "Supprimer les faux",
     advanced_toggle: "Mode avancé (boutons séparés)",
+    rescan_all_btn: "Tout rescanner",
+    rescan_all_hint: "Récupère TOUS tes abonnés (sans raccourci, pour capter les nouveaux) et ré-analyse tout le monde. Ne supprime rien.",
     // Confirmation de suppression (U-C1) — étape obligatoire avant l'irréversible
     confirm_remove_title: "Supprimer {0} faux abonnés ?",
     confirm_remove_body: "C'est définitif : Threads ne permet pas de réajouter un abonné supprimé. Vérifie la liste avant de confirmer.",
@@ -489,6 +491,8 @@ const translations: Record<string, Record<string, string>> = {
     analyze_hint: "We fetch your followers and spot the fakes — without deleting anything. You confirm next.",
     remove_fakes_btn: "Remove the fakes",
     advanced_toggle: "Advanced (separate buttons)",
+    rescan_all_btn: "Rescan everything",
+    rescan_all_hint: "Fetches ALL your followers (no shortcut, to catch new ones) and re-analyzes everyone. Deletes nothing.",
     // Deletion confirmation (U-C1) — mandatory step before the irreversible
     confirm_remove_title: "Remove {0} fake followers?",
     confirm_remove_body: "This is permanent: Threads can't re-add a removed follower. Check the list before confirming.",
@@ -742,6 +746,8 @@ const translations: Record<string, Record<string, string>> = {
     analyze_hint: "Recuperamos tus seguidores y detectamos los falsos — sin eliminar nada. Tú confirmas después.",
     remove_fakes_btn: "Eliminar los falsos",
     advanced_toggle: "Modo avanzado (botones separados)",
+    rescan_all_btn: "Reescanear todo",
+    rescan_all_hint: "Obtiene TODOS tus seguidores (sin atajo, para detectar los nuevos) y reanaliza a todos. No elimina nada.",
     // Confirmación de eliminación (U-C1) — paso obligatorio antes de lo irreversible
     confirm_remove_title: "¿Eliminar {0} seguidores falsos?",
     confirm_remove_body: "Es definitivo: Threads no permite volver a añadir un seguidor eliminado. Revisa la lista antes de confirmar.",

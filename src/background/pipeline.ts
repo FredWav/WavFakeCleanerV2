@@ -33,6 +33,7 @@ import {
   getLicense,
   getDailyUsage,
   incrementDailyUsage,
+  resetScannedFollowers,
 } from "./storage";
 import { RateTracker } from "./rate-tracker";
 import { HumanPacer, sleep } from "./pacer";
@@ -229,7 +230,7 @@ export function runFetch(): Promise<void> {
   });
 }
 
-async function runFetchInternal(signal: AbortSignal): Promise<void> {
+async function runFetchInternal(signal: AbortSignal, opts?: { full?: boolean }): Promise<void> {
   await loadLang();
   await rateTracker.load();
 
@@ -267,9 +268,13 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
       signal.addEventListener("abort", () => reject(new Error("aborted")));
     });
 
-    // Send known usernames so the content script can stop early
+    // Send known usernames so the content script can stop early.
+    // `full` (Tout rescanner) : on garde le snapshot pour COMPTER les nouveaux,
+    // mais on envoie une liste VIDE au content script → pas d'early-stop → passe
+    // complète garantie (catch fiable des nouveaux abonnés).
     const knownUsernames = await getAllFollowerUsernames();
-    const knownArray = knownUsernames.size > 0 ? [...knownUsernames] : [];
+    const knownArray = opts?.full ? [] : (knownUsernames.size > 0 ? [...knownUsernames] : []);
+    if (opts?.full) log("INFO", "fetch", "[diag] fetch COMPLET (early-stop désactivé)");
 
     type FetchSuccess = { collected: Record<string, ContentFollowerMeta>; method: string; truncated?: boolean; truncReason?: string };
     type FetchError = { error: string; reason?: string; linksFound?: number };
@@ -452,6 +457,41 @@ export function runAnalyze(): Promise<void> {
       await runFetchInternal(abortController.signal);
       if (!abortController.signal.aborted) {
         await runCleanCycleInternal(abortController.signal, false);
+      }
+    } catch (e) {
+      log("ERROR", "clean", m("fetch_error", e instanceof Error ? e.message : String(e)));
+    } finally {
+      await closeBackgroundTab();
+      await stopKeepAlive();
+      abortController = null;
+      await broadcastStats();
+    }
+  });
+}
+
+// ── Flux « Tout rescanner » : re-analyse complète depuis zéro ──
+// Répond à deux manques : (1) on ne voyait pas fiablement les NOUVEAUX abonnés
+// (l'early-stop coupait le fetch), (2) aucun moyen de re-scorer TOUS les abonnés.
+// Ici : fetch COMPLET (sans early-stop) → remise de tout le non-supprimé à
+// « pending » → scan complet en mode flag-only (jamais de suppression auto).
+export function runRescanAll(): Promise<void> {
+  const myGen = runGeneration;
+  log("INFO", "clean", m("rescan_all_start"));
+  return withPipelineLock(async () => {
+    if (stopRequestedSince(myGen)) return;
+    if (isRunning()) {
+      log("WARNING", "clean", m("already_running"));
+      return;
+    }
+    abortController = new AbortController();
+    const signal = abortController.signal;
+    await startKeepAlive();
+    try {
+      const reset = await resetScannedFollowers();
+      log("INFO", "clean", m("rescan_all_reset", reset));
+      await runFetchInternal(signal, { full: true });
+      if (!signal.aborted) {
+        await runCleanCycleInternal(signal, false);
       }
     } catch (e) {
       log("ERROR", "clean", m("fetch_error", e instanceof Error ? e.message : String(e)));

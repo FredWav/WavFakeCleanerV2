@@ -31,6 +31,8 @@ export const api = {
 
   analyze: () => send<{ ok: boolean }>({ type: "START_ANALYZE" }),
 
+  rescanAll: () => send<{ ok: boolean }>({ type: "START_RESCAN_ALL" }),
+
   // usernames = sélection explicite (U-C2). Omis = supprime tous les faux flaggés.
   removeFakes: (usernames?: string[]) =>
     send<{ ok: boolean }>({
