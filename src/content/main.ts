@@ -169,7 +169,13 @@ async function handleFetchFollowers(
         const result = await fetchFollowersPage(userId, maxId);
         if (!result) {
           errors++;
-          if (errors >= 3) break;
+          // Le statut HTTP est déjà loggué dans api-interceptor (429 / non-200 /
+          // exception). Ici on relie au compteur d'échecs consécutifs.
+          dbg("fetch", `page ${page} : fetchFollowersPage a renvoyé null (échec ${errors}/3)`, "WARNING");
+          if (errors >= 3) {
+            dbg("fetch", `pagination interrompue : 3 échecs consécutifs (${Object.keys(collected).length} abonnés collectés avant l'arrêt)`, "ERROR");
+            break;
+          }
           await sleep(3000 + Math.random() * 3000);
           continue;
         }
@@ -387,117 +393,136 @@ async function scrollFetch(
 // ── Scan profile ──
 
 async function handleScanProfile(username: string): Promise<ContentProfileData> {
-  // Recover from Threads error page left by a previous action
-  await recoverFromErrorPage();
+  // DIAG : on suit l'étape courante pour qu'une exception jetée ici (qui ressort
+  // en {error} via le listener) soit nommée — au lieu d'un « scan_no_data »
+  // générique côté pipeline.
+  let step = "init";
+  try {
+    // Recover from Threads error page left by a previous action
+    step = "recoverFromErrorPage";
+    await recoverFromErrorPage();
 
-  const data = extractProfileFromDom(username);
+    step = "extractProfileFromDom";
+    const data = extractProfileFromDom(username);
+    dbg("scan", `@${username} : DOM extrait — privé(DOM)=${data.isPrivate} fc=${data.followerCount} pic=${data.hasRealPic} name=${data.hasFullName} bio=${data.hasBio} 404=${data.notFound}`);
 
-  // La bannière « Ce profil est privé » est rendue côté client et un onglet de
-  // fond throttlé ne la peint souvent jamais : lire le texte du DOM seul rate les
-  // comptes privés et les scanne comme des fantômes publics (0 post → faux
-  // verdict). On confirme la confidentialité depuis les données PROPRES du profil
-  // (web_profile_info, le champ que Threads utilise pour la bannière ; repli sur
-  // le JSON embarqué de la page). Indépendant du rendu → fiable même sur un
-  // onglet de fond throttlé.
-  if (!data.isPrivate) {
-    try {
-      const prof = await resolveUserProfile(username);
-      if (prof?.isPrivate) data.isPrivate = true;
-    } catch {
-      // échec réseau/parsing — on garde le résultat du DOM
-    }
-  }
-
-  if (!data.isPrivate) {
-    // ── Step 1: Check posts on the Threads tab ──
-    // Ensure we're on the Threads tab first
-    for (const tabName of SELECTORS.profile.threadsTabTexts) {
-      if (await navigateToTab(tabName)) {
-        await sleep(800);
-        break;
+    // La bannière « Ce profil est privé » est rendue côté client et un onglet de
+    // fond throttlé ne la peint souvent jamais : on confirme la confidentialité
+    // depuis les données du profil (repli sur le JSON embarqué de la page).
+    if (!data.isPrivate) {
+      step = "resolveUserProfile(privé)";
+      try {
+        const prof = await resolveUserProfile(username);
+        if (prof?.isPrivate) {
+          data.isPrivate = true;
+          dbg("scan", `@${username} : privé CONFIRMÉ via API/JSON page`);
+        }
+      } catch (e) {
+        // Avant : avalé en silence. On le remonte.
+        dbg("scan", `@${username} : confirmation privé échouée — ${String(e)}`, "WARNING");
       }
     }
 
-    const noThreads = (document.body?.innerText || "").toLowerCase();
-    const isEmpty = SELECTORS_NO_THREADS.some((p) => p.test(noThreads));
+    if (!data.isPrivate) {
+      // ── Step 1: Check posts on the Threads tab ──
+      step = "nav onglet Threads";
+      let onThreads = false;
+      for (const tabName of SELECTORS.profile.threadsTabTexts) {
+        if (await navigateToTab(tabName)) {
+          onThreads = true;
+          await sleep(800);
+          break;
+        }
+      }
 
-    if (isEmpty) {
-      // « Aucun thread » explicite → vrai 0 post confirmé.
-      data.postCount = 0;
-    } else {
-      const postInfo = countPosts();
-      if (postInfo.count > 0 || profileContentRendered(data)) {
-        // Soit on a trouvé des posts, soit la page de profil a bien chargé
-        // (en-tête peint / signal de feed présent) → le « 0 » est réel.
-        data.postCount = postInfo.count;
-        data.allPostsRecent = postInfo.allRecent;
-        data.duplicateRatio = postInfo.duplicateRatio;
-        data.hasSpamKeywords = postInfo.hasSpamKeywords;
+      step = "countPosts";
+      const noThreads = (document.body?.innerText || "").toLowerCase();
+      const isEmpty = SELECTORS_NO_THREADS.some((p) => p.test(noThreads));
+
+      if (isEmpty) {
+        // « Aucun thread » explicite → vrai 0 post confirmé.
+        data.postCount = 0;
       } else {
-        // B-C1 : 0 article trouvé ET aucune preuve que la page a réellement
-        // chargé (onglet de fond throttlé, DOM non hydraté). On NE croit PAS
-        // au « 0 post » : -1 = inconnu → le scorer neutralise tous les signaux
-        // liés aux posts au lieu de marquer faux à tort un vrai abonné.
-        data.postCount = -1;
+        const postInfo = countPosts();
+        if (postInfo.count > 0 || profileContentRendered(data)) {
+          data.postCount = postInfo.count;
+          data.allPostsRecent = postInfo.allRecent;
+          data.duplicateRatio = postInfo.duplicateRatio;
+          data.hasSpamKeywords = postInfo.hasSpamKeywords;
+        } else {
+          // B-C1 : 0 article ET aucune preuve de chargement → -1 (inconnu).
+          data.postCount = -1;
+        }
+      }
+      dbg("scan", `@${username} : posts — onglet Threads ${onThreads ? "ok" : "ÉCHEC nav"} · isEmpty=${isEmpty} · postCount=${data.postCount}`);
+
+      // ── Step 2: Navigate to Media tab and check for media ──
+      step = "nav onglet Media + checkMedia";
+      let navigatedToMedia = false;
+      for (const tabName of SELECTORS.profile.mediaTabTexts) {
+        if (await navigateToTab(tabName)) {
+          navigatedToMedia = true;
+          break;
+        }
+      }
+
+      if (navigatedToMedia) {
+        await sleep(1200);
+        let mediaResult = { hasMedia: false, final: false };
+        for (let attempt = 0; attempt < 3; attempt++) {
+          mediaResult = checkMedia();
+          if (mediaResult.final) break;
+          await sleep(800);
+        }
+        data.hasMedia = mediaResult.hasMedia;
+      }
+      dbg("scan", `@${username} : media — onglet ${navigatedToMedia ? "ok" : "ÉCHEC nav"} · hasMedia=${data.hasMedia}`);
+
+      // ── Step 3: Navigate to Replies tab and check replies ──
+      step = "nav onglet Replies + checkReplies";
+      let navigatedToReplies = false;
+      for (const tabName of SELECTORS.profile.repliesTabTexts) {
+        if (await navigateToTab(tabName)) {
+          navigatedToReplies = true;
+          break;
+        }
+      }
+
+      if (navigatedToReplies) {
+        // Poll for reply content (V1 does 5 × 1.5s = 7.5s max)
+        let replyResult = { hasReplies: false, final: false };
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await sleep(1500);
+          replyResult = checkReplies(username);
+          if (replyResult.final) break;
+        }
+        data.hasReplies = replyResult.hasReplies;
+      } else {
+        // Couldn't navigate to replies tab — assume no replies
+        data.hasReplies = false;
+      }
+      dbg("scan", `@${username} : replies — onglet ${navigatedToReplies ? "ok" : "ÉCHEC nav"} · hasReplies=${data.hasReplies}`);
+
+      // ── Step 4: Navigate back to Threads tab (for next profile) ──
+      step = "retour onglet Threads";
+      for (const tabName of SELECTORS.profile.threadsTabTexts) {
+        if (await navigateToTab(tabName)) break;
       }
     }
 
-    // ── Step 2: Navigate to Media tab and check for media ──
-    let navigatedToMedia = false;
-    for (const tabName of SELECTORS.profile.mediaTabTexts) {
-      if (await navigateToTab(tabName)) {
-        navigatedToMedia = true;
-        break;
-      }
-    }
+    // DIAG : ce que le scorer va recevoir (vue finale).
+    dbg(
+      "scan",
+      `@${username} → FINAL isPrivate=${data.isPrivate} fc=${data.followerCount} bio=${data.hasBio} pic=${data.hasRealPic} name=${data.hasFullName} post=${data.postCount} rep=${data.hasReplies}`,
+    );
 
-    if (navigatedToMedia) {
-      await sleep(1200);
-      let mediaResult = { hasMedia: false, final: false };
-      for (let attempt = 0; attempt < 3; attempt++) {
-        mediaResult = checkMedia();
-        if (mediaResult.final) break;
-        await sleep(800);
-      }
-      data.hasMedia = mediaResult.hasMedia;
-    }
-
-    // ── Step 3: Navigate to Replies tab and check replies ──
-    let navigatedToReplies = false;
-    for (const tabName of SELECTORS.profile.repliesTabTexts) {
-      if (await navigateToTab(tabName)) {
-        navigatedToReplies = true;
-        break;
-      }
-    }
-
-    if (navigatedToReplies) {
-      // Poll for reply content (V1 does 5 × 1.5s = 7.5s max)
-      let replyResult = { hasReplies: false, final: false };
-      for (let attempt = 0; attempt < 5; attempt++) {
-        await sleep(1500);
-        replyResult = checkReplies(username);
-        if (replyResult.final) break;
-      }
-      data.hasReplies = replyResult.hasReplies;
-    } else {
-      // Couldn't navigate to replies tab — assume no replies
-      data.hasReplies = false;
-    }
-
-    // ── Step 4: Navigate back to Threads tab (for next profile) ──
-    for (const tabName of SELECTORS.profile.threadsTabTexts) {
-      if (await navigateToTab(tabName)) break;
-    }
+    return data as ContentProfileData;
+  } catch (e) {
+    // Avant : remontait en {error} → pipeline loguait « scan_no_data » générique.
+    // Désormais on nomme l'étape fautive ; le pipeline loguera aussi le vrai message.
+    dbg("scan", `@${username} : EXCEPTION à l'étape « ${step} » — ${e instanceof Error ? e.message : String(e)}`, "ERROR");
+    throw e;
   }
-
-  // DIAG : ce que le scorer va recevoir — clé pour le bug des comptes privés.
-  dbg(
-    "scan",
-    `@${username} → isPrivate=${data.isPrivate} fc=${data.followerCount} bio=${data.hasBio} pic=${data.hasRealPic} name=${data.hasFullName} post=${data.postCount} rep=${data.hasReplies}`,
-  );
-
-  return data as ContentProfileData;
 }
 
 const SELECTORS_NO_THREADS = [

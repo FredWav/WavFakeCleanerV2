@@ -880,7 +880,9 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       const navSpan = span("profile_nav");
       await chrome.tabs.update(currentTabId, { url: profileUrl });
       const navLoaded = await waitForTabLoad(currentTabId, signal);
-      workMs += navSpan.end();
+      const navMs = navSpan.end();
+      workMs += navMs;
+      log("INFO", "clean", `[diag] @${follower.username} : navigation ${navLoaded ? "ok" : "TIMEOUT"} en ${Math.round(navMs)}ms`);
       // Laisse React hydrater puis simule une lecture humaine rapide. Si la
       // navigation n'a PAS confirmé "complete" (B-H6), on laisse plus de temps
       // pour limiter les scans sur page à demi-chargée.
@@ -890,6 +892,10 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       // 1b. Check if Threads returned an error page instead of the profile
       const pageCheck = await chrome.tabs.sendMessage(currentTabId, { type: "CHECK_PAGE" }) as
         { ok: boolean; errorPage: boolean } | null;
+      if (pageCheck === null) {
+        // Réponse nulle = canal/onglet perdu — on ne l'avale plus en silence.
+        log("WARNING", "clean", `@${follower.username} : CHECK_PAGE réponse nulle (canal/onglet perdu)`);
+      }
 
       if (pageCheck?.errorPage) {
         consecutiveErrorPages++;
@@ -946,14 +952,32 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
 
       // 2. Scan profile
       const scanSpan = span("profile_scan");
+      log("INFO", "clean", `[diag] @${follower.username} : envoi SCAN_PROFILE`);
       const rawProfileData = await chrome.tabs.sendMessage(currentTabId, {
         type: "SCAN_PROFILE",
         payload: { username: follower.username },
       });
-      workMs += scanSpan.end();
+      const scanMs = scanSpan.end();
+      workMs += scanMs;
 
-      // Validation minimale de la réponse du content script
-      if (!rawProfileData || typeof rawProfileData !== "object" || !("username" in rawProfileData)) {
+      // Validation de la réponse — on DISTINGUE les cas au lieu de tout logguer
+      // "aucune donnée" (qui masquait la vraie cause) :
+      //  - réponse nulle  → canal/timeout
+      //  - objet {error}  → handleScanProfile a JETÉ (le listener renvoie {error:…})
+      //  - sans username  → forme inattendue
+      if (!rawProfileData || typeof rawProfileData !== "object") {
+        consecutiveBlocked++;
+        await rateTracker.recordError();
+        log("WARNING", "clean", `@${follower.username} : SCAN_PROFILE réponse nulle (canal/timeout) après ${Math.round(scanMs)}ms`);
+        continue;
+      }
+      if ("error" in rawProfileData && !("username" in rawProfileData)) {
+        consecutiveBlocked++;
+        await rateTracker.recordError();
+        log("ERROR", "clean", `@${follower.username} : SCAN_PROFILE a échoué — ${String((rawProfileData as { error: unknown }).error)}`);
+        continue;
+      }
+      if (!("username" in rawProfileData)) {
         consecutiveBlocked++;
         await rateTracker.recordError();
         log("WARNING", "clean", m("scan_no_data", follower.username));
@@ -961,6 +985,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       }
 
       const profileData = rawProfileData as ContentProfileData;
+      log("INFO", "clean", `[diag] @${follower.username} : SCAN_PROFILE reçu en ${Math.round(scanMs)}ms · err=${profileData.error ?? "-"} notFound=${profileData.notFound} priv=${profileData.isPrivate} fc=${profileData.followerCount} post=${profileData.postCount}`);
 
       if (profileData.error === "429_RATE_LIMIT") {
         consecutiveBlocked++;
@@ -1083,6 +1108,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
           // a latent TypeError that spuriously bumped the blocked/error counters).
           // Leave the follower marked fake/pending; it'll be retried next cycle.
           if (!removeResult) {
+            log("WARNING", "clean", `@${follower.username} : REMOVE_FOLLOWER sans réponse (Stop/canal perdu) — laissé en attente`);
             break;
           }
 
