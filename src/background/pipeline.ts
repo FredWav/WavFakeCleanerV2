@@ -997,6 +997,22 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
         submitVote(follower.username, "fake", 100).catch(() => {});
         cycleSightings.add(follower.username);
       } else {
+        // Comptes privés : la page d'un privé ne montre presque rien et, dans un
+        // onglet de fond throttlé, le DOM est souvent non peint → le scraper voit
+        // un compte « vide » et le sur-score à tort. On enrichit avec les
+        // métadonnées FIABLES déjà récupérées via l'API followers (photo, nom,
+        // abonnés, bio). On n'AJOUTE que des signaux légitimes — jamais de quoi
+        // rendre un compte plus suspect — donc ça ne fait que réduire les faux
+        // positifs sur les privés (le bug signalé).
+        if (profileData.isPrivate) {
+          if (profileData.followerCount === null && follower.followersCount !== null) {
+            profileData.followerCount = follower.followersCount;
+          }
+          if (!profileData.hasRealPic && follower.hasProfilePic) profileData.hasRealPic = true;
+          if (!profileData.hasFullName && (follower.fullName || "").trim().length >= 3) profileData.hasFullName = true;
+          if (!profileData.hasBio && (follower.bio || "").trim().length >= 3) profileData.hasBio = true;
+        }
+
         // 4. Score the profile (passer followingCount + cross-user sightings)
         const scored = scoreProfile(profileData, settings.scoreThreshold, !!settings.privateAlwaysReview, follower.followingCount, entry.seenByCount);
         const score = scored.score;
