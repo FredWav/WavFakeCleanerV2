@@ -203,6 +203,17 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
 
       const j = body as Record<string, unknown>;
       console.log("[WFC] resolveUserProfile: response keys =", Object.keys(j));
+      // DIAG : forme du corps web_profile_info 200, pour brancher le parser sur
+      // les bons champs (et savoir pourquoi l'uid n'en est pas extrait).
+      if (url.includes("web_profile_info")) {
+        const du = (j?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
+        const u2 = (j?.user as Record<string, unknown> | undefined);
+        const uu = du || u2;
+        dbg("api", `web_profile_info 200 · topKeys=[${Object.keys(j).join(",")}] · status=${String(j.status ?? "?")} · user=${uu ? "OK(keys:" + Object.keys(uu).slice(0, 14).join(",") + ")" : "ABSENT"}`);
+        if (uu) {
+          dbg("api", `web_profile_info user : id=${String(uu.id ?? uu.pk ?? "?")} fc=${String(uu.follower_count ?? "?")} priv=${String(uu.is_private ?? "?")} bio=${(String(uu.biography ?? "")).length}c name="${String(uu.full_name ?? "")}"`);
+        }
+      }
 
       const userObj =
         ((j?.data as Record<string, unknown>)?.user as Record<string, unknown>) ||

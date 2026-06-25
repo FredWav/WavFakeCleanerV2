@@ -491,6 +491,12 @@ async function handleScanProfile(username: string): Promise<ContentProfileData> 
     }
   }
 
+  // DIAG : ce que le scorer va recevoir — clé pour le bug des comptes privés.
+  dbg(
+    "scan",
+    `@${username} → isPrivate=${data.isPrivate} fc=${data.followerCount} bio=${data.hasBio} pic=${data.hasRealPic} name=${data.hasFullName} post=${data.postCount} rep=${data.hasReplies}`,
+  );
+
   return data as ContentProfileData;
 }
 

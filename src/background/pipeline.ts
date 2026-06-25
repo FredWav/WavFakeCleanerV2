@@ -779,6 +779,7 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
   const sorted = needsVisit
     .map((e) => ({ follower: e.follower, metaScore: e.metaScore ?? 50, seenByCount: e.seenByCount }))
     .sort((a, b) => b.metaScore - a.metaScore);
+  log("INFO", "clean", `[diag] cycle : ${pending.length} pending · ${autoSkipped} auto-résolus · ${sorted.length} à visiter`);
 
   let scanned = autoSkipped;
   let reviewed = 0;
@@ -1107,6 +1108,8 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
       await sleep(2, signal).catch(() => {});
     }
   }
+
+  log("INFO", "clean", `[diag] fin boucle scan : scanned=${scanned} reviewed=${reviewed} removed=${removed} sur ${sorted.length} à visiter · aborted=${signal.aborted}`);
 
   // Free tier: only count this cycle against the daily limit if it actually did
   // something — an immediate hard-429 (0 processed) must not burn the free cycle.
