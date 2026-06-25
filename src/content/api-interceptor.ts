@@ -8,6 +8,7 @@
 
 import { THREADS_API, DEFAULT_PIC_PATTERNS } from "@shared/constants";
 import type { ContentFollowerMeta } from "@shared/messages";
+import { dbg } from "./debug";
 
 // ── MAIN world bridge communication ──
 
@@ -78,7 +79,8 @@ export function injectMainWorldBridge(): void {
   // script init; isolated-world dataset writes are not visible to the page.
   script.dataset.wfcSecret = WFC_SECRET;
   (document.head || document.documentElement).appendChild(script);
-  script.onload = () => script.remove();
+  script.onload = () => { dbg("bridge", "Pont MAIN-world injecté et chargé"); script.remove(); };
+  script.onerror = () => dbg("bridge", "ÉCHEC d'injection du pont MAIN-world (script non chargé)", "ERROR");
   console.log("[WFC] Injecting main world bridge script");
 }
 
@@ -190,9 +192,12 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
       console.log("[WFC] resolveUserProfile: trying (MAIN world)", url);
       const { status, body } = await mainWorldFetch(url, headers);
       console.log("[WFC] resolveUserProfile: status", status, "for", url);
+      dbg("api", `resolveProfile ${url.replace(/\?.*/, "")} → HTTP ${status}`);
 
       if (status !== 200) {
-        console.log("[WFC] resolveUserProfile: non-200, body =", JSON.stringify(body).substring(0, 300));
+        const snippet = (() => { try { return JSON.stringify(body).slice(0, 160); } catch { return String(body).slice(0, 160); } })();
+        console.log("[WFC] resolveUserProfile: non-200, body =", snippet);
+        dbg("api", `resolveProfile non-200 (${status}) body=${snippet}`, "WARNING");
         continue;
       }
 
@@ -224,6 +229,7 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
       console.log("[WFC] resolveUserProfile: no uid in response =", JSON.stringify(j).substring(0, 500));
     } catch (e) {
       console.log("[WFC] resolveUserProfile: error for", url, e);
+      dbg("api", `resolveProfile EXCEPTION (pont muet ?) : ${String(e)}`, "ERROR");
     }
   }
 
@@ -269,9 +275,14 @@ export async function fetchFollowersPage(
     console.log("[WFC] fetchFollowersPage:", url);
     const { status, body, gaveUp } = await fetchWithBackoff(url, headers);
     console.log("[WFC] fetchFollowersPage: status", status, gaveUp ? "(backoff exhausted)" : "");
+    dbg("api", `fetchFollowersPage → HTTP ${status}${gaveUp ? " (backoff épuisé)" : ""}`);
 
-    if (status === 429) return null;
-    if (status !== 200) return null;
+    if (status === 429) { dbg("api", "fetchFollowersPage : 429 → null (rate-limit)", "WARNING"); return null; }
+    if (status !== 200) {
+      const snippet = (() => { try { return JSON.stringify(body).slice(0, 160); } catch { return String(body).slice(0, 160); } })();
+      dbg("api", `fetchFollowersPage : HTTP ${status} → null · body=${snippet}`, "WARNING");
+      return null;
+    }
 
     const data = body as Record<string, unknown>;
     const rawUsers = (data.users as Array<Record<string, unknown>>) || [];

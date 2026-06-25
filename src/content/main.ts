@@ -50,6 +50,7 @@ import {
 } from "./threads-scraper";
 import { performRemoveFollower, recoverFromErrorPage, isTransientErrorPage } from "./threads-actions";
 import { onDrift } from "@shared/selector-strategies";
+import { dbg } from "./debug";
 
 // ── Selector drift telemetry ──
 // Fires when a non-primary selector strategy succeeds — signal that Threads
@@ -82,6 +83,7 @@ async function handleCommand(cmd: ContentCommand): Promise<unknown> {
 
     case "FETCH_FOLLOWERS":
       contentAborted = false;
+      dbg("fetch", `FETCH_FOLLOWERS reçu pour @${cmd.payload.username} · URL page = ${location.href}`);
       return await handleFetchFollowers(cmd.payload.username, cmd.payload.knownUsernames);
 
     case "SCAN_PROFILE":
@@ -122,8 +124,10 @@ async function handleFetchFollowers(
   const hasKnown = knownSet.size > 0;
 
   // Try API first
+  dbg("fetch", `Résolution du profil API pour @${username}…`);
   const profile = await resolveUserProfile(username);
   const userId = profile?.userId;
+  dbg("fetch", `Profil résolu : userId=${userId ?? "AUCUN"} · followerCount=${profile?.followerCount ?? "?"} · isPrivate=${profile?.isPrivate ?? "?"}`);
   // Total followers reported by Threads. 0 means "unknown" — when unknown,
   // we MUST disable the early-stop heuristic (else we risk stopping after a few
   // pages on a partial DB). Acts as a safety check below.
@@ -148,6 +152,7 @@ async function handleFetchFollowers(
     const STOP_AFTER_NO_NEW_PAGES = 3;
 
     const first = await fetchFollowersPage(userId);
+    dbg("fetch", `API page 1 : ${first ? Object.keys(first.users).length + " abonnés" : "NULL (échec/429)"} · nextMaxId=${first?.nextMaxId ?? "-"}`);
     if (first && Object.keys(first.users).length > 0) {
       Object.assign(collected, first.users);
       maxId = first.nextMaxId;
@@ -206,14 +211,16 @@ async function handleFetchFollowers(
         }
       }
 
+      dbg("fetch", `API terminée : ${Object.keys(collected).length} abonnés sur ${page} pages → succès`);
       return { collected, method: `api(${page}p)` };
     } else {
-      console.log("[WFC] API first page returned no users, falling back to scroll");
+      dbg("fetch", "API : page 1 vide → bascule sur le repli scroll", "WARNING");
     }
   } else {
-    console.log("[WFC] Could not resolve user ID for @" + username);
+    dbg("fetch", "Aucun userId résolu → bascule sur le repli scroll", "WARNING");
   }
 
+  dbg("fetch", "Repli scroll : ouverture de la liste des abonnés…");
   return await scrollFetch(username);
 }
 
@@ -226,23 +233,28 @@ async function scrollFetch(
   // If we're already on the dedicated /@user/followers page (e.g., after a
   // service-worker navigation retry), skip the click step entirely.
   const onFollowersPage = SELECTORS.scroll.followersUrlPattern.test(location.pathname);
+  dbg("scroll", `scrollFetch démarré · onFollowersPage=${onFollowersPage} · path=${location.pathname}`);
 
   if (!onFollowersPage) {
     let clicked = false;
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (await clickFollowersButton()) {
+      const ok = await clickFollowersButton();
+      dbg("scroll", `clickFollowersButton tentative ${attempt + 1}/3 → ${ok ? "OUVERT" : "échec"}`);
+      if (ok) {
         clicked = true;
         break;
       }
       await sleep(1500);
     }
     if (!clicked) {
+      dbg("scroll", "Bouton « abonnés » INTROUVABLE après 3 tentatives → error followers_button_not_found", "ERROR");
       return { error: "followers_button_not_found" };
     }
 
     // Wait for either a modal/dialog to render or the URL to switch to the
     // dedicated followers route. Replaces the old fixed sleep(4000).
-    await waitForFollowersUI(8000);
+    const uiReady = await waitForFollowersUI(8000);
+    dbg("scroll", `waitForFollowersUI → ${uiReady ? "liste/modale détectée" : "TIMEOUT 8s (rien détecté)"}`);
   }
 
   let containerFound = false;
@@ -252,14 +264,19 @@ async function scrollFetch(
     const mark = markScrollContainer();
     if (mark.ok) {
       containerFound = true;
+      dbg("scroll", `Conteneur scrollable trouvé (source=${mark.source}, ${mark.links} liens) à la tentative ${attempt + 1}`);
       break;
     }
     lastReason = mark.reason;
     lastLinks = mark.links;
+    if (attempt === 0 || attempt === 5 || attempt === 11) {
+      dbg("scroll", `markScrollContainer tentative ${attempt + 1}/12 → échec (raison=${mark.reason}, liens=${mark.links})`);
+    }
     await sleep(2000);
   }
 
   if (!containerFound) {
+    dbg("scroll", `Conteneur INTROUVABLE après 12 tentatives → error scroll_container_not_found (raison=${lastReason}, liens=${lastLinks})`, "ERROR");
     return {
       error: "scroll_container_not_found",
       reason: lastReason,
@@ -278,6 +295,7 @@ async function scrollFetch(
   // Track whether we stopped on a hard cap/timeout (= list truncated, the
   // caller must warn the user) rather than a natural end (got everyone).
   let truncReason: "cap_5000" | "timeout" | null = null;
+  let loopTurns = 0;
 
   while (!contentAborted) {
     if (Date.now() - startTime > maxDuration) { truncReason = "timeout"; break; }
@@ -288,6 +306,10 @@ async function scrollFetch(
     const step = scrollStep();
     if (step.advanced) stagnant = 0; else stagnant++;
     await sleep(700);
+    loopTurns++;
+    if (loopTurns <= 3 || loopTurns % 15 === 0) {
+      dbg("scroll", `boucle #${loopTurns} : ${pseudos.size} abonnés · scrollTop ${step.advanced ? "avance" : "STAGNE"} (h=${step.height}) · stagnant=${stagnant} noChange=${noChange}`);
+    }
 
     const hrefs = extractFollowerLinks();
     rawHrefs = hrefs.length;
@@ -315,6 +337,7 @@ async function scrollFetch(
     // followers page itself (there, 0 means a genuinely empty list — terminal).
     if (pseudos.size === 0 && (stagnant >= 3 || noChange >= 3) && !onFollowersPage) {
       stopScroll();
+      dbg("scroll", `Abandon précoce : 0 abonné extrait (stagnant=${stagnant}, noChange=${noChange}, liens bruts=${rawHrefs}) → retry sur /followers`, "ERROR");
       return {
         error: "scroll_container_not_found",
         reason: stagnant >= 3 ? "scrolltop_not_advancing" : "zero_extracted",
@@ -329,10 +352,12 @@ async function scrollFetch(
   }
 
   stopScroll();
+  dbg("scroll", `Boucle scroll terminée : ${pseudos.size} abonnés collectés en ${loopTurns} tours (truncReason=${truncReason ?? "aucune"})`);
 
   // A scroll that collected nothing off the dedicated page is a failure, not a
   // success-with-0 — surface it so the /@user/followers retry fires.
   if (pseudos.size === 0 && !onFollowersPage) {
+    dbg("scroll", "0 abonné hors page /followers → error scroll_container_not_found", "ERROR");
     return { error: "scroll_container_not_found", reason: "zero_extracted", linksFound: rawHrefs };
   }
 

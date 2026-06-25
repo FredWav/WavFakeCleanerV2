@@ -134,6 +134,7 @@ window.addEventListener("message", async (event) => {
   if (!WFC_SECRET || event.data.secret !== WFC_SECRET) return;
 
   const { id, url, headers } = event.data;
+  console.log("[WFC:bridge] requête reçue id=" + id + " url=" + url);
 
   // URL allowlist: refuse non-Threads-API URLs outright.
   if (!isAllowedApiUrl(url)) {
@@ -158,6 +159,7 @@ window.addEventListener("message", async (event) => {
     });
 
     const status = response.status;
+    console.log("[WFC:bridge] réponse id=" + id + " HTTP " + status);
     let body: unknown = null;
 
     try {
@@ -171,6 +173,7 @@ window.addEventListener("message", async (event) => {
       "*",
     );
   } catch (e) {
+    console.warn("[WFC:bridge] fetch EXCEPTION id=" + id, e);
     window.postMessage(
       { type: WFC_RESPONSE, id, status: 0, body: null, error: String(e), secret: WFC_SECRET },
       "*",
@@ -178,4 +181,4 @@ window.addEventListener("message", async (event) => {
   }
 });
 
-console.log("[WFC] Main world bridge loaded");
+console.log("[WFC] Main world bridge loaded — secret " + (WFC_SECRET ? "OK" : "MANQUANT (le pont ne répondra JAMAIS)"));

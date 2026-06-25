@@ -251,11 +251,14 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 
     // Use background tab on user's profile page (needs auth context + bridge)
     const tabId = await getOrCreateBackgroundTab();
+    log("INFO", "fetch", `[diag] onglet de fond id=${tabId} créé`);
     const profileUrl = `https://www.threads.com/@${encodeURIComponent(username)}`;
     await chrome.tabs.update(tabId, { url: profileUrl });
-    await waitForTabLoad(tabId, signal);
+    const fetchLoaded = await waitForTabLoad(tabId, signal);
+    log("INFO", "fetch", `[diag] navigation ${profileUrl} → ${fetchLoaded ? "chargée" : "TIMEOUT"}`);
     await sleep(3, signal);
     await ensureContentScript(tabId);
+    log("INFO", "fetch", "[diag] content script prêt — envoi de FETCH_FOLLOWERS");
 
     // Retry logic: message channel can close after extension reload
     // Race with abort signal so Stop actually interrupts the fetch
@@ -356,6 +359,7 @@ async function runFetchInternal(signal: AbortSignal): Promise<void> {
 
     const successResult = fetchResult as FetchSuccess;
     const total = Object.keys(successResult.collected).length;
+    log("INFO", "fetch", `[diag] résultat reçu : méthode=${successResult.method} · ${total} abonnés${successResult.truncated ? " (tronqué)" : ""}`);
     log("INFO", "fetch", m("fetch_found", total));
     await updateState({ stage: "fetching", total, progress: 0 });
 
