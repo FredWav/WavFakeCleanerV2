@@ -406,6 +406,12 @@ async function handleScanProfile(username: string): Promise<ContentProfileData> 
     const data = extractProfileFromDom(username);
     dbg("scan", `@${username} : DOM extrait — privé(DOM)=${data.isPrivate} fc=${data.followerCount} pic=${data.hasRealPic} name=${data.hasFullName} bio=${data.hasBio} 404=${data.notFound}`);
 
+    // Compte déjà bloqué par l'utilisateur → on n'analyse pas (jamais flaggé faux).
+    if (data.error === "blocked_by_me") {
+      dbg("scan", `@${username} : DÉJÀ BLOQUÉ par toi → ignoré (pas un faux)`);
+      return data as ContentProfileData;
+    }
+
     // La bannière « Ce profil est privé » est rendue côté client et un onglet de
     // fond throttlé ne la peint souvent jamais : on confirme la confidentialité
     // depuis les données du profil (repli sur le JSON embarqué de la page).

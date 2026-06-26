@@ -273,6 +273,25 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
   return null;
 }
 
+// PROBE diagnostique (TEMP) : teste l'endpoint profil par ID et logue sa forme.
+async function probeUserInfo(userId: string): Promise<void> {
+  try {
+    const url = apiUrl(`/api/v1/users/${encodeURIComponent(userId)}/info/`);
+    const { status, body } = await mainWorldFetch(url, apiHeaders());
+    const j = (body as Record<string, unknown>) || {};
+    const u =
+      (j.user as Record<string, unknown> | undefined) ||
+      ((j.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined);
+    if (u) {
+      dbg("api", `PROBE /users/{id}/info/ → HTTP ${status} · user OK · media_count=${String(u.media_count)} follower_count=${String(u.follower_count)} bio=${String(u.biography ?? "").length}c`);
+    } else {
+      dbg("api", `PROBE /users/{id}/info/ → HTTP ${status} · topKeys=[${Object.keys(j).join(",")}] · user ABSENT`, "WARNING");
+    }
+  } catch (e) {
+    dbg("api", `PROBE /users/{id}/info/ EXCEPTION — ${String(e)}`, "WARNING");
+  }
+}
+
 export async function fetchFollowersPage(
   userId: string,
   maxId?: string
@@ -304,6 +323,11 @@ export async function fetchFollowersPage(
     if (!loggedFollowerShape && rawUsers.length > 0) {
       loggedFollowerShape = true;
       dbg("api", `champs abonné brut = [${Object.keys(rawUsers[0]).join(",")}]`);
+      // PROBE one-shot : /api/v1/users/{id}/info/ renvoie-t-il le profil COMPLET
+      // (media_count = nb de posts, follower_count, biography) ? Si oui → scan API
+      // sans visite possible (web_profile_info étant mort sur Threads).
+      const probePk = String(rawUsers[0].pk ?? rawUsers[0].id ?? "");
+      if (probePk) void probeUserInfo(probePk);
     }
     const users: Record<string, ContentFollowerMeta> = {};
 

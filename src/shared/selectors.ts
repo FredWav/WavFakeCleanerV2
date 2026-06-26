@@ -11,6 +11,10 @@ export const SELECTORS = {
     repliesTabTexts: ["Réponses", "Replies", "réponses", "replies", "Respuestas", "Respostas", "Antworten", "Risposte", "Antwoorden", "返信"],
     threadsTabTexts: ["Threads", "threads", "スレッド"],
     mediaTabTexts: ["Médias", "Media", "médias", "media", "Medios", "Mídia", "Medien", "メディア"],
+    // Bouton « Débloquer » : présent UNIQUEMENT sur le profil d'un compte que TU
+    // as bloqué (Threads masque alors le contenu → « Contenu indisponible »).
+    // Sert à ne PAS scorer un compte bloqué comme un faux : il est déjà traité.
+    unblockButtonTexts: ["Débloquer", "Unblock", "Desbloquear", "Entsperren", "Sblocca", "Deblokkeren", "ブロックを解除", "解除拦截"],
     noMediaPatterns: [
       /aucun m[ée]dia/i,
       /no media yet/i,

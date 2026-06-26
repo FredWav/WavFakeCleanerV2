@@ -40,6 +40,18 @@ function detectIsPrivate(bodyText: string): boolean {
   return false;
 }
 
+// Le profil affiche-t-il un bouton « Débloquer » ? Vrai ⇒ c'est un compte que
+// l'utilisateur a lui-même bloqué (et non un faux à supprimer).
+function hasUnblockButton(): boolean {
+  const texts = SELECTORS.profile.unblockButtonTexts;
+  const btns = document.querySelectorAll('div[role="button"], button, [role="button"], a');
+  for (const b of btns) {
+    const t = ((b as HTMLElement).innerText || b.textContent || "").trim();
+    if (t && texts.includes(t)) return true;
+  }
+  return false;
+}
+
 // ── Profile data extraction (ported from _JS_EXTRACT_PROFILE) ──
 
 /**
@@ -92,6 +104,15 @@ export function extractProfileFromDom(username: string): Partial<ContentProfileD
   if (bodyText.length < 500 && is429(document.body?.innerText || "")) {
     result.error = "429_RATE_LIMIT";
     result.notFound = true;
+    return result;
+  }
+
+  // Compte que J'AI bloqué : Threads affiche un bouton « Débloquer » + « Contenu
+  // indisponible » à la place du profil (0 post visible → sinon scoré faux à tort).
+  // Ce n'est PAS un faux — l'utilisateur l'a déjà traité. On signale l'état pour
+  // que le pipeline l'ignore.
+  if (hasUnblockButton()) {
+    result.error = "blocked_by_me";
     return result;
   }
 

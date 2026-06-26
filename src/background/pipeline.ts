@@ -181,6 +181,8 @@ export async function persistFollowerPage(
 }
 
 export function stopPipeline(): void {
+  console.warn("[WFC] stopPipeline() appelé");
+  log("WARNING", "pipeline", "[diag] stopPipeline() appelé (Stop manuel)");
   // Invalide à la fois le run en cours ET tout run déjà en file (B-C2).
   runGeneration++;
   abortController?.abort();
@@ -196,6 +198,10 @@ export function stopPipeline(): void {
  * l'AbortController vivant — les boucles continuaient jusqu'à la mort du worker.
  */
 export function interruptForSuspend(): void {
+  // DIAG : si ça apparaît PENDANT un scan, le service worker se suspend malgré
+  // le keepAlive (offscreen) → c'est la cause du « aborted=true après 1 profil ».
+  console.warn("[WFC] interruptForSuspend() — onSuspend du service worker");
+  log("WARNING", "pipeline", "[diag] interruptForSuspend() — onSuspend du SW (keepAlive a lâché ?)");
   runGeneration++;
   abortController?.abort();
   abortController = null;
@@ -458,7 +464,8 @@ export function runAnalyze(): Promise<void> {
     // of null »). Le signal capturé reste valide (juste aborted) → on saute
     // proprement la suite. Régression du fix B-M8, corrigée ici.
     const signal = abortController.signal;
-    await startKeepAlive();
+    const kaOk = await startKeepAlive();
+    log("INFO", "pipeline", `[diag] keepAlive (offscreen) ${kaOk ? "actif" : "ÉCHEC — le SW peut se suspendre"}`);
     try {
       await runFetchInternal(signal);
       if (!signal.aborted) {
@@ -992,6 +999,20 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
         await rateTracker.recordError();
         log("WARNING", "clean", m("scan_rate_limit", follower.username, consecutiveBlocked));
         await sleep(30 + Math.random() * 30, signal);
+        continue;
+      }
+
+      // Compte déjà bloqué par l'utilisateur → pas un faux, déjà traité. On le
+      // marque "scanné OK" (jamais flaggé/supprimé) pour ne plus le re-visiter.
+      if (profileData.error === "blocked_by_me") {
+        consecutiveBlocked = 0;
+        await markOk(follower, { score: 0, breakdown: ["blocked_by_me"] }, profileData);
+        scanned++;
+        log("INFO", "clean", `@${follower.username} : déjà bloqué par toi → ignoré (jamais flaggé faux)`);
+        await rateTracker.recordAction();
+        await updateState({ stage: "cleaning", progress: scanned, total: pending.length });
+        await broadcastStats();
+        await sleep(pacer.nextPause(), signal);
         continue;
       }
 

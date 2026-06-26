@@ -5,8 +5,8 @@
 
 let active = false;
 
-export async function startKeepAlive(): Promise<void> {
-  if (active) return;
+export async function startKeepAlive(): Promise<boolean> {
+  if (active) return true;
   try {
     await chrome.offscreen.createDocument({
       url: "offscreen.html",
@@ -23,6 +23,7 @@ export async function startKeepAlive(): Promise<void> {
       console.error("[WFC] Keepalive creation failed:", e);
     }
   }
+  return active;
 }
 
 export async function stopKeepAlive(): Promise<void> {
