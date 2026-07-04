@@ -7,6 +7,7 @@
 
 import { SELECTORS } from "@shared/selectors";
 import { humanClick } from "./humanize";
+import { dbg } from "./debug";
 
 // ── State for detecting blocks ──
 
@@ -78,7 +79,7 @@ export async function clickThreeDots(): Promise<boolean> {
     }
   }
 
-  console.log("[WFC] clickThreeDots: no menu button found");
+  dbg("actions", "clickThreeDots : aucun bouton menu trouvé", "WARNING");
   return false;
 }
 
@@ -125,11 +126,11 @@ async function waitForMenu(): Promise<boolean> {
   for (let attempt = 0; attempt < 6; attempt++) {
     await sleep(800 + attempt * 200);
     if (hasMenuContent()) {
-      console.log("[WFC] Menu appeared");
+      dbg("actions", "menu apparu");
       return true;
     }
   }
-  console.log("[WFC] waitForMenu: no menu appeared after 6 attempts");
+  dbg("actions", "waitForMenu : aucun menu après 6 tentatives", "WARNING");
   return false;
 }
 
@@ -199,7 +200,7 @@ export async function clickConfirm(): Promise<boolean> {
       const text = (btn.textContent || "").trim();
       if (pat.test(text) && (btn as HTMLElement).offsetHeight > 0) {
         await humanClick(btn as HTMLElement);
-        console.log("[WFC] Clicked confirm button:", text);
+        dbg("actions", "bouton de confirmation cliqué : " + text);
         return true;
       }
     }
@@ -225,12 +226,12 @@ export async function clickConfirm(): Promise<boolean> {
     const accept = modal ? (red || wordy) : (red && wordy);
     if (accept) {
       await humanClick(el);
-      console.log("[WFC] Clicked confirm button (fallback):", text);
+      dbg("actions", "bouton de confirmation cliqué (repli) : " + text);
       return true;
     }
   }
 
-  console.log("[WFC] clickConfirm: no confirm button found");
+  dbg("actions", "clickConfirm : aucun bouton de confirmation trouvé", "WARNING");
   return false;
 }
 
@@ -371,7 +372,7 @@ export function isTransientErrorPage(): boolean {
 export async function recoverFromErrorPage(): Promise<boolean> {
   if (!isTransientErrorPage()) return false;
 
-  console.log("[WFC] Detected Threads error page — recovering with backoff");
+  dbg("actions", "page d'erreur Threads détectée — récupération avec backoff", "WARNING");
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const backoff = [3000, 8000, 15000][attempt];
@@ -384,7 +385,7 @@ export async function recoverFromErrorPage(): Promise<boolean> {
       if (RETRY_BUTTON_TEXTS.some((rt) => text.toLowerCase() === rt.toLowerCase()) &&
           (btn as HTMLElement).offsetHeight > 0) {
         await humanClick(btn as HTMLElement);
-        console.log("[WFC] Clicked retry button (attempt " + (attempt + 1) + "):", text);
+        dbg("actions", "bouton Réessayer cliqué (tentative " + (attempt + 1) + ") : " + text);
         clicked = true;
         break;
       }
@@ -392,18 +393,18 @@ export async function recoverFromErrorPage(): Promise<boolean> {
 
     if (!clicked) {
       window.location.reload();
-      console.log("[WFC] No retry button, reloading page (attempt " + (attempt + 1) + ")");
+      dbg("actions", "pas de bouton Réessayer, rechargement de la page (tentative " + (attempt + 1) + ")");
     }
 
     await sleep(4000);
 
     if (!isTransientErrorPage()) {
-      console.log("[WFC] Page recovered after attempt " + (attempt + 1));
+      dbg("actions", "page rétablie après la tentative " + (attempt + 1));
       return true;
     }
   }
 
-  console.log("[WFC] Error page persists after 3 recovery attempts");
+  dbg("actions", "page d'erreur persistante après 3 tentatives de récupération", "WARNING");
   return true;
 }
 
@@ -437,7 +438,7 @@ async function verifyRemoval(_username: string): Promise<{ removed?: boolean; bl
 
   // Transient error page = action likely succeeded
   if (isTransientErrorPage()) {
-    console.log("[WFC] Transient error page after removal — action likely succeeded");
+    dbg("actions", "page d'erreur transitoire après retrait — action probablement réussie");
     await recoverFromErrorPage();
     return { removed: true, blocked: false, reason: "" };
   }
@@ -495,7 +496,7 @@ async function tryClickPatterns(patterns: RegExp[]): Promise<boolean> {
     for (const el of elements) {
       const text = (el.textContent || "").trim();
       if (patterns.some((p) => p.test(text)) && (el as HTMLElement).offsetHeight > 0) {
-        console.log("[WFC] Clicking:", text, "via selector:", selector);
+        dbg("actions", "clic : " + text + " (sélecteur " + selector + ")");
         await humanClick(el as HTMLElement);
         return true;
       }
@@ -510,7 +511,7 @@ async function tryClickPatterns(patterns: RegExp[]): Promise<boolean> {
     const text = (h.textContent || "").trim();
     if (text.length < 3 || text.length > 60) continue;
     if (patterns.some((p) => p.test(text))) {
-      console.log("[WFC] Clicking (broad):", text);
+      dbg("actions", "clic (large) : " + text);
       await humanClick(h);
       return true;
     }

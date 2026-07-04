@@ -10,7 +10,7 @@
 const _wfcWin = window as unknown as Record<string, boolean>;
 const _alreadyLoaded = !!_wfcWin.__WFC_CONTENT_LOADED__;
 if (_alreadyLoaded) {
-  console.log("[WFC] Content script already loaded, skipping duplicate injection");
+  dbg("init", "Content script déjà chargé — injection dupliquée ignorée");
 }
 _wfcWin.__WFC_CONTENT_LOADED__ = true;
 
@@ -28,7 +28,7 @@ if (!_alreadyLoaded) {
     }
   );
 
-  console.log("[WFC] Content script loaded on", window.location.href);
+  dbg("init", "Content script chargé sur " + window.location.href);
 }
 
 // ── Now safe to import other modules ──
@@ -133,12 +133,7 @@ async function handleFetchFollowers(
   // pages on a partial DB). Acts as a safety check below.
   const totalFollowers = profile?.followerCount || 0;
   if (userId) {
-    console.log(
-      "[WFC] User ID resolved:",
-      userId,
-      hasKnown ? `(${knownSet.size} known followers)` : "(first fetch)",
-      `[total reported by Threads: ${totalFollowers || "unknown"}]`,
-    );
+    dbg("fetch", `userId résolu : ${userId} · ${hasKnown ? knownSet.size + " abonnés connus" : "premier fetch"} · total Threads : ${totalFollowers || "inconnu"}`);
 
     const collected: Record<string, ContentFollowerMeta> = {};
     let maxId: string | null = null;
@@ -196,12 +191,10 @@ async function handleFetchFollowers(
           const newInPage = pageUsernames.filter((u) => !knownSet.has(u)).length;
           if (newInPage === 0) {
             pagesWithoutNew++;
-            console.log(`[WFC] Page ${page}: 0 new followers (${pagesWithoutNew}/${STOP_AFTER_NO_NEW_PAGES})`);
+            dbg("fetch", `page ${page} : 0 nouvel abonné (${pagesWithoutNew}/${STOP_AFTER_NO_NEW_PAGES})`);
             if (pagesWithoutNew >= STOP_AFTER_NO_NEW_PAGES) {
               const collectedSoFar = Object.keys(collected).length;
-              console.log(
-                `[WFC] Early stop: ${STOP_AFTER_NO_NEW_PAGES} pages d'affilee sans nouveau follower — fini.`,
-              );
+              dbg("fetch", `arrêt anticipé : ${STOP_AFTER_NO_NEW_PAGES} pages d'affilée sans nouvel abonné — terminé.`);
               send({ type: "FETCH_PROGRESS", payload: { page, total: collectedSoFar } } as ContentMessage);
               break;
             }
@@ -568,7 +561,7 @@ async function handleRemoveFollower(
   // If Threads is blocking us, notify the service worker
   if (result.blocked) {
     send({ type: "RATE_LIMIT_DETECTED" } as ContentMessage);
-    console.log("[WFC] Threads blocking detected for @" + username, result.error);
+    dbg("actions", "Blocage Threads détecté pour @" + username + " : " + (result.error ?? ""), "WARNING");
   }
 
   return result;

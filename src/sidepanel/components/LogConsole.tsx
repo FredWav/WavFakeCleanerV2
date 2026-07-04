@@ -21,19 +21,19 @@ function formatTs(iso: string): string {
 }
 
 function buildReport(logs: LogEntry[], lang: string): string {
-  const version = chrome.runtime?.getManifest?.().version ?? "unknown";
+  const version = chrome.runtime?.getManifest?.().version ?? "?";
   const header = [
-    `Wav Fake Cleaner — diagnostic report`,
-    `version: ${version}`,
-    `lang:    ${lang}`,
-    `when:    ${new Date().toISOString()}`,
-    `logs:    ${logs.length}`,
+    t("report_title", lang),
+    `${t("report_version", lang)}: ${version}`,
+    `${t("report_lang", lang)}: ${lang}`,
+    `${t("report_when", lang)}: ${new Date().toISOString()}`,
+    `${t("report_count", lang)}: ${logs.length}`,
     `---`,
   ].join("\n");
   const body = logs
     .map((e) => `${e.ts} [${e.level}] (${e.category}) ${e.message}`)
     .join("\n");
-  return `${header}\n${body || "(no logs)"}\n`;
+  return `${header}\n${body || t("report_empty", lang)}\n`;
 }
 
 export default function LogConsole({

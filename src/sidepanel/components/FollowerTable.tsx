@@ -635,7 +635,7 @@ export default function FollowerTable({
                                       className="px-2.5 py-1 rounded text-[11px] bg-red-600/25 text-red-400 font-semibold
                                         hover:bg-red-600/40 transition-colors disabled:opacity-50 border border-red-900/40"
                                     >
-                                      Fake
+                                      {t("vote_fake", lang)}
                                     </button>
                                     <button
                                       onClick={(e) => handleVote(e, f.username, "ok", f.score!)}
@@ -643,14 +643,14 @@ export default function FollowerTable({
                                       className="px-2.5 py-1 rounded text-[11px] bg-green-600/25 text-green-400 font-semibold
                                         hover:bg-green-600/40 transition-colors disabled:opacity-50 border border-green-900/40"
                                     >
-                                      No Fake
+                                      {t("vote_not_fake", lang)}
                                     </button>
                                   </>
                                 )}
                                 {/* Résultat communautaire */}
                                 {cs && cs.voteCount > 0 && (
                                   <span className="text-[11px] text-gray-500 ml-auto">
-                                    {cs.voteCount} votes · {Math.round(cs.fakeRatio * 100)}% fake
+                                    {cs.voteCount} {t("community_votes", lang)} · {Math.round(cs.fakeRatio * 100)}% {t("community_fake", lang)}
                                   </span>
                                 )}
                               </div>

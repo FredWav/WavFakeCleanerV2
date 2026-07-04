@@ -17,6 +17,12 @@ import { isAllowedApiUrl } from "../shared/api-allowlist";
 const WFC_REQUEST = "WFC_API_REQUEST";
 const WFC_RESPONSE = "WFC_API_RESPONSE";
 
+// Traces console du pont (MAIN world) — gatées, coupées en production. Le pont
+// vit dans le contexte de la page Threads de l'utilisateur : aucune trace de
+// routine ne doit y fuiter. Les console.warn d'ÉCHEC (URL refusée, exception
+// fetch, secret manquant) restent, eux, toujours actifs.
+const BRIDGE_DEBUG = false;
+
 // Read the per-instance secret synchronously at script init.
 // document.currentScript is non-null only during top-level synchronous
 // execution; capturing it once in closure is the simplest reliable handoff
@@ -134,7 +140,7 @@ window.addEventListener("message", async (event) => {
   if (!WFC_SECRET || event.data.secret !== WFC_SECRET) return;
 
   const { id, url, headers } = event.data;
-  console.log("[WFC:bridge] requête reçue id=" + id + " url=" + url);
+  if (BRIDGE_DEBUG) console.log("[WFC:bridge] requête reçue id=" + id + " url=" + url);
 
   // URL allowlist: refuse non-Threads-API URLs outright.
   if (!isAllowedApiUrl(url)) {
@@ -159,7 +165,7 @@ window.addEventListener("message", async (event) => {
     });
 
     const status = response.status;
-    console.log("[WFC:bridge] réponse id=" + id + " HTTP " + status);
+    if (BRIDGE_DEBUG) console.log("[WFC:bridge] réponse id=" + id + " HTTP " + status);
     let body: unknown = null;
 
     try {
@@ -181,4 +187,5 @@ window.addEventListener("message", async (event) => {
   }
 });
 
-console.log("[WFC] Main world bridge loaded — secret " + (WFC_SECRET ? "OK" : "MANQUANT (le pont ne répondra JAMAIS)"));
+if (!WFC_SECRET) console.warn("[WFC] Pont MAIN-world : secret MANQUANT — le pont ne répondra JAMAIS");
+else if (BRIDGE_DEBUG) console.log("[WFC] Pont MAIN-world chargé");

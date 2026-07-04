@@ -23,7 +23,6 @@ const WFC_RESPONSE = "WFC_API_RESPONSE";
 const WFC_SECRET = crypto.randomUUID();
 
 let requestId = 0;
-let loggedFollowerShape = false; // DIAG one-shot (cf. fetchFollowersPage)
 const pendingRequests = new Map<number, {
   resolve: (value: { status: number; body: unknown }) => void;
   reject: (reason: Error) => void;
@@ -82,7 +81,6 @@ export function injectMainWorldBridge(): void {
   (document.head || document.documentElement).appendChild(script);
   script.onload = () => { dbg("bridge", "Pont MAIN-world injecté et chargé"); script.remove(); };
   script.onerror = () => dbg("bridge", "ÉCHEC d'injection du pont MAIN-world (script non chargé)", "ERROR");
-  console.log("[WFC] Injecting main world bridge script");
 }
 
 // ── Helpers ──
@@ -155,7 +153,7 @@ async function fetchWithBackoff(
     }
     waitMs = Math.min(waitMs, 30 * 60 * 1000); // cap at 30 min
 
-    console.log(`[WFC] 429 received (attempt ${attempt + 1}/${maxAttempts}), waiting ${Math.round(waitMs / 1000)}s before retry`);
+    dbg("api", `429 (tentative ${attempt + 1}/${maxAttempts}) → attente ${Math.round(waitMs / 1000)}s avant nouvel essai`, "WARNING");
     await new Promise((r) => setTimeout(r, waitMs));
   }
 
@@ -190,31 +188,16 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
 
   for (const url of endpoints) {
     try {
-      console.log("[WFC] resolveUserProfile: trying (MAIN world)", url);
       const { status, body } = await mainWorldFetch(url, headers);
-      console.log("[WFC] resolveUserProfile: status", status, "for", url);
       dbg("api", `resolveProfile ${url.replace(/\?.*/, "")} → HTTP ${status}`);
 
       if (status !== 200) {
         const snippet = (() => { try { return JSON.stringify(body).slice(0, 160); } catch { return String(body).slice(0, 160); } })();
-        console.log("[WFC] resolveUserProfile: non-200, body =", snippet);
         dbg("api", `resolveProfile non-200 (${status}) body=${snippet}`, "WARNING");
         continue;
       }
 
       const j = body as Record<string, unknown>;
-      console.log("[WFC] resolveUserProfile: response keys =", Object.keys(j));
-      // DIAG : forme du corps web_profile_info 200, pour brancher le parser sur
-      // les bons champs (et savoir pourquoi l'uid n'en est pas extrait).
-      if (url.includes("web_profile_info")) {
-        const du = (j?.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined;
-        const u2 = (j?.user as Record<string, unknown> | undefined);
-        const uu = du || u2;
-        dbg("api", `web_profile_info 200 · topKeys=[${Object.keys(j).join(",")}] · status=${String(j.status ?? "?")} · user=${uu ? "OK(keys:" + Object.keys(uu).slice(0, 14).join(",") + ")" : "ABSENT"}`);
-        if (uu) {
-          dbg("api", `web_profile_info user : id=${String(uu.id ?? uu.pk ?? "?")} fc=${String(uu.follower_count ?? "?")} priv=${String(uu.is_private ?? "?")} bio=${(String(uu.biography ?? "")).length}c name="${String(uu.full_name ?? "")}"`);
-        }
-      }
 
       const userObj =
         ((j?.data as Record<string, unknown>)?.user as Record<string, unknown>) ||
@@ -224,7 +207,6 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
         const uid = userObj.id || userObj.pk || userObj.pk_id;
         const fc = Number(userObj.follower_count ?? 0);
         if (uid) {
-          console.log("[WFC] resolveUserProfile: uid=", uid, "followerCount=", fc);
           return { userId: String(uid), followerCount: fc, isPrivate: !!userObj.is_private };
         }
       }
@@ -234,13 +216,9 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
       if (match) {
         const uid = match.pk || match.id;
         const fc = Number(match.follower_count ?? 0);
-        console.log("[WFC] resolveUserProfile: via search uid=", uid, "followerCount=", fc);
         return { userId: String(uid), followerCount: fc, isPrivate: !!match.is_private };
       }
-
-      console.log("[WFC] resolveUserProfile: no uid in response =", JSON.stringify(j).substring(0, 500));
     } catch (e) {
-      console.log("[WFC] resolveUserProfile: error for", url, e);
       dbg("api", `resolveProfile EXCEPTION (pont muet ?) : ${String(e)}`, "ERROR");
     }
   }
@@ -248,7 +226,6 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
   // Fallback: check page scripts for embedded data (no follower count available here)
   try {
     const scripts = document.querySelectorAll('script[type="application/json"]');
-    console.log("[WFC] resolveUserProfile: checking", scripts.length, "script tags");
     for (const s of scripts) {
       const text = s.textContent || "";
       if (text.includes(username)) {
@@ -258,7 +235,6 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
         const priv = uIdx >= 0 && /"is_private":\s*true/.test(text.slice(uIdx, uIdx + 600));
         const pkM = text.match(/"pk":"?(\d+)"?/);
         if (pkM) {
-          console.log("[WFC] resolveUserProfile: found pk in script tag:", pkM[1]);
           return { userId: pkM[1], followerCount: 0, isPrivate: priv };
         }
         const idM = text.match(/"user_id":"?(\d+)"?/);
@@ -269,27 +245,8 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
     // ignore
   }
 
-  console.log("[WFC] resolveUserProfile: FAILED for", username);
+  dbg("api", `resolveProfile : aucun identifiant trouvé pour @${username}`, "WARNING");
   return null;
-}
-
-// PROBE diagnostique (TEMP) : teste l'endpoint profil par ID et logue sa forme.
-async function probeUserInfo(userId: string): Promise<void> {
-  try {
-    const url = apiUrl(`/api/v1/users/${encodeURIComponent(userId)}/info/`);
-    const { status, body } = await mainWorldFetch(url, apiHeaders());
-    const j = (body as Record<string, unknown>) || {};
-    const u =
-      (j.user as Record<string, unknown> | undefined) ||
-      ((j.data as Record<string, unknown> | undefined)?.user as Record<string, unknown> | undefined);
-    if (u) {
-      dbg("api", `PROBE /users/{id}/info/ → HTTP ${status} · user OK · media_count=${String(u.media_count)} follower_count=${String(u.follower_count)} bio=${String(u.biography ?? "").length}c`);
-    } else {
-      dbg("api", `PROBE /users/{id}/info/ → HTTP ${status} · topKeys=[${Object.keys(j).join(",")}] · user ABSENT`, "WARNING");
-    }
-  } catch (e) {
-    dbg("api", `PROBE /users/{id}/info/ EXCEPTION — ${String(e)}`, "WARNING");
-  }
 }
 
 export async function fetchFollowersPage(
@@ -303,9 +260,7 @@ export async function fetchFollowersPage(
   const url = apiUrl(path);
 
   try {
-    console.log("[WFC] fetchFollowersPage:", url);
     const { status, body, gaveUp } = await fetchWithBackoff(url, headers);
-    console.log("[WFC] fetchFollowersPage: status", status, gaveUp ? "(backoff exhausted)" : "");
     dbg("api", `fetchFollowersPage → HTTP ${status}${gaveUp ? " (backoff épuisé)" : ""}`);
 
     if (status === 429) { dbg("api", "fetchFollowersPage : 429 → null (rate-limit)", "WARNING"); return null; }
@@ -317,18 +272,6 @@ export async function fetchFollowersPage(
 
     const data = body as Record<string, unknown>;
     const rawUsers = (data.users as Array<Record<string, unknown>>) || [];
-    // DIAG one-shot : quels champs l'endpoint followers donne par abonné ?
-    // (savoir si on a déjà follower_count / biography / media_count = postCount
-    // sans visiter le profil → scan API possible).
-    if (!loggedFollowerShape && rawUsers.length > 0) {
-      loggedFollowerShape = true;
-      dbg("api", `champs abonné brut = [${Object.keys(rawUsers[0]).join(",")}]`);
-      // PROBE one-shot : /api/v1/users/{id}/info/ renvoie-t-il le profil COMPLET
-      // (media_count = nb de posts, follower_count, biography) ? Si oui → scan API
-      // sans visite possible (web_profile_info étant mort sur Threads).
-      const probePk = String(rawUsers[0].pk ?? rawUsers[0].id ?? "");
-      if (probePk) void probeUserInfo(probePk);
-    }
     const users: Record<string, ContentFollowerMeta> = {};
 
     for (const u of rawUsers) {
@@ -338,15 +281,12 @@ export async function fetchFollowersPage(
       }
     }
 
-    console.log("[WFC] fetchFollowersPage: got", Object.keys(users).length, "users");
-
     return {
       users,
       nextMaxId: (data.next_max_id as string) || null,
     };
   } catch (e) {
-    console.log("[WFC] fetchFollowersPage: error", e);
+    dbg("api", `fetchFollowersPage EXCEPTION : ${String(e)}`, "ERROR");
     return null;
   }
 }
-

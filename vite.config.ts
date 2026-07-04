@@ -62,12 +62,6 @@ function extensionPlugin(): Plugin {
         },
         tsconfig: "tsconfig.json",
         minify: true,
-        banner: {
-          js: 'console.log("[WFC] === Content script IIFE starting ===", window.location.href);',
-        },
-        footer: {
-          js: 'console.log("[WFC] === Content script IIFE finished ===");',
-        },
       });
 
       // Build licence activator content script (injected on Stripe success page)

@@ -9,6 +9,7 @@ import { SELECTORS, is429 } from "@shared/selectors";
 import type { ContentProfileData } from "@shared/messages";
 import { reportDrift } from "@shared/selector-strategies";
 import { humanClick } from "./humanize";
+import { dbg } from "./debug";
 
 // ── Private profile detection ──
 // Threads renders the "this account is private" banner as a heading or a
@@ -528,7 +529,7 @@ export function markScrollContainer(): {
     if (root) {
       root.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
       const links = document.querySelectorAll('a[href*="/@"]').length;
-      console.log(`[WFC] markScrollContainer: ok via dedicated followers page (${links} links)`);
+      dbg("scan", `markScrollContainer : ok via page /followers dédiée (${links} liens)`);
       reportScrollDrift("page");
       return { ok: true, links, source: "page" };
     }
@@ -560,7 +561,7 @@ export function markScrollContainer(): {
 
   if (best && bestCount >= MIN_CONTAINER_LINKS) {
     best.setAttribute(SELECTORS.scroll.scrollableAttr, "true");
-    console.log(`[WFC] markScrollContainer: ok via ${source} density (${bestCount} follower links)`);
+    dbg("scan", `markScrollContainer : ok via densité ${source} (${bestCount} liens d'abonnés)`);
     reportScrollDrift(source);
     return { ok: true, links: bestCount, source };
   }
@@ -568,7 +569,7 @@ export function markScrollContainer(): {
   // Not enough density: a wrong/page-chrome scroller. Fail so the pipeline's
   // /@user/followers re-navigation fallback fires (deterministic page scroller).
   const reason: MarkScrollReason = byContainer.size > 0 ? "container_too_small" : "no_scrollable_parent";
-  console.log(`[WFC] markScrollContainer: failed (${reason}, best=${bestCount} links, need ${MIN_CONTAINER_LINKS})`);
+  dbg("scan", `markScrollContainer : échec (${reason}, meilleur=${bestCount} liens, requis ${MIN_CONTAINER_LINKS})`, "WARNING");
   return { ok: false, links: bestCount, reason };
 }
 
