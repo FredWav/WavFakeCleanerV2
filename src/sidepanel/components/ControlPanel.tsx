@@ -3,7 +3,11 @@ import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
 import { FREE_LIMITS, type Stats, type LicenseInfo } from "@shared/types";
 import Modal from "./ui/Modal";
-import { IconChevronDown, IconChevronRight } from "./Icons";
+
+// Étape courante du parcours (écran unique guidé). Pilote quels contrôles
+// s'affichent — le composant reste MONTÉ en permanence pour préserver son état
+// (file de suppression différée, modale de confirmation) entre les étapes.
+export type Stage = "start" | "running" | "results";
 
 // Au-delà de ce nombre de suppressions, on exige une case « j'ai compris »
 // explicite avant d'activer le bouton de confirmation (U-C1).
@@ -91,14 +95,17 @@ function PendingDeleteBanner({
 }
 
 export default function ControlPanel({
+  stage,
   stats,
   lang,
   licence,
   onRefresh,
   fakeSelection = null,
   username = "",
-  onOpenSettings,
+  onSaveUsername,
 }: {
+  // Écran unique guidé : l'étape est dérivée des stats par App.
+  stage: Stage;
   stats: Stats | null;
   lang: string;
   licence: LicenseInfo;
@@ -106,13 +113,16 @@ export default function ControlPanel({
   // U-C2 : sélection explicite des faux à supprimer (cases cochées dans la
   // table). null = pas de sélection active → on supprime tous les faux flaggés.
   fakeSelection?: string[] | null;
-  // Lot 1 : @ requis pour lancer le scan. Vide → « Analyser » bloqué + micro-copie.
+  // Lot 1/2 : @ requis pour lancer le scan. Saisi inline à l'étape start.
   username?: string;
-  onOpenSettings?: () => void;
+  onSaveUsername?: (handle: string) => Promise<void> | void;
 }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Lot 2 : saisie du @ inline (étape start). Initialisée depuis le pseudo
+  // enregistré, resynchronisée s'il change (ex. modifié dans les Réglages).
+  const [draft, setDraft] = useState(username);
+  useEffect(() => { setDraft(username); }, [username]);
   // U-C1 : aucune suppression irréversible sans une étape de confirmation
   // explicite (nombre exact, échantillon des @, rappel du caractère définitif).
   const [confirm, setConfirm] = useState<
@@ -130,10 +140,6 @@ export default function ControlPanel({
   // active (cases cochées), c'est elle qui pilote le compteur et la suppression.
   const selectionActive = Array.isArray(fakeSelection);
   const fakesToRemove = selectionActive ? fakeSelection!.length : (stats?.fakes ?? 0);
-  // Lot 1 : préalable @ obligatoire — bloque « Analyser » et calme l'échec
-  // silencieux (un run sans @ partait sur un compte vide).
-  const needsUsername = !username.trim();
-  const analyzeBlocked = !!isRunning || needsUsername;
 
   async function run(action: string) {
     setLoading(action);
@@ -148,6 +154,18 @@ export default function ControlPanel({
     } finally {
       setLoading(null);
     }
+  }
+
+  // Lot 2 : saisie inline → on enregistre le @ (s'il a changé) PUIS on lance
+  // l'analyse. Le préalable et l'action vivent au même endroit (fini le détour
+  // par les Réglages), et le run ne part jamais sur un compte vide.
+  async function handleAnalyze() {
+    const handle = draft.trim().replace(/\s+/g, "").replace(/^@+/, "");
+    if (!handle) return;
+    if (handle !== username) {
+      try { await onSaveUsername?.(handle); } catch { /* on tente quand même */ }
+    }
+    run("analyze");
   }
 
   // Ouvre la modale de confirmation pour la suppression explicite des faux
@@ -169,9 +187,9 @@ export default function ControlPanel({
     setConfirm({ action: "removeFakes", count: fakesToRemove, sample });
   }
 
-  // For licensed users, "Nettoyer" launches continuous mode. Les deux variantes
-  // suppriment → confirmation obligatoire aussi.
-  function handleClean() {
+  // Mode continu (licenciés) : scan + suppression automatique en boucle. Comme
+  // il supprime, il passe aussi par la confirmation obligatoire.
+  function handleContinuous() {
     setAck(false);
     setConfirm({
       action: licence.active ? "continuous" : "clean",
@@ -266,202 +284,191 @@ export default function ControlPanel({
 
   return (
     <div className="space-y-2">
-      {/* Réassurance permanente : les vrais abonnés ne sont jamais touchés. Calme
-          la peur n°1 qui bloque l'usage et la conversion. */}
-      <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
-        {t("safety_promise", lang)}
-      </p>
-
-      {/* Flux débutant principal : UN bouton qui récupère + analyse et ne supprime
-          JAMAIS. La suppression est une 2e étape explicite et vérifiable, plus bas. */}
-      <button
-        onClick={() => run("analyze")}
-        disabled={!!loading || analyzeBlocked}
-        className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
-          ${analyzeBlocked
-            ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-            : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
-          }
-          ${loading === "analyze" ? "opacity-70 cursor-wait" : ""}`}
-      >
-        {t("analyze_btn", lang)}
-      </button>
-      {needsUsername ? (
-        <button
-          type="button"
-          onClick={() => onOpenSettings?.()}
-          className="text-[11px] text-accent hover:text-accent-hover transition-colors underline decoration-dotted underline-offset-2"
-        >
-          {t("need_username_hint", lang)}
-        </button>
-      ) : (
-        <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
-      )}
-
-      {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et
-          validés (sélection cochée si active, U-C2). Masqué pendant la fenêtre
-          d'annulation différée (U-H1). */}
-      {!isRunning && !pendingDelete && fakesToRemove > 0 && (
-        <button
-          onClick={requestRemoveFakes}
-          disabled={!!loading}
-          className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
-            bg-red-600/90 text-white hover:bg-red-500 active:scale-95`}
-        >
-          {(selectionActive ? t("remove_selection_btn", lang) : t("remove_fakes_btn", lang))}{" "}
-          ({fakesToRemove.toLocaleString()})
-        </button>
-      )}
-
-      {/* U-H1 : fenêtre d'annulation avant exécution (le seul « undo » possible). */}
-      {pendingDelete && (
-        <PendingDeleteBanner
-          until={pendingDelete.until}
-          count={pendingDelete.count}
-          lang={lang}
-          onCancel={cancelDeferredDelete}
-        />
-      )}
-
-      <button
-        onClick={() => run("stop")}
-        disabled={!!loading || !isRunning}
-        className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
-          ${isRunning
-            ? "bg-red-600 text-white hover:bg-red-500 active:scale-95"
-            : "bg-gray-800 text-gray-600 cursor-not-allowed"
-          }`}
-      >
-        {isRunning ? t("stop", lang) : t("stopped", lang)}
-      </button>
-
-      {/* Avancé : contrôles manuels d'origine en 2 temps (utilisateurs avertis /
-          mode continu payant). Masqués par défaut pour garder le flux débutant clair. */}
-      <button
-        onClick={() => setShowAdvanced((v) => !v)}
-        className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors inline-flex items-center gap-1"
-      >
-        {showAdvanced ? <IconChevronDown /> : <IconChevronRight />}
-        {t("advanced_toggle", lang)}
-      </button>
-      {showAdvanced && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => run("fetch")}
-            disabled={!!loading || !!isRunning}
-            className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
-              ${isRunning
-                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-500 active:scale-95"
-              }
-              ${loading === "fetch" ? "opacity-70 cursor-wait" : ""}`}
-          >
-            {t("fetch", lang)}
-          </button>
-          <button
-            onClick={handleClean}
-            disabled={!!loading || !!isRunning}
-            className={`flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-all
-              ${isRunning
-                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-                : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95"
-              }
-              ${loading === "clean" || loading === "continuous" ? "opacity-70 cursor-wait" : ""}`}
-          >
-            {t("clean_btn", lang)}
-            {licence.active && (
-              <span className="ml-1 text-[11px] opacity-70">{t("continuous_label", lang)}</span>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* « Tout rescanner » : passe complète (fetch sans early-stop pour capter
-          les nouveaux abonnés + remise à zéro + ré-analyse de tous). Visible dans
-          le mode avancé, jamais de suppression auto. */}
-      {showAdvanced && (
+      {/* ÉTAPE START — connexion du compte + lancement de l'analyse. */}
+      {stage === "start" && (
         <>
+          {/* Réassurance permanente : les vrais abonnés ne sont jamais touchés. */}
+          <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+            {t("safety_promise", lang)}
+          </p>
+
+          {/* Saisie @ inline : le préalable et l'action au même endroit. */}
+          <div>
+            <label className="block text-[11px] text-gray-400 mb-1">{t("connect_username_label", lang)}</label>
+            <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg px-2 focus-within:border-accent transition-colors">
+              <span className="text-gray-500 text-sm select-none">@</span>
+              <input
+                type="text"
+                value={draft}
+                placeholder={t("username_placeholder", lang)}
+                onChange={(e) => setDraft(e.target.value.replace(/\s+/g, "").replace(/^@+/, ""))}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAnalyze(); }}
+                className="flex-1 bg-transparent py-2 text-sm text-white placeholder-gray-600 outline-none"
+              />
+            </div>
+          </div>
+
           <button
-            onClick={() => run("rescanAll")}
-            disabled={!!loading || !!isRunning}
-            className={`w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
-              ${isRunning
+            onClick={handleAnalyze}
+            disabled={!!loading || !draft.trim()}
+            className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
+              ${!draft.trim()
                 ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-                : "bg-gray-700 text-white hover:bg-gray-600 active:scale-95"
+                : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
               }
-              ${loading === "rescanAll" ? "opacity-70 cursor-wait" : ""}`}
+              ${loading === "analyze" ? "opacity-70 cursor-wait" : ""}`}
           >
-            {t("rescan_all_btn", lang)}
+            {t("analyze_btn", lang)}
           </button>
-          <p className="text-[11px] text-gray-500 leading-snug">{t("rescan_all_hint", lang)}</p>
+          <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
+          <p className="text-[11px] text-gray-600 leading-snug">{t("fetch_limit_note", lang)}</p>
         </>
       )}
 
-      {/* Anti-block pause countdown (explains why the bar is frozen) */}
-      {isRunning && stats?.pausedUntil ? (
-        <PauseBanner
-          until={stats.pausedUntil}
-          reason={stats.pauseReason ?? null}
-          lang={lang}
-          removed={stats.removed ?? 0}
-        />
-      ) : null}
+      {/* ÉTAPE RUNNING — progression du scan (aucune suppression ici). */}
+      {stage === "running" && (
+        <>
+          <button
+            onClick={() => run("stop")}
+            disabled={!!loading}
+            className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+              bg-red-600 text-white hover:bg-red-500 active:scale-95"
+          >
+            {t("stop", lang)}
+          </button>
 
-      {/* Pendant l'exécution : dire à l'utilisateur qu'il peut partir — le scan
-          continue dans un onglet de fond. Évite de fixer la barre pendant 20 min. */}
-      {isRunning && (
-        <p className="text-[11px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
-      )}
-
-      {/* Progress bar — U-H4 : compteur X/Y + ETA, pas juste un % */}
-      {isRunning && totalFollowers > 0 && (
-        <div className="space-y-1">
-          <div className="flex justify-between text-[11px] text-gray-500">
-            <span>{t("progress_label", lang)}</span>
-            <span className="tabular-nums">
-              {scanned.toLocaleString()}/{totalFollowers.toLocaleString()} · {progress}%
-            </span>
-          </div>
-          <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${progress}%` }}
+          {/* Anti-block pause countdown (explains why the bar is frozen) */}
+          {stats?.pausedUntil ? (
+            <PauseBanner
+              until={stats.pausedUntil}
+              reason={stats.pauseReason ?? null}
+              lang={lang}
+              removed={stats.removed ?? 0}
             />
-          </div>
-          {etaMs !== null && etaMs > 0 && (
-            <p className="text-[11px] text-gray-500 tabular-nums">
-              {t("eta_label", lang).replace("{0}", formatEta(etaMs, lang))}
-            </p>
+          ) : null}
+
+          {/* Dire à l'utilisateur qu'il peut partir — le scan continue en fond. */}
+          <p className="text-[11px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
+
+          {/* Progress bar — U-H4 : compteur X/Y + ETA, pas juste un % */}
+          {totalFollowers > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-[11px] text-gray-500">
+                <span>{t("progress_label", lang)}</span>
+                <span className="tabular-nums">
+                  {scanned.toLocaleString()}/{totalFollowers.toLocaleString()} · {progress}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              {etaMs !== null && etaMs > 0 && (
+                <p className="text-[11px] text-gray-500 tabular-nums">
+                  {t("eta_label", lang).replace("{0}", formatEta(etaMs, lang))}
+                </p>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
 
+      {/* ÉTAPE RESULTS — supprimer les faux vus / relancer / nettoyage auto. */}
+      {stage === "results" && (
+        <>
+          {/* Réassurance juste avant l'action de suppression. */}
+          <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+            {t("safety_promise", lang)}
+          </p>
+
+          {/* Suppression des faux flaggés que l'utilisateur a vus et validés
+              (sélection cochée si active, U-C2). Masquée pendant la fenêtre
+              d'annulation différée (U-H1). */}
+          {!pendingDelete && fakesToRemove > 0 && (
+            <button
+              onClick={requestRemoveFakes}
+              disabled={!!loading}
+              className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+                bg-red-600/90 text-white hover:bg-red-500 active:scale-95"
+            >
+              {(selectionActive ? t("remove_selection_btn", lang) : t("remove_fakes_btn", lang))}{" "}
+              ({fakesToRemove.toLocaleString()})
+            </button>
+          )}
+
+          {/* U-H1 : fenêtre d'annulation avant exécution (le seul « undo » possible). */}
+          {pendingDelete && (
+            <PendingDeleteBanner
+              until={pendingDelete.until}
+              count={pendingDelete.count}
+              lang={lang}
+              onCancel={cancelDeferredDelete}
+            />
+          )}
+
+          {/* Relancer une analyse (incrémentale, capte les nouveaux abonnés).
+              Verrouillé pendant la fenêtre d'annulation pour ne pas démarrer un
+              scan alors qu'une suppression est en attente d'exécution. */}
+          <button
+            onClick={() => run("analyze")}
+            disabled={!!loading || !!pendingDelete}
+            className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+              bg-gray-800 text-gray-200 hover:bg-gray-700 active:scale-95
+              disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {t("relaunch_btn", lang)}
+          </button>
+          <button
+            type="button"
+            onClick={() => run("rescanAll")}
+            disabled={!!loading || !!pendingDelete}
+            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+          >
+            {t("rescan_all_btn", lang)}
+          </button>
+
+          {/* Mode continu (licenciés) : sorti du repli « avancé » et clairement
+              décrit AVANT activation (l'audit : nature jamais posée avant le clic). */}
+          {licence.active && (
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-2 py-2 space-y-1">
+              <p className="text-xs text-gray-200 font-medium">{t("auto_clean_title", lang)}</p>
+              <p className="text-[11px] text-gray-500 leading-snug">{t("auto_clean_desc", lang)}</p>
+              <button
+                type="button"
+                onClick={handleContinuous}
+                disabled={!!loading || !!pendingDelete}
+                className="text-[11px] text-accent hover:text-accent-hover transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+              >
+                {t("auto_clean_cta", lang)}
+              </button>
+            </div>
+          )}
+
+          {/* Limites du plan gratuit, visibles sans mur surprise. */}
+          {!licence.active && (
+            <div className="space-y-0.5">
+              <p className="text-[11px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
+              {cyclesToday !== null && (
+                <p className="text-[11px] text-gray-400 tabular-nums">
+                  {t("free_usage_today", lang)
+                    .replace("{0}", String(cyclesToday))
+                    .replace("{1}", String(FREE_LIMITS.cyclesPerDay))}
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* TRANSVERSAL — erreurs (toujours affichées si présentes). */}
       {error && (
         <div className="text-red-400 text-xs bg-red-500/10 rounded-lg px-2 py-1">{error}</div>
       )}
-
-      {/* Pipeline-level error from the last fetch/clean run. Distinct from the
-          local action error above (which only covers api.* failures). */}
       {!error && !isRunning && stats?.lastError && (
         <div className="text-red-400 text-xs bg-red-500/10 rounded-lg px-2 py-1.5 leading-snug">
           {stats.lastError}
-        </div>
-      )}
-
-      {/* Persistent honesty note: fetching is scroll-based and caps ~5000/pass. */}
-      <p className="text-[11px] text-gray-500 leading-snug">{t("fetch_limit_note", lang)}</p>
-
-      {/* Rendre les limites du plan gratuit visibles d'emblée, pas en mur surprise. */}
-      {!licence.active && (
-        <div className="space-y-0.5">
-          <p className="text-[11px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
-          {cyclesToday !== null && (
-            <p className="text-[11px] text-gray-400 tabular-nums">
-              {t("free_usage_today", lang)
-                .replace("{0}", String(cyclesToday))
-                .replace("{1}", String(FREE_LIMITS.cyclesPerDay))}
-            </p>
-          )}
         </div>
       )}
 

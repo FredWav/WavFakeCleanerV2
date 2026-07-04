@@ -1,7 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { t, getStoredLang } from "../sidepanel/lib/i18n";
 
 function Popup() {
+  const lang = getStoredLang();
+
   function openSidePanel() {
     // Open the side panel
     chrome.sidePanel
@@ -28,10 +31,10 @@ function Popup() {
           <p className="text-[11px] text-gray-500">
             by{" "}
             <a
-              href="https://www.threads.net/@fredwavoff"
+              href="https://fredwav.com/contact"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-purple-400"
+              className="text-accent hover:text-accent-hover transition-colors"
             >
               Fred Wav
             </a>
@@ -44,14 +47,14 @@ function Popup() {
           className="w-full px-3 py-2 rounded-lg bg-accent text-accent-ink text-xs font-bold
             hover:bg-accent-hover transition-colors"
         >
-          Ouvrir le panneau / Open Panel
+          {t("popup_open_panel", lang)}
         </button>
         <button
           onClick={openThreads}
           className="w-full px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs
             hover:text-white transition-colors"
         >
-          Ouvrir Threads / Open Threads
+          {t("popup_open_threads", lang)}
         </button>
       </div>
     </div>

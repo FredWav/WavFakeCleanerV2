@@ -4,7 +4,7 @@ import { useLog } from "./hooks/useLog";
 import { t, getStoredLang, setStoredLang } from "./lib/i18n";
 import { api } from "./lib/messaging";
 import StatCards from "./components/StatCards";
-import ControlPanel from "./components/ControlPanel";
+import ControlPanel, { type Stage } from "./components/ControlPanel";
 import CommunityCard from "./components/CommunityCard";
 import LogConsole from "./components/LogConsole";
 import FollowerTable from "./components/FollowerTable";
@@ -38,13 +38,9 @@ export default function App() {
     setToasts((q) => q.filter((to) => to.id !== id));
   }, []);
   const [communityTotal, setCommunityTotal] = useState<number | null>(null);
-  const [prescan, setPrescan] = useState<{ likelyFakes: number; total: number } | null>(null);
   // U-C2 : sélection des faux à supprimer, partagée entre la table (cases à
   // cocher) et le ControlPanel (bouton Supprimer). null = pas de sélection active.
   const [fakeSelection, setFakeSelection] = useState<string[] | null>(null);
-  // U-H3 : onglets. Les panneaux restent MONTÉS (masqués en CSS) pour préserver
-  // l'état (sélection U-C2, file de suppression) en changeant d'onglet.
-  const [tab, setTab] = useState<"cleanup" | "results" | "community">("cleanup");
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
   // Lot 1 : le @ est le préalable obligatoire du scan. On le tient en état pour
   // (a) bloquer « Analyser » tant qu'il est vide et (b) le recharger dès que les
@@ -61,14 +57,21 @@ export default function App() {
     api.getSettings().then((s) => setUsername(s.threadsUsername || "")).catch(() => {});
   }, []);
 
-  // Lot 1 — traçage du chemin : dès que l'analyse se termine avec des faux, on
-  // amène l'utilisateur DIRECTEMENT à ses résultats filtrés sur « Faux ». Sinon
-  // il reste sur l'onglet Nettoyage sans savoir qu'il faut naviguer vers
-  // Résultats puis choisir le filtre — le cul-de-sac critique de l'audit.
+  // Lot 2 : enregistre le @ saisi inline (étape start) puis met l'état à jour —
+  // le préalable et l'action (Analyser) vivent au même endroit.
+  const saveUsername = useCallback(async (handle: string) => {
+    const h = handle.trim().replace(/\s+/g, "").replace(/^@+/, "");
+    const s = await api.getSettings();
+    await api.updateSettings({ ...s, threadsUsername: h });
+    setUsername(h);
+  }, []);
+
+  // Lot 1/2 — traçage du chemin : dès que l'analyse se termine avec des faux, on
+  // force la table sur le filtre « Faux » pour montrer directement ce qui peut
+  // être supprimé (l'écran bascule seul en étape « résultats »).
   useEffect(() => {
     const running = !!stats?.isRunning;
     if (prevRunning.current && !running && (stats?.fakes ?? 0) > 0) {
-      setTab("results");
       setFakeFilterSignal((n) => n + 1);
     }
     prevRunning.current = running;
@@ -99,19 +102,6 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
-
-  // « Chiffre choc » gratuit : une fois les abonnés récupérés (et à l'arrêt), on
-  // compte les faux évidents à partir des seules métadonnées — sans scan, sans
-  // suppression, sans coût quotidien — pour que l'utilisateur voie l'ampleur du
-  // problème en quelques secondes, et non après un long nettoyage.
-  useEffect(() => {
-    if (!stats || stats.isRunning || (stats.totalFollowers ?? 0) <= 0) return;
-    let cancelled = false;
-    api.getPrescanEstimate()
-      .then((r) => { if (!cancelled) setPrescan(r); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [stats?.isRunning, stats?.totalFollowers]);
 
   // Réagit en direct à une licence qui devient active dans le stockage — ex. le
   // content script de la page /success l'active après paiement pendant que ce
@@ -201,6 +191,15 @@ export default function App() {
     setShowLicence(false);
   }
 
+  // Lot 2 — écran unique guidé : l'étape du parcours est dérivée des stats.
+  // start = rien encore (connexion + analyse) ; running = scan en cours ;
+  // results = données présentes (bilan + table). Plus d'onglets.
+  const running = !!stats?.isRunning;
+  const hasData =
+    (stats?.totalFollowers ?? 0) > 0 || (stats?.scanned ?? 0) > 0 || (stats?.removed ?? 0) > 0;
+  const stage: Stage = running ? "running" : hasData ? "results" : "start";
+  const fakes = stats?.fakes ?? 0;
+
   return (
     <div className="w-full px-3 py-4 space-y-4">
       {/* Header */}
@@ -270,48 +269,52 @@ export default function App() {
         </div>
       )}
 
-      {/* Stats — dashboard persistant au-dessus des onglets */}
-      <StatCards stats={stats} lang={lang} communityTotal={communityTotal} />
+      {/* Dashboard de stats : masqué à l'étape start (rien à montrer). */}
+      {stage !== "start" && (
+        <StatCards stats={stats} lang={lang} communityTotal={communityTotal} />
+      )}
 
-      {/* Onglets (U-H3) : Nettoyage / Résultats / Communauté */}
-      <div role="tablist" className="flex gap-1 rounded-lg bg-gray-900 p-1 border border-gray-800">
-        {([
-          ["cleanup", "tab_cleanup"],
-          ["results", "tab_results"],
-          ["community", "tab_community"],
-        ] as const).map(([key, label]) => (
-          <button
-            key={key}
-            role="tab"
-            aria-selected={tab === key}
-            onClick={() => setTab(key)}
-            className={`flex-1 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
-              ${tab === key ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            {t(label, lang)}
-            {key === "results" && (stats?.fakes ?? 0) > 0 && (
-              <span className="ml-1 px-1 rounded bg-red-600/30 text-red-300 tabular-nums">
-                {stats!.fakes}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* Accroche à l'étape start. */}
+      {stage === "start" && (
+        <h2 className="text-base font-semibold text-white leading-snug">{t("connect_title", lang)}</h2>
+      )}
 
-      {/* Onglet Nettoyage : accroche post-fetch + contrôles */}
-      <div className={tab === "cleanup" ? "space-y-4" : "hidden"}>
-        {prescan && prescan.likelyFakes > 0 && !stats?.isRunning && (
-          <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 leading-snug">
-            {t("prescan_banner", lang)
-              .replace("{0}", prescan.likelyFakes.toLocaleString())
-              .replace("{1}", prescan.total.toLocaleString())}
+      {/* Bilan héros à l'étape résultats : le chiffre qui compte, en grand. */}
+      {stage === "results" && (
+        fakes > 0 ? (
+          <div className="text-center py-1">
+            <div className="text-4xl font-extrabold text-white tabular-nums leading-none">
+              {fakes.toLocaleString()}
+            </div>
+            <div className="text-sm text-gray-300 mt-1">{t("hero_fakes_label", lang)}</div>
+            <div className="text-[11px] text-gray-500">
+              {t("hero_context", lang).replace("{0}", (stats?.totalFollowers ?? 0).toLocaleString())}
+            </div>
           </div>
-        )}
-        <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} username={username} onOpenSettings={() => setShowSettings(true)} />
-      </div>
+        ) : (stats?.scanned ?? 0) > 0 ? (
+          <div className="text-center py-1">
+            <div className="text-2xl text-green-400" aria-hidden="true">✓</div>
+            <div className="text-sm text-white font-semibold">{t("hero_clean_title", lang)}</div>
+            <div className="text-[11px] text-gray-500">{t("hero_clean_sub", lang)}</div>
+          </div>
+        ) : null
+      )}
 
-      {/* Onglet Résultats : la table des abonnés / faux / à vérifier */}
-      <div className={tab === "results" ? "" : "hidden"}>
+      {/* Contrôles guidés. ControlPanel reste MONTÉ à toutes les étapes pour
+          préserver son état (file de suppression différée, modale de confirmation). */}
+      <ControlPanel
+        stage={stage}
+        stats={stats}
+        lang={lang}
+        licence={licence}
+        onRefresh={refresh}
+        fakeSelection={fakeSelection}
+        username={username}
+        onSaveUsername={saveUsername}
+      />
+
+      {/* Résultats : la table des abonnés / faux / à vérifier. */}
+      {stage === "results" && (
         <FollowerTable
           lang={lang}
           licence={licence}
@@ -320,19 +323,23 @@ export default function App() {
           refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
           onFakeSelectionChange={setFakeSelection}
           fakeFilterSignal={fakeFilterSignal}
-          onGoToCleanup={() => setTab("cleanup")}
         />
-      </div>
+      )}
 
-      {/* Onglet Communauté */}
-      <div className={tab === "community" ? "" : "hidden"}>
-        <CommunityCard
-          lang={lang}
-          licence={licence}
-          onShowLicence={() => setShowLicence(true)}
-          showToast={pushToast}
-        />
-      </div>
+      {/* Communauté — repliée, accessible en permanence (plus un onglet de 1er rang). */}
+      <details className="group">
+        <summary className="cursor-pointer select-none text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+          {t("tab_community", lang)}
+        </summary>
+        <div className="mt-2">
+          <CommunityCard
+            lang={lang}
+            licence={licence}
+            onShowLicence={() => setShowLicence(true)}
+            showToast={pushToast}
+          />
+        </div>
+      </details>
 
       {/* Journal d'activité — replié par défaut, en bas (U-M4 : plus au milieu) */}
       <details className="group">
