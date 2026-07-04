@@ -30,11 +30,22 @@ export default function SettingsPanel({
   }, []);
 
   async function save() {
+    // Lot 1 : le @ est le préalable du scan — on valide et on donne un retour
+    // clair plutôt que de laisser partir un run sur un compte vide/inexistant.
+    const handle = form.threadsUsername.trim();
+    if (!handle) {
+      setError(t("username_required", lang));
+      return;
+    }
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(handle)) {
+      setError(t("username_invalid", lang));
+      return;
+    }
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await api.updateSettings(form);
+      await api.updateSettings({ ...form, threadsUsername: handle });
       setSaved(true);
       showToast?.(t("toast_settings_saved", lang));
       setTimeout(() => setSaved(false), 2000);

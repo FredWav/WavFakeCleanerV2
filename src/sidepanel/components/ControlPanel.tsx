@@ -96,6 +96,8 @@ export default function ControlPanel({
   licence,
   onRefresh,
   fakeSelection = null,
+  username = "",
+  onOpenSettings,
 }: {
   stats: Stats | null;
   lang: string;
@@ -104,6 +106,9 @@ export default function ControlPanel({
   // U-C2 : sélection explicite des faux à supprimer (cases cochées dans la
   // table). null = pas de sélection active → on supprime tous les faux flaggés.
   fakeSelection?: string[] | null;
+  // Lot 1 : @ requis pour lancer le scan. Vide → « Analyser » bloqué + micro-copie.
+  username?: string;
+  onOpenSettings?: () => void;
 }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +130,10 @@ export default function ControlPanel({
   // active (cases cochées), c'est elle qui pilote le compteur et la suppression.
   const selectionActive = Array.isArray(fakeSelection);
   const fakesToRemove = selectionActive ? fakeSelection!.length : (stats?.fakes ?? 0);
+  // Lot 1 : préalable @ obligatoire — bloque « Analyser » et calme l'échec
+  // silencieux (un run sans @ partait sur un compte vide).
+  const needsUsername = !username.trim();
+  const analyzeBlocked = !!isRunning || needsUsername;
 
   async function run(action: string) {
     setLoading(action);
@@ -267,9 +276,9 @@ export default function ControlPanel({
           JAMAIS. La suppression est une 2e étape explicite et vérifiable, plus bas. */}
       <button
         onClick={() => run("analyze")}
-        disabled={!!loading || !!isRunning}
+        disabled={!!loading || analyzeBlocked}
         className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
-          ${isRunning
+          ${analyzeBlocked
             ? "bg-gray-800 text-gray-600 cursor-not-allowed"
             : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
           }
@@ -277,7 +286,17 @@ export default function ControlPanel({
       >
         {t("analyze_btn", lang)}
       </button>
-      <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
+      {needsUsername ? (
+        <button
+          type="button"
+          onClick={() => onOpenSettings?.()}
+          className="text-[11px] text-accent hover:text-accent-hover transition-colors underline decoration-dotted underline-offset-2"
+        >
+          {t("need_username_hint", lang)}
+        </button>
+      ) : (
+        <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
+      )}
 
       {/* Étape 2 : supprime UNIQUEMENT les faux flaggés que l'utilisateur a vus et
           validés (sélection cochée si active, U-C2). Masqué pendant la fenêtre

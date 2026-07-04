@@ -46,8 +46,33 @@ export default function App() {
   // l'état (sélection U-C2, file de suppression) en changeant d'onglet.
   const [tab, setTab] = useState<"cleanup" | "results" | "community">("cleanup");
   const [showTelemetryNotice, setShowTelemetryNotice] = useState(false);
+  // Lot 1 : le @ est le préalable obligatoire du scan. On le tient en état pour
+  // (a) bloquer « Analyser » tant qu'il est vide et (b) le recharger dès que les
+  // réglages se ferment.
+  const [username, setUsername] = useState<string>("");
+  // Lot 1 : signal incrémenté pour forcer la table sur le filtre « Faux » quand
+  // l'analyse se termine (traçage du chemin — cf. effet plus bas).
+  const [fakeFilterSignal, setFakeFilterSignal] = useState(0);
+  const prevRunning = useRef(false);
   const { stats, refresh } = useStats(3000);
   const { logs, connected, clearLogs } = useLog(300);
+
+  const reloadUsername = useCallback(() => {
+    api.getSettings().then((s) => setUsername(s.threadsUsername || "")).catch(() => {});
+  }, []);
+
+  // Lot 1 — traçage du chemin : dès que l'analyse se termine avec des faux, on
+  // amène l'utilisateur DIRECTEMENT à ses résultats filtrés sur « Faux ». Sinon
+  // il reste sur l'onglet Nettoyage sans savoir qu'il faut naviguer vers
+  // Résultats puis choisir le filtre — le cul-de-sac critique de l'audit.
+  useEffect(() => {
+    const running = !!stats?.isRunning;
+    if (prevRunning.current && !running && (stats?.fakes ?? 0) > 0) {
+      setTab("results");
+      setFakeFilterSignal((n) => n + 1);
+    }
+    prevRunning.current = running;
+  }, [stats?.isRunning, stats?.fakes]);
 
   // One-time notice after the v3 update: telemetry is now on by default.
   // The flag is set by the onInstalled migration and cleared on dismiss.
@@ -115,6 +140,7 @@ export default function App() {
     let cancelled = false;
     api.getSettings().then((s) => {
       if (cancelled) return;
+      setUsername(s.threadsUsername || "");
       if (!s.threadsUsername && !localStorage.getItem("wav_onboarding_done")) {
         setShowOnboarding(true);
       }
@@ -281,7 +307,7 @@ export default function App() {
               .replace("{1}", prescan.total.toLocaleString())}
           </div>
         )}
-        <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} />
+        <ControlPanel stats={stats} lang={lang} licence={licence} onRefresh={refresh} fakeSelection={fakeSelection} username={username} onOpenSettings={() => setShowSettings(true)} />
       </div>
 
       {/* Onglet Résultats : la table des abonnés / faux / à vérifier */}
@@ -293,6 +319,8 @@ export default function App() {
           showToast={pushToast}
           refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
           onFakeSelectionChange={setFakeSelection}
+          fakeFilterSignal={fakeFilterSignal}
+          onGoToCleanup={() => setTab("cleanup")}
         />
       </div>
 
@@ -320,7 +348,7 @@ export default function App() {
       {showSettings && (
         <SettingsPanel
           lang={lang}
-          onClose={() => setShowSettings(false)}
+          onClose={() => { setShowSettings(false); reloadUsername(); }}
           showToast={pushToast}
         />
       )}

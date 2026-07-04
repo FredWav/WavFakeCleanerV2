@@ -231,6 +231,8 @@ export default function FollowerTable({
   showToast,
   refreshTrigger,
   onFakeSelectionChange,
+  fakeFilterSignal,
+  onGoToCleanup,
 }: {
   lang: string;
   licence?: LicenseInfo;
@@ -240,6 +242,10 @@ export default function FollowerTable({
   // U-C2 : remonte la sélection des faux à supprimer (cases cochées) au parent.
   // null = pas en mode sélection (filtre ≠ « faux ») → suppression de tous les faux.
   onFakeSelectionChange?: (usernames: string[] | null) => void;
+  // Lot 1 : incrémenté par App quand l'analyse se termine → force la vue « Faux ».
+  fakeFilterSignal?: number;
+  // Lot 1 : CTA de l'état vide → renvoie vers l'onglet Nettoyage pour analyser.
+  onGoToCleanup?: () => void;
 }) {
   const [followers, setFollowers] = useState<FollowerWithUrl[]>([]);
   const [loading, setLoading] = useState(false);
@@ -286,6 +292,13 @@ export default function FollowerTable({
     const timer = setTimeout(() => load(), search ? 300 : 0);
     return () => clearTimeout(timer);
   }, [load, refreshTrigger]);
+
+  // Lot 1 — traçage du chemin : App incrémente ce signal en fin d'analyse (des
+  // faux ont été trouvés) → on bascule la table sur la vue « Faux » pour montrer
+  // directement ce qui peut être supprimé, sans faire deviner le filtre.
+  useEffect(() => {
+    if (fakeFilterSignal && fakeFilterSignal > 0) setFilter("fake");
+  }, [fakeFilterSignal]);
 
   // U-C2 : reporte la sélection (faux affichés moins les décochés) au parent
   // quand on est dans la vue « faux » ; null sinon (= supprimer tous les faux).
@@ -455,9 +468,17 @@ export default function FollowerTable({
                       <p className="text-xs text-gray-400">{t("empty_no_fakes", lang)}</p>
                     </div>
                   ) : !filter && !search ? (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       <p className="text-xs text-gray-400">{t("empty_no_followers", lang)}</p>
-                      <p className="text-[11px] text-gray-600">{t("empty_no_followers_hint", lang)}</p>
+                      {onGoToCleanup && (
+                        <button
+                          onClick={onGoToCleanup}
+                          className="px-3 py-1.5 bg-accent text-accent-ink text-xs font-semibold rounded-lg
+                            hover:bg-accent-hover transition-colors"
+                        >
+                          {t("analyze_btn", lang)}
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-gray-600">{t("no_data", lang)}</span>

@@ -163,6 +163,9 @@ const translations: Record<string, Record<string, string>> = {
     vote_change: "Changer mon vote",
     settings_save_failed: "Échec de l'enregistrement. Réessaie.",
     username_placeholder: "fredwav (sans @)",
+    need_username_hint: "Ajoute ton @ pour commencer →",
+    username_required: "Ajoute ton @ Threads pour lancer l'analyse.",
+    username_invalid: "Ce pseudo semble invalide (lettres, chiffres, . et _ seulement).",
     eta_label: "≈ {0} restantes",
     eta_minutes: "{0} min",
     // Toasts
@@ -424,6 +427,9 @@ const translations: Record<string, Record<string, string>> = {
     vote_change: "Change my vote",
     settings_save_failed: "Couldn't save. Please retry.",
     username_placeholder: "fredwav (no @)",
+    need_username_hint: "Add your @ to get started →",
+    username_required: "Add your Threads @ to start the analysis.",
+    username_invalid: "That handle looks invalid (letters, digits, . and _ only).",
     eta_label: "≈ {0} left",
     eta_minutes: "{0} min",
     // Toasts
@@ -685,6 +691,9 @@ const translations: Record<string, Record<string, string>> = {
     vote_change: "Cambiar mi voto",
     settings_save_failed: "No se pudo guardar. Inténtalo de nuevo.",
     username_placeholder: "fredwav (sin @)",
+    need_username_hint: "Añade tu @ para empezar →",
+    username_required: "Añade tu @ de Threads para iniciar el análisis.",
+    username_invalid: "Ese usuario parece inválido (letras, números, . y _ solamente).",
     eta_label: "≈ {0} restantes",
     eta_minutes: "{0} min",
     // Toasts
