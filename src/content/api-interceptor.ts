@@ -186,15 +186,15 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
     apiUrl(`${THREADS_API.searchEndpoint}?q=${encodeURIComponent(username)}`),
   ];
 
+  // web_profile_info ET search sont des endpoints Instagram WEB : les DEUX
+  // exigent l'app-id WEB (THREADS_API.webAppId), sinon Meta répond 400
+  // « useragent mismatch ». Seuls les endpoints Threads natifs (followers)
+  // gardent l'app-id Threads.
+  const webHeaders = { ...headers, "X-IG-App-ID": THREADS_API.webAppId };
+
   for (const url of endpoints) {
-    // web_profile_info est un endpoint Instagram WEB : il exige l'app-id WEB
-    // (THREADS_API.webAppId), sinon Meta répond 400 « useragent mismatch ». Les
-    // autres endpoints gardent l'app-id Threads natif.
-    const reqHeaders = url.includes("web_profile_info")
-      ? { ...headers, "X-IG-App-ID": THREADS_API.webAppId }
-      : headers;
     try {
-      const { status, body } = await mainWorldFetch(url, reqHeaders);
+      const { status, body } = await mainWorldFetch(url, webHeaders);
       dbg("api", `resolveProfile ${url.replace(/\?.*/, "")} → HTTP ${status}`);
 
       if (status !== 200) {
@@ -204,26 +204,43 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
       }
 
       const j = body as Record<string, unknown>;
+      const dataObj = j?.data as Record<string, unknown> | undefined;
 
+      // Extraction robuste : la forme varie (threads.com vs instagram.com). On
+      // cherche l'objet utilisateur sous data.user, user, ou directement data.
       const userObj =
-        ((j?.data as Record<string, unknown>)?.user as Record<string, unknown>) ||
-        (j?.user as Record<string, unknown>);
+        (dataObj?.user as Record<string, unknown> | undefined) ||
+        (j?.user as Record<string, unknown> | undefined) ||
+        dataObj;
 
-      if (userObj) {
-        const uid = userObj.id || userObj.pk || userObj.pk_id;
+      const uid = userObj && (userObj.id ?? userObj.pk ?? userObj.pk_id ?? userObj.user_id);
+      if (userObj && uid) {
         const fc = Number(userObj.follower_count ?? 0);
-        if (uid) {
-          return { userId: String(uid), followerCount: fc, isPrivate: !!userObj.is_private };
-        }
+        return { userId: String(uid), followerCount: Number.isFinite(fc) ? fc : 0, isPrivate: !!userObj.is_private };
       }
 
-      const users = (j?.users as Array<Record<string, unknown>>) || [];
-      const match = users.find((u) => u.username === username);
-      if (match) {
-        const uid = match.pk || match.id;
+      // Résultats de recherche : { users: [...] } (parfois users[].user).
+      const rawUsers =
+        (j?.users as Array<Record<string, unknown>> | undefined) ||
+        (dataObj?.users as Array<Record<string, unknown>> | undefined) || [];
+      const flat = rawUsers.map((u) => (u.user as Record<string, unknown>) || u);
+      const match = flat.find((u) => u.username === username) || flat[0];
+      const mid = match && (match.pk ?? match.id ?? match.pk_id);
+      if (match && mid) {
         const fc = Number(match.follower_count ?? 0);
-        return { userId: String(uid), followerCount: fc, isPrivate: !!match.is_private };
+        return { userId: String(mid), followerCount: Number.isFinite(fc) ? fc : 0, isPrivate: !!match.is_private };
       }
+
+      // 200 mais aucun uid : on logue la FORME du corps pour trancher (temporaire).
+      const shape = (() => {
+        try {
+          const top = Object.keys(j).join(",");
+          const dk = dataObj ? Object.keys(dataObj).join(",") : "—";
+          const uk = userObj ? Object.keys(userObj).slice(0, 14).join(",") : "—";
+          return `top=[${top}] data=[${dk}] user=[${uk}]`;
+        } catch { return "illisible"; }
+      })();
+      dbg("api", `resolveProfile 200 SANS uid (${url.replace(/\?.*/, "")}) → ${shape}`, "WARNING");
     } catch (e) {
       dbg("api", `resolveProfile EXCEPTION (pont muet ?) : ${String(e)}`, "ERROR");
     }
