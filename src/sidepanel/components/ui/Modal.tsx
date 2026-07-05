@@ -9,7 +9,7 @@ export default function Modal({
   onClose,
   children,
   className = "p-4 space-y-3",
-  dim = "bg-black/60",
+  dim = "bg-ink/30",
 }: {
   onClose: () => void;
   children: ReactNode;
@@ -32,7 +32,7 @@ export default function Modal({
       onClick={onClose}
     >
       <div
-        className={`bg-gray-900 rounded-2xl border border-gray-800 w-full max-w-sm animate-modal-pop ${className}`}
+        className={`bg-surface rounded-2xl border border-line shadow-xl w-full max-w-sm animate-modal-pop ${className}`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

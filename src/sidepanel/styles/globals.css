@@ -19,20 +19,32 @@
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
-/* ── Tokens de marque (D1 / Lot 4) ──────────────────────────────────────
-   UN seul accent fort : l'ambre/or du logo = l'ACTION. Fini le violet Tailwind
-   par défaut (purple-*) qui doublonnait l'accent et dominait les CTA — purge
-   complète au Lot 4. Tailwind v4 génère bg-accent / text-accent / border-accent
-   à partir de ces tokens. Rouge/vert/ambre restent réservés au sens (danger /
-   succès / attention). */
+/* ── Direction visuelle « signal » (refonte 2026-07) ────────────────────
+   Sortie du dark générique : fond clair chaud (lin), encre chaude, et l'ambre
+   du logo réservé au SEUL geste d'action. Couleurs sémantiques (suspect/clean)
+   sobres et distinctes de l'accent. Tailwind v4 génère bg-surface / text-ink /
+   border-line / text-suspect… à partir de ces tokens. */
 @theme {
-  --color-accent: #f5a524;        /* or/ambre du balai du logo = action */
-  --color-accent-hover: #e0941a;
-  --color-accent-ink: #1a1523;    /* texte foncé sur l'ambre (contraste AA) */
-  --color-ink: #0c0a12;           /* fond : encre légèrement violacée (pas gris bleuté) */
+  --color-ground: #f3f1ec;        /* fond de page : lin clair, à peine chaud */
+  --color-surface: #ffffff;       /* cartes */
+  --color-surface-2: #fbf8f2;     /* surface légèrement contrastée (encadrés) */
+  --color-ink: #191712;           /* texte principal : encre chaude quasi-noire */
+  --color-ink-soft: #6c6459;      /* texte secondaire */
+  --color-ink-faint: #aba394;     /* labels / méta */
+  --color-line: #e9e3d8;          /* filets */
 
-  /* Échelle typographique nommée (D3) — la taille porte la hiérarchie, plus la
-     graisse. display 20 / title 15 / body 13 / label 11. */
+  --color-accent: #f5a524;        /* or/ambre du logo = action (un seul geste) */
+  --color-accent-hover: #e0941a;
+  --color-accent-ink: #3a2908;    /* texte foncé sur l'ambre (contraste AA) */
+  --color-accent-deep: #8a5600;   /* ambre lisible en TEXTE sur fond clair */
+
+  --color-suspect: #ae3626;       /* faux / suspect */
+  --color-suspect-bg: #f5e5e1;
+  --color-clean: #2c7a57;         /* authentique / supprimé (fait) */
+  --color-clean-bg: #e4efe8;
+  --color-review-bg: #fbefd8;     /* à vérifier (ambre pâle) */
+
+  /* Échelle typographique nommée — la taille porte la hiérarchie. */
   --text-display: 1.25rem;        /* 20px */
   --text-title: 0.9375rem;        /* 15px */
   --text-body: 0.8125rem;         /* 13px */
@@ -40,34 +52,20 @@
 }
 
 body {
-  @apply text-white;
-  background-color: var(--color-ink);
-  /* Police de marque Satoshi (poids 400/500/700, déclarés en @font-face plus
-     haut), repli propre sur la pile système si un fichier manque. */
+  color: var(--color-ink);
+  background-color: var(--color-ground);
   font-family: "Satoshi", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
   min-width: 320px;
 }
 
-/* Scrollbar styling for side panel */
-::-webkit-scrollbar {
-  width: 4px;
-}
+/* Scrollbar discrète, accordée au fond clair */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d8d0c2; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #c4baa8; }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #374151;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
-}
-
-/* Micro-animations — all gated on the user's motion preference. With
-   reduced motion the elements simply appear in place. */
+/* Micro-animations — gated sur la préférence de mouvement. */
 @media (prefers-reduced-motion: no-preference) {
   @keyframes fade-in {
     from { opacity: 0; transform: translateY(8px); }
@@ -89,10 +87,14 @@ body {
     from { opacity: 0; transform: translateY(3px); }
     to   { opacity: 1; transform: none; }
   }
+  @keyframes wave-grow {
+    from { transform: scaleY(0); opacity: 0; }
+    to   { transform: scaleY(1); opacity: 1; }
+  }
 
-  .animate-fade-in   { animation: fade-in 200ms ease-out; }
+  .animate-fade-in    { animation: fade-in 200ms ease-out; }
   .animate-overlay-in { animation: overlay-in 150ms ease-out; }
-  .animate-modal-pop { animation: modal-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.15); }
-  .animate-toast-up  { animation: toast-up 220ms cubic-bezier(0.2, 0.9, 0.3, 1.15); }
-  .animate-row-in    { animation: row-in 240ms ease-out; }
+  .animate-modal-pop  { animation: modal-pop 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .animate-toast-up   { animation: toast-up 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .animate-row-in     { animation: row-in 240ms ease-out; }
 }

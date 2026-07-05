@@ -188,58 +188,58 @@ export default function LicencePanel({
   return (
     <Modal onClose={onClose}>
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white">{t("licence", lang)}</h2>
-          <button onClick={onClose} aria-label={t("confirm_cancel", lang)} className="text-gray-500 hover:text-white p-1">
+          <h2 className="text-sm font-bold text-ink">{t("licence", lang)}</h2>
+          <button onClick={onClose} aria-label={t("confirm_cancel", lang)} className="text-ink-faint hover:text-ink p-1">
             <IconX />
           </button>
         </div>
 
         {licence.active ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-green-600/10 border border-green-600/20">
-              <div className="w-2 h-2 rounded-full bg-green-400" />
-              <span className="text-green-400 text-xs font-medium">
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-clean-bg border border-clean/20">
+              <div className="w-2 h-2 rounded-full bg-clean" />
+              <span className="text-clean text-xs font-medium">
                 {t("licence_active", lang)}
               </span>
             </div>
-            <p className="text-xs text-gray-400">{t("licence_pro_limits", lang)}</p>
+            <p className="text-xs text-ink-soft">{t("licence_pro_limits", lang)}</p>
 
             {/* Visible licence code — so the user can note it and re-activate
                 anywhere. The portable WFC code is the durable credential. */}
             {licence.key?.startsWith("WFC-") && (
-              <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
-                <p className="text-[11px] text-gray-400">{t("licence_code_label", lang)}</p>
+              <div className="rounded-xl bg-surface-2 p-2.5 space-y-1.5">
+                <p className="text-[11px] text-ink-soft">{t("licence_code_label", lang)}</p>
                 <button
                   onClick={copyCode}
                   title={t("licence_code_copy_hint", lang)}
-                  className="w-full font-mono text-sm font-bold tracking-wider text-accent
-                    bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 hover:border-accent
+                  className="w-full font-mono text-sm font-bold tracking-wider text-accent-deep
+                    bg-surface border border-line rounded-lg px-2 py-2 hover:border-accent
                     transition-colors select-all"
                 >
                   {licence.key}
                 </button>
-                <p className="text-[11px] text-gray-500 text-center">
+                <p className="text-[11px] text-ink-soft text-center">
                   {copied ? t("licence_code_copied", lang) : t("licence_code_copy_hint", lang)}
                 </p>
               </div>
             )}
 
             {/* Backup / restore — saves the user from losing access on browser reinstall */}
-            <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-2">
-              <p className="text-[11px] text-gray-400">{t("licence_backup_hint", lang)}</p>
+            <div className="rounded-xl bg-surface-2 p-2.5 space-y-2">
+              <p className="text-[11px] text-ink-soft">{t("licence_backup_hint", lang)}</p>
               <div className="flex gap-1.5">
                 <button
                   onClick={exportLicence}
-                  className="flex-1 px-2 py-1.5 rounded-lg bg-gray-700 text-white text-[11px]
-                    font-medium hover:bg-gray-600 transition-colors"
+                  className="flex-1 px-2 py-1.5 rounded-lg bg-surface-2 border border-line text-ink text-[11px]
+                    font-medium hover:bg-surface transition-colors"
                 >
                   {t("licence_export", lang)}
                 </button>
                 <button
                   onClick={triggerImport}
                   disabled={loading}
-                  className="flex-1 px-2 py-1.5 rounded-lg bg-gray-700 text-white text-[11px]
-                    font-medium hover:bg-gray-600 transition-colors disabled:opacity-50"
+                  className="flex-1 px-2 py-1.5 rounded-lg bg-surface-2 border border-line text-ink text-[11px]
+                    font-medium hover:bg-surface transition-colors disabled:opacity-50"
                 >
                   {t("licence_import", lang)}
                 </button>
@@ -256,34 +256,34 @@ export default function LicencePanel({
         ) : (
           <div className="space-y-3">
             {/* Description */}
-            <p className="text-xs text-gray-300">{t("licence_desc", lang)}</p>
+            <p className="text-xs text-ink-soft">{t("licence_desc", lang)}</p>
 
             {/* Feature comparison */}
-            <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
-              <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-1">
+            <div className="rounded-xl bg-surface-2 p-2.5 space-y-1.5">
+              <div className="flex items-center gap-2 text-[11px] text-ink-soft mb-1">
                 <span className="flex-1" />
                 <span className="w-10 text-center">Free</span>
-                <span className="w-10 text-center text-accent font-bold">Pro</span>
+                <span className="w-10 text-center text-accent-deep font-bold">Pro</span>
               </div>
               {features.map(({ label, free }) => (
                 <div key={label} className="flex items-center gap-2 text-[11px]">
-                  <span className="text-gray-400 flex-1">{label}</span>
-                  <span className="w-10 text-center">{free ? <span className="text-green-400"><IconCheck /></span> : <span className="text-gray-600"><IconX /></span>}</span>
-                  <span className="w-10 text-center text-green-400"><IconCheck /></span>
+                  <span className="text-ink-soft flex-1">{label}</span>
+                  <span className="w-10 text-center">{free ? <span className="text-clean"><IconCheck /></span> : <span className="text-ink-faint"><IconX /></span>}</span>
+                  <span className="w-10 text-center text-clean"><IconCheck /></span>
                 </div>
               ))}
             </div>
 
             {/* Community stat */}
             {typeof communityTotal === "number" && communityTotal > 0 && (
-              <p className="text-[11px] text-blue-400 text-center">
+              <p className="text-[11px] text-ink-soft text-center">
                 {t("licence_community_stats", lang).replace("{0}", communityTotal.toLocaleString())}
               </p>
             )}
 
             {/* Launch badge + buy */}
             <div className="text-center space-y-1.5">
-              <span className="text-[11px] bg-accent/20 text-accent px-2 py-0.5 rounded-full font-medium">
+              <span className="text-[11px] bg-accent/20 text-accent-deeppx-2 py-0.5 rounded-full font-medium">
                 {t("licence_launch_badge", lang)}
               </span>
               <a
@@ -298,15 +298,15 @@ export default function LicencePanel({
                 </span>
                 {t("licence_launch_price", lang)}{" €"} — {t("licence_lifetime", lang)}
               </a>
-              <p className="text-[11px] text-gray-400">{t("licence_price_anchor", lang)}</p>
-              <p className="text-[11px] text-gray-400">{t("licence_guarantee", lang)}</p>
+              <p className="text-[11px] text-ink-soft">{t("licence_price_anchor", lang)}</p>
+              <p className="text-[11px] text-ink-soft">{t("licence_guarantee", lang)}</p>
             </div>
 
             {/* Bloc confiance — rassure un acheteur méfiant avant de payer */}
-            <div className="rounded-xl bg-gray-800/40 p-2.5 space-y-1.5">
+            <div className="rounded-xl bg-surface-2 p-2.5 space-y-1.5">
               {["licence_trust_dev", "licence_trust_refund", "licence_trust_local"].map((k) => (
-                <div key={k} className="flex items-start gap-2 text-[11px] text-gray-300">
-                  <span className="text-green-400 mt-0.5 shrink-0"><IconCheck /></span>
+                <div key={k} className="flex items-start gap-2 text-[11px] text-ink-soft">
+                  <span className="text-clean mt-0.5 shrink-0"><IconCheck /></span>
                   <span className="leading-snug">{t(k, lang)}</span>
                 </div>
               ))}
@@ -320,27 +320,27 @@ export default function LicencePanel({
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
                   placeholder={t("licence_key_placeholder", lang)}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                    text-xs text-white focus:border-accent outline-none"
+                  className="flex-1 bg-surface border border-line rounded-lg px-2 py-1.5
+                    text-xs text-ink focus:border-accent outline-none"
                   onKeyDown={(e) => e.key === "Enter" && activate()}
                 />
                 <button
                   onClick={activate}
                   disabled={loading || !key.trim()}
-                  className="px-3 py-1.5 rounded-lg bg-gray-700 text-white text-xs font-medium
-                    hover:bg-gray-600 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-lg bg-surface-2 border border-line text-ink text-xs font-medium
+                    hover:bg-surface transition-colors disabled:opacity-50"
                 >
                   {loading ? "..." : t("licence_activate", lang)}
                 </button>
               </div>
-              {error && <p className="text-red-400 text-[11px]">{error}</p>}
+              {error && <p className="text-suspect text-[11px]">{error}</p>}
 
               {/* Restore from a previously-saved backup file */}
               <div className="pt-1 text-center">
                 <button
                   onClick={triggerImport}
                   disabled={loading}
-                  className="text-[11px] text-accent hover:text-accent-hover underline
+                  className="text-[11px] text-accent-deep hover:text-accent underline
                     disabled:opacity-50"
                 >
                   {t("licence_import_link", lang)}
@@ -357,38 +357,38 @@ export default function LicencePanel({
 
             {/* Recover by email — for users who already bought but lost their
                 local storage (reinstall, new browser, OS reset). */}
-            <div className="space-y-1.5 pt-2 border-t border-gray-800/50">
-              <p className="text-[11px] text-gray-400">{t("licence_recover_hint", lang)}</p>
+            <div className="space-y-1.5 pt-2 border-t border-line">
+              <p className="text-[11px] text-ink-soft">{t("licence_recover_hint", lang)}</p>
               <div className="flex gap-1.5">
                 <input
                   type="email"
                   value={recoverEmail}
                   onChange={(e) => setRecoverEmail(e.target.value)}
                   placeholder={t("licence_recover_placeholder", lang)}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                    text-xs text-white focus:border-accent outline-none"
+                  className="flex-1 bg-surface border border-line rounded-lg px-2 py-1.5
+                    text-xs text-ink focus:border-accent outline-none"
                   onKeyDown={(e) => e.key === "Enter" && recover()}
                 />
                 <button
                   onClick={recover}
                   disabled={recoverLoading || !recoverEmail.trim()}
-                  className="px-3 py-1.5 rounded-lg bg-gray-700 text-white text-xs font-medium
-                    hover:bg-gray-600 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-lg bg-surface-2 border border-line text-ink text-xs font-medium
+                    hover:bg-surface transition-colors disabled:opacity-50"
                 >
                   {recoverLoading ? "..." : t("licence_recover_button", lang)}
                 </button>
               </div>
-              {recoverError && <p className="text-red-400 text-[11px]">{recoverError}</p>}
+              {recoverError && <p className="text-suspect text-[11px]">{recoverError}</p>}
             </div>
           </div>
         )}
 
         {/* Support contact (always visible) */}
-        <p className="text-[11px] text-gray-600 text-center pt-1 border-t border-gray-800/50">
+        <p className="text-[11px] text-ink-faint text-center pt-1 border-t border-line">
           {t("support_help", lang)}{" "}
           <a
             href="mailto:contact@fredwav.com"
-            className="text-accent hover:text-accent-hover transition-colors"
+            className="text-accent-deep hover:text-accent transition-colors"
           >
             contact@fredwav.com
           </a>

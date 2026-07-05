@@ -23,18 +23,18 @@ function Popup() {
 
   const logoUrl = chrome.runtime?.getURL?.("icons/icon128.png") ?? "icons/icon128.png";
   return (
-    <div className="w-64 p-4 bg-gray-950 text-white space-y-3">
+    <div className="w-64 p-4 bg-ground text-ink space-y-3">
       <div className="flex items-center gap-2">
         <img src={logoUrl} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
         <div>
           <h1 className="text-sm font-bold leading-none">Wav Fake Cleaner</h1>
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[11px] text-ink-faint">
             by{" "}
             <a
               href="https://fredwav.com/contact"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-accent hover:text-accent-hover transition-colors"
+              className="text-accent-deep hover:text-accent transition-colors"
             >
               Fred Wav
             </a>
@@ -51,8 +51,8 @@ function Popup() {
         </button>
         <button
           onClick={openThreads}
-          className="w-full px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs
-            hover:text-white transition-colors"
+          className="w-full px-3 py-2 rounded-lg bg-surface border border-line text-ink text-xs
+            hover:bg-surface-2 transition-colors"
         >
           {t("popup_open_threads", lang)}
         </button>

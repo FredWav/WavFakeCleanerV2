@@ -57,7 +57,7 @@ export default function CommunityCard({
 
   if (!status) {
     return (
-      <div className="bg-gray-900 rounded-xl border border-gray-800 px-3 py-2 space-y-1.5">
+      <div className="bg-surface rounded-xl border border-line px-3 py-2 space-y-1.5">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-4 w-48" />
       </div>
@@ -65,16 +65,16 @@ export default function CommunityCard({
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 px-3 py-2 space-y-1.5">
+    <div className="bg-surface rounded-xl border border-line px-3 py-2 space-y-1.5">
       <div className="flex items-center justify-between">
-        <div className="text-[11px] text-gray-400 uppercase font-semibold tracking-wide flex items-center gap-1">
+        <div className="text-[11px] text-ink-faint uppercase font-semibold tracking-wide flex items-center gap-1">
           <IconGlobe /> {t("community_card_title", lang)}
         </div>
         {status.tokenStatus === "invalid" && (
           <button
             onClick={onShowLicence}
-            className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-500/20 text-red-400
-              border border-red-900/40 hover:bg-red-500/30 transition-colors"
+            className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-suspect-bg text-suspect
+              border border-suspect/20 hover:bg-suspect/10 transition-colors"
           >
             {t("community_token_invalid", lang)}
           </button>
@@ -82,7 +82,7 @@ export default function CommunityCard({
       </div>
 
       {/* Valorisation de la contribution — la fierté, pas la tuyauterie. */}
-      <p className="text-xs text-gray-300">
+      <p className="text-xs text-ink-soft">
         {t("community_contribution", lang).replace("{0}", status.sent.toLocaleString())}
       </p>
     </div>

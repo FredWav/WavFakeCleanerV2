@@ -207,8 +207,8 @@ export default function App() {
         <div className="flex items-center gap-2">
           <img src={LOGO_URL} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
           <div>
-            <h1 className="text-xl font-bold text-white leading-none tracking-tight">Wav Fake Cleaner</h1>
-            <p className="text-[11px] text-gray-500">
+            <h1 className="text-xl font-bold text-ink leading-none tracking-tight">Wav Fake Cleaner</h1>
+            <p className="text-[11px] text-ink-faint">
               by{" "}
               <a
                 href="https://fredwav.com/contact"
@@ -226,7 +226,7 @@ export default function App() {
             onClick={() => setShowLicence(true)}
             className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors
               ${licence.active
-                ? "bg-green-600/20 text-green-400 border border-green-600/30"
+                ? "bg-clean-bg text-clean border border-clean/20"
                 : "bg-accent text-accent-ink hover:bg-accent-hover"
               }`}
           >
@@ -234,15 +234,15 @@ export default function App() {
           </button>
           <button
             onClick={() => setShowSettings(true)}
-            className="px-2 py-1 rounded-lg bg-gray-800 text-[11px] text-gray-400
-              hover:text-white transition-colors"
+            className="px-2 py-1 rounded-lg bg-surface border border-line text-[11px] text-ink-soft
+              hover:text-ink hover:border-ink-faint transition-colors"
           >
             {t("settings", lang)}
           </button>
           <button
             onClick={toggleLang}
-            className="px-2 py-1 rounded-lg bg-gray-800 text-[11px] text-gray-400
-              hover:text-white transition-colors"
+            className="px-2 py-1 rounded-lg bg-surface border border-line text-[11px] text-ink-soft
+              hover:text-ink hover:border-ink-faint transition-colors"
           >
             {t("lang_toggle", lang)}
           </button>
@@ -251,7 +251,7 @@ export default function App() {
 
       {/* One-time v3 telemetry notice */}
       {showTelemetryNotice && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-gray-800 bg-gray-900/60 text-[11px] text-gray-300">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-line bg-surface text-[11px] text-ink-soft">
           <span className="flex-1 leading-snug">{t("telemetry_notice", lang)}</span>
           <button
             onClick={() => { dismissTelemetryNotice(); setShowSettings(true); }}
@@ -261,7 +261,7 @@ export default function App() {
           </button>
           <button
             onClick={dismissTelemetryNotice}
-            className="shrink-0 text-gray-500 hover:text-white transition-colors p-0.5"
+            className="shrink-0 text-ink-faint hover:text-ink transition-colors p-0.5"
             aria-label={t("confirm_cancel", lang)}
           >
             <IconX />
@@ -274,28 +274,37 @@ export default function App() {
         <StatCards stats={stats} lang={lang} communityTotal={communityTotal} />
       )}
 
-      {/* Accroche à l'étape start. */}
+      {/* Accroche à l'étape start (eyebrow éditorial + titre). */}
       {stage === "start" && (
-        <h2 className="text-xl font-bold text-white leading-tight tracking-tight">{t("connect_title", lang)}</h2>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-faint">{t("audience_eyebrow", lang)}</div>
+          <h2 className="text-2xl font-bold text-ink leading-tight tracking-tight mt-1.5">{t("connect_title", lang)}</h2>
+        </div>
       )}
 
-      {/* Bilan héros à l'étape résultats : le chiffre qui compte, en grand. */}
+      {/* Bilan héros à l'étape résultats : le chiffre qui compte, en grand,
+          composé en figure éditoriale (nombre + libellé aligné sur la base). */}
       {stage === "results" && (
         fakes > 0 ? (
-          <div className="text-center py-3">
-            <div className="text-6xl font-extrabold text-white tabular-nums leading-none tracking-tight">
-              {fakes.toLocaleString()}
-            </div>
-            <div className="text-base text-gray-300 mt-2">{t("hero_fakes_label", lang)}</div>
-            <div className="text-xs text-gray-500 mt-0.5">
-              {t("hero_context", lang).replace("{0}", (stats?.totalFollowers ?? 0).toLocaleString())}
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-faint">{t("audience_eyebrow", lang)}</div>
+            <div className="flex items-baseline gap-3 mt-1.5">
+              <span className="text-6xl font-extrabold text-ink tabular-nums leading-[0.9] tracking-tight">
+                {fakes.toLocaleString()}
+              </span>
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-ink leading-tight">{t("hero_fakes_label", lang)}</div>
+                <div className="text-xs text-ink-soft mt-0.5">
+                  {t("hero_context", lang).replace("{0}", (stats?.totalFollowers ?? 0).toLocaleString())}
+                </div>
+              </div>
             </div>
           </div>
         ) : (stats?.scanned ?? 0) > 0 ? (
-          <div className="text-center py-3">
-            <div className="text-4xl text-green-400" aria-hidden="true">✓</div>
-            <div className="text-base text-white font-semibold mt-1">{t("hero_clean_title", lang)}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{t("hero_clean_sub", lang)}</div>
+          <div className="text-center py-2">
+            <div className="text-4xl text-clean" aria-hidden="true">✓</div>
+            <div className="text-lg text-ink font-bold mt-1">{t("hero_clean_title", lang)}</div>
+            <div className="text-xs text-ink-faint mt-0.5">{t("hero_clean_sub", lang)}</div>
           </div>
         ) : null
       )}
@@ -328,7 +337,7 @@ export default function App() {
 
       {/* Communauté — repliée, accessible en permanence (plus un onglet de 1er rang). */}
       <details className="group">
-        <summary className="cursor-pointer select-none text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+        <summary className="cursor-pointer select-none text-[11px] text-ink-faint hover:text-ink transition-colors">
           {t("tab_community", lang)}
         </summary>
         <div className="mt-2">
@@ -343,7 +352,7 @@ export default function App() {
 
       {/* Journal d'activité — replié par défaut, en bas (U-M4 : plus au milieu) */}
       <details className="group">
-        <summary className="cursor-pointer select-none text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+        <summary className="cursor-pointer select-none text-[11px] text-ink-faint hover:text-ink transition-colors">
           {t("activity_toggle", lang)}
         </summary>
         <div className="mt-1">

@@ -4,11 +4,11 @@ import type { ButtonHTMLAttributes } from "react";
  * Shared button recipe — replaces ad-hoc class strings progressively.
  */
 const VARIANTS = {
-  // Action primaire = ambre/or de la marque (D1), texte foncé pour le contraste.
+  // Action primaire = ambre/or de la marque, texte foncé pour le contraste.
   primary: "bg-accent text-accent-ink hover:bg-accent-hover",
-  secondary: "bg-gray-700 text-white hover:bg-gray-600",
-  danger: "bg-red-600/25 text-red-400 border border-red-900/40 hover:bg-red-600/40",
-  ghost: "text-gray-500 hover:text-gray-300",
+  secondary: "bg-surface-2 text-ink border border-line hover:bg-white",
+  danger: "bg-suspect-bg text-suspect border border-suspect/20 hover:bg-suspect/10",
+  ghost: "text-ink-faint hover:text-ink",
 } as const;
 
 const SIZES = {

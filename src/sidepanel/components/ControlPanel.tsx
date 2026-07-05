@@ -41,7 +41,7 @@ function PauseBanner({ until, reason, lang, removed }: { until: number; reason: 
   const remaining = until - now;
   const reasonLabel = reason ? t(`pause_reason_${reason}`, lang) : "";
   return (
-    <div className="text-amber-300 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1.5 leading-snug">
+    <div className="text-accent-deep text-xs bg-review-bg border border-accent/25 rounded-lg px-2 py-1.5 leading-snug">
       <div className="font-semibold">
         {t("pause_title", lang)}
         {reasonLabel ? <span className="font-normal opacity-80"> · {reasonLabel}</span> : null}
@@ -78,15 +78,15 @@ function PendingDeleteBanner({
   }, []);
   const secs = Math.max(0, Math.ceil((until - now) / 1000));
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1.5">
-      <span className="flex-1 text-xs text-red-200 leading-snug">
+    <div className="flex items-center gap-2 rounded-lg border border-suspect/25 bg-suspect-bg px-2 py-1.5">
+      <span className="flex-1 text-xs text-suspect leading-snug">
         {t("pending_delete", lang)
           .replace("{0}", count.toLocaleString())
           .replace("{1}", String(secs))}
       </span>
       <button
         onClick={onCancel}
-        className="shrink-0 px-2 py-1 rounded-lg text-xs font-bold bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all"
+        className="shrink-0 px-2 py-1 rounded-lg text-xs font-bold bg-surface border border-line text-ink hover:bg-surface-2 active:scale-95 transition-all"
       >
         {t("cancel_delete", lang)}
       </button>
@@ -288,22 +288,22 @@ export default function ControlPanel({
       {stage === "start" && (
         <>
           {/* Réassurance permanente : les vrais abonnés ne sont jamais touchés. */}
-          <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+          <p className="text-[11px] text-clean bg-clean-bg border border-clean/15 rounded-lg px-2 py-1.5 leading-snug">
             {t("safety_promise", lang)}
           </p>
 
           {/* Saisie @ inline : le préalable et l'action au même endroit. */}
           <div>
-            <label className="block text-[11px] text-gray-400 mb-1">{t("connect_username_label", lang)}</label>
-            <div className="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-xl px-3 focus-within:border-accent transition-colors">
-              <span className="text-gray-500 text-base select-none">@</span>
+            <label className="block text-[11px] text-ink-soft mb-1">{t("connect_username_label", lang)}</label>
+            <div className="flex items-center gap-1.5 bg-surface border border-line rounded-xl px-3 focus-within:border-accent transition-colors">
+              <span className="text-ink-soft text-base select-none">@</span>
               <input
                 type="text"
                 value={draft}
                 placeholder={t("username_placeholder", lang)}
                 onChange={(e) => setDraft(e.target.value.replace(/\s+/g, "").replace(/^@+/, ""))}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAnalyze(); }}
-                className="flex-1 bg-transparent py-2.5 text-base text-white placeholder-gray-600 outline-none"
+                className="flex-1 bg-transparent py-2.5 text-base text-ink placeholder-ink-faint outline-none"
               />
             </div>
           </div>
@@ -313,15 +313,15 @@ export default function ControlPanel({
             disabled={!!loading || !draft.trim()}
             className={`w-full px-3 py-3 rounded-xl font-bold text-base transition-all
               ${!draft.trim()
-                ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                ? "bg-surface-2 border border-line text-ink-faint cursor-not-allowed"
                 : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
               }
               ${loading === "analyze" ? "opacity-70 cursor-wait" : ""}`}
           >
             {t("analyze_btn", lang)}
           </button>
-          <p className="text-[11px] text-gray-500 leading-snug">{t("analyze_hint", lang)}</p>
-          <p className="text-[11px] text-gray-600 leading-snug">{t("fetch_limit_note", lang)}</p>
+          <p className="text-[11px] text-ink-soft leading-snug">{t("analyze_hint", lang)}</p>
+          <p className="text-[11px] text-ink-faint leading-snug">{t("fetch_limit_note", lang)}</p>
         </>
       )}
 
@@ -332,7 +332,7 @@ export default function ControlPanel({
             onClick={() => run("stop")}
             disabled={!!loading}
             className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
-              bg-red-600 text-white hover:bg-red-500 active:scale-95"
+              bg-suspect text-white hover:bg-suspect/90 active:scale-95"
           >
             {t("stop", lang)}
           </button>
@@ -348,25 +348,25 @@ export default function ControlPanel({
           ) : null}
 
           {/* Dire à l'utilisateur qu'il peut partir — le scan continue en fond. */}
-          <p className="text-[11px] text-gray-500 leading-snug">{t("running_background_hint", lang)}</p>
+          <p className="text-[11px] text-ink-soft leading-snug">{t("running_background_hint", lang)}</p>
 
           {/* Progress bar — U-H4 : compteur X/Y + ETA, pas juste un % */}
           {totalFollowers > 0 && (
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-gray-500">
+              <div className="flex justify-between text-[11px] text-ink-soft">
                 <span>{t("progress_label", lang)}</span>
                 <span className="tabular-nums">
                   {scanned.toLocaleString()}/{totalFollowers.toLocaleString()} · {progress}%
                 </span>
               </div>
-              <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div className="w-full h-1.5 bg-line rounded-full overflow-hidden">
                 <div
                   className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
                   style={{ width: `${progress}%` }}
                 />
               </div>
               {etaMs !== null && etaMs > 0 && (
-                <p className="text-[11px] text-gray-500 tabular-nums">
+                <p className="text-[11px] text-ink-soft tabular-nums">
                   {t("eta_label", lang).replace("{0}", formatEta(etaMs, lang))}
                 </p>
               )}
@@ -379,7 +379,7 @@ export default function ControlPanel({
       {stage === "results" && (
         <>
           {/* Réassurance juste avant l'action de suppression. */}
-          <p className="text-[11px] text-green-300/90 bg-green-500/5 border border-green-500/10 rounded-lg px-2 py-1.5 leading-snug">
+          <p className="text-[11px] text-clean bg-clean-bg border border-clean/15 rounded-lg px-2 py-1.5 leading-snug">
             {t("safety_promise", lang)}
           </p>
 
@@ -391,7 +391,7 @@ export default function ControlPanel({
               onClick={requestRemoveFakes}
               disabled={!!loading}
               className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
-                bg-red-600/90 text-white hover:bg-red-500 active:scale-95"
+                bg-suspect text-white hover:bg-suspect/90 active:scale-95"
             >
               {(selectionActive ? t("remove_selection_btn", lang) : t("remove_fakes_btn", lang))}{" "}
               ({fakesToRemove.toLocaleString()})
@@ -415,7 +415,7 @@ export default function ControlPanel({
             onClick={() => run("analyze")}
             disabled={!!loading || !!pendingDelete}
             className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
-              bg-gray-800 text-gray-200 hover:bg-gray-700 active:scale-95
+              bg-surface-2 border border-line text-ink hover:bg-surface active:scale-95
               disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t("relaunch_btn", lang)}
@@ -424,7 +424,7 @@ export default function ControlPanel({
             type="button"
             onClick={() => run("rescanAll")}
             disabled={!!loading || !!pendingDelete}
-            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+            className="text-[11px] text-ink-soft hover:text-ink-soft transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
           >
             {t("rescan_all_btn", lang)}
           </button>
@@ -432,14 +432,14 @@ export default function ControlPanel({
           {/* Mode continu (licenciés) : sorti du repli « avancé » et clairement
               décrit AVANT activation (l'audit : nature jamais posée avant le clic). */}
           {licence.active && (
-            <div className="rounded-xl border border-gray-800 bg-gray-900/50 px-3 py-2.5 space-y-1">
-              <p className="text-xs text-gray-200 font-medium">{t("auto_clean_title", lang)}</p>
-              <p className="text-[11px] text-gray-500 leading-snug">{t("auto_clean_desc", lang)}</p>
+            <div className="rounded-xl border border-line bg-surface-2 px-3 py-2.5 space-y-1">
+              <p className="text-xs text-ink font-medium">{t("auto_clean_title", lang)}</p>
+              <p className="text-[11px] text-ink-soft leading-snug">{t("auto_clean_desc", lang)}</p>
               <button
                 type="button"
                 onClick={handleContinuous}
                 disabled={!!loading || !!pendingDelete}
-                className="text-[11px] text-accent hover:text-accent-hover transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+                className="text-[11px] text-accent-deep hover:text-accent transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
               >
                 {t("auto_clean_cta", lang)}
               </button>
@@ -449,9 +449,9 @@ export default function ControlPanel({
           {/* Limites du plan gratuit, visibles sans mur surprise. */}
           {!licence.active && (
             <div className="space-y-0.5">
-              <p className="text-[11px] text-gray-500 leading-snug">{t("free_plan_note", lang)}</p>
+              <p className="text-[11px] text-ink-soft leading-snug">{t("free_plan_note", lang)}</p>
               {cyclesToday !== null && (
-                <p className="text-[11px] text-gray-400 tabular-nums">
+                <p className="text-[11px] text-ink-soft tabular-nums">
                   {t("free_usage_today", lang)
                     .replace("{0}", String(cyclesToday))
                     .replace("{1}", String(FREE_LIMITS.cyclesPerDay))}
@@ -464,10 +464,10 @@ export default function ControlPanel({
 
       {/* TRANSVERSAL — erreurs (toujours affichées si présentes). */}
       {error && (
-        <div className="text-red-400 text-xs bg-red-500/10 rounded-lg px-2 py-1">{error}</div>
+        <div className="text-suspect text-xs bg-suspect-bg rounded-lg px-2 py-1">{error}</div>
       )}
       {!error && !isRunning && stats?.lastError && (
-        <div className="text-red-400 text-xs bg-red-500/10 rounded-lg px-2 py-1.5 leading-snug">
+        <div className="text-suspect text-xs bg-suspect-bg rounded-lg px-2 py-1.5 leading-snug">
           {stats.lastError}
         </div>
       )}
@@ -491,10 +491,10 @@ export default function ControlPanel({
         const close = () => { setConfirm(null); setAck(false); };
         return (
           <Modal onClose={close}>
-            <h3 className="text-sm font-bold text-white">{title}</h3>
-            <p className="text-xs text-gray-300 leading-snug">{body}</p>
+            <h3 className="text-sm font-bold text-ink">{title}</h3>
+            <p className="text-xs text-ink-soft leading-snug">{body}</p>
             {confirm.sample.length > 0 && (
-              <p className="text-[11px] text-gray-400 leading-snug break-words">
+              <p className="text-[11px] text-ink-soft leading-snug break-words">
                 {t("confirm_remove_sample", lang).replace(
                   "{0}",
                   confirm.sample.map((u) => "@" + u).join(", "),
@@ -503,12 +503,12 @@ export default function ControlPanel({
               </p>
             )}
             {ackRequired && (
-              <label className="flex items-start gap-2 text-xs text-gray-200 cursor-pointer">
+              <label className="flex items-start gap-2 text-xs text-ink cursor-pointer">
                 <input
                   type="checkbox"
                   checked={ack}
                   onChange={(e) => setAck(e.target.checked)}
-                  className="mt-0.5 accent-red-600"
+                  className="mt-0.5 accent-suspect"
                 />
                 <span>{t("confirm_remove_ack", lang)}</span>
               </label>
@@ -516,7 +516,7 @@ export default function ControlPanel({
             <div className="flex gap-2 pt-1">
               <button
                 onClick={close}
-                className="flex-1 px-3 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-200 hover:bg-gray-700 active:scale-95 transition-all"
+                className="flex-1 px-3 py-2 rounded-lg text-sm font-medium bg-surface-2 border border-line text-ink hover:bg-surface active:scale-95 transition-all"
               >
                 {t("confirm_cancel", lang)}
               </button>
@@ -525,8 +525,8 @@ export default function ControlPanel({
                 disabled={ackRequired && !ack}
                 className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-all
                   ${ackRequired && !ack
-                    ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-                    : "bg-red-600 text-white hover:bg-red-500 active:scale-95"}`}
+                    ? "bg-surface-2 border border-line text-ink-faint cursor-not-allowed"
+                    : "bg-suspect text-white hover:bg-suspect/90 active:scale-95"}`}
               >
                 {t("confirm_remove_confirm", lang)}
               </button>

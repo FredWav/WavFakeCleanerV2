@@ -27,7 +27,7 @@ export default function Toast({
   return (
     <div
       onClick={onDismiss}
-      className="bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-xs text-gray-200
+      className="bg-ink text-white rounded-xl px-4 py-2 text-xs
         shadow-lg pointer-events-auto cursor-pointer animate-toast-up max-w-full"
     >
       {message}
