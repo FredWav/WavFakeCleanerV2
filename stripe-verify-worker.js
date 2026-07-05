@@ -613,11 +613,10 @@ async function handleVote(request, env) {
   const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
   const targetHash = await hmacHex(env.HMAC_SALT, clientTargetHash);
 
-  // Verify community token
-  const tokenRow = await env.DB.prepare(
-    "SELECT token_hash FROM tokens WHERE token_hash = ?"
-  ).bind(tokenHash).first();
-  if (!tokenRow) return json({ error: "invalid_token" }, 403, request);
+  // Accès PUBLIC (plus de licence, 2026-07) : n'importe quel jeton communautaire
+  // est accepté — y compris un jeton anonyme généré côté client. On n'exige plus
+  // qu'il ait été « acheté ». L'anti-abus repose sur le rate-limit par jeton
+  // ci-dessous (à durcir par IP si du spam apparaît).
 
   // Per-token rate limit
   const rl = await checkAndBumpRateLimit(env, tokenHash, "vote");
@@ -754,12 +753,9 @@ async function handleReportSightings(request, env) {
     return json({ error: "timestamp_expired" }, 400, request);
   }
 
-  // Verify token (HMAC)
+  // Accès PUBLIC (plus de licence, 2026-07) : tout jeton communautaire est
+  // accepté (même anonyme). Anti-abus = rate-limit par jeton ci-dessous.
   const tokenHash = await hmacHex(env.HMAC_SALT, communityToken);
-  const tokenRow = await env.DB.prepare(
-    "SELECT token_hash FROM tokens WHERE token_hash = ?"
-  ).bind(tokenHash).first();
-  if (!tokenRow) return json({ error: "invalid_token" }, 403, request);
 
   // Per-token rate limit
   const rl = await checkAndBumpRateLimit(env, tokenHash, "sightings");

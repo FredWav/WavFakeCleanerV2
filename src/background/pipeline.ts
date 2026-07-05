@@ -17,7 +17,6 @@ import {
   CONTINUOUS_IDLE_PAUSE,
   HARD_429_PAUSE,
 } from "@shared/constants";
-import { FREE_LIMITS } from "@shared/types";
 import { scoreProfile, preScoreFromMetadata } from "./scorer";
 import {
   upsertFollowers,
@@ -30,9 +29,6 @@ import {
   addActionLog,
   createScanSession,
   updateScanSession,
-  getLicense,
-  getDailyUsage,
-  incrementDailyUsage,
   resetScannedFollowers,
 } from "./storage";
 import { RateTracker } from "./rate-tracker";
@@ -622,16 +618,6 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
   await rateTracker.load();
 
   const settings = await getSettings();
-  // Check free tier: 1 cycle/day
-  const licence = await getLicense();
-  if (!licence.active) {
-    const usage = await getDailyUsage();
-    if (usage.cycles >= FREE_LIMITS.cyclesPerDay) {
-      log("WARNING", "clean", m("cycle_limit"));
-      return 0;
-    }
-  }
-
   const pending = await getFollowersPending(CYCLE_SIZE);
 
   // B-C3 : les faux DÉJÀ flaggés mais jamais supprimés (échec 429/blocage/crash
@@ -1220,12 +1206,6 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
 
   log("INFO", "clean", `[diag] fin boucle scan : scanned=${scanned} reviewed=${reviewed} removed=${removed} sur ${sorted.length} à visiter · aborted=${signal.aborted}`);
 
-  // Free tier: only count this cycle against the daily limit if it actually did
-  // something — an immediate hard-429 (0 processed) must not burn the free cycle.
-  if (!licence.active && (scanned > 0 || removed > 0 || reviewed > 0)) {
-    await incrementDailyUsage("cycles");
-  }
-
   await updateScanSession(sessionId, {
     status: signal.aborted ? "stopped" : "completed",
     scannedCount: scanned,
@@ -1254,19 +1234,6 @@ async function runCleanCycleInternal(signal: AbortSignal, removeFlagged = true):
   if (cycleSightings.size > 0) {
     const batch = [...cycleSightings].slice(0, 50); // worker accepte max 50 par batch
     reportSightings(batch).catch(() => {});
-  }
-
-  // Notification Chrome pour les utilisateurs free quand des fakes sont detectes
-  const notifLicence = await getLicense();
-  if (!notifLicence.active && removed > 0) {
-    try {
-      chrome.notifications.create("wfc-scan-done", {
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "Wav Fake Cleaner",
-        message: m("notification_fakes_found", removed),
-      });
-    } catch { /* notifications may not be available */ }
   }
 
   await updateState({ stage: "idle" });

@@ -66,20 +66,8 @@ export const api = {
   getPrescanEstimate: () =>
     send<{ likelyFakes: number; total: number }>({ type: "GET_PRESCAN_ESTIMATE" }),
 
-  getDailyUsage: () =>
-    send<{ dayKey: string; cycles: number }>({ type: "GET_DAILY_USAGE" }),
-
+  // Plus de paiement ni de licence : l'app est entièrement gratuite. getLicense
+  // renvoie toujours un accès actif (le SW le force), gardé pour que l'UI lise
+  // simplement cet état.
   getLicense: () => send<LicenseInfo>({ type: "GET_LICENSE" }),
-
-  activateLicense: (key: string) =>
-    send<{ ok: boolean; error?: string }>({ type: "ACTIVATE_LICENSE", payload: { key } }),
-
-  recoverLicense: (email: string) =>
-    send<{ ok: boolean; error?: string }>({ type: "RECOVER_LICENSE", payload: { email } }),
-
-  exportLicense: () =>
-    send<{ ok: boolean; backup?: unknown; error?: string }>({ type: "EXPORT_LICENSE" }),
-
-  importLicense: (backup: unknown) =>
-    send<{ ok: boolean; error?: string }>({ type: "IMPORT_LICENSE", payload: { backup } }),
 };

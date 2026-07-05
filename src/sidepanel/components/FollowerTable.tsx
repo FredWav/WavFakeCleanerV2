@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import { FREE_LIMITS, type FollowerRecord, type LicenseInfo } from "@shared/types";
+import { type FollowerRecord } from "@shared/types";
 import { COMMUNITY_LOOKUP_URL } from "@shared/constants";
 import { IconGlobe, IconWarn, IconCheck, IconRefresh, IconChevronDown, IconChevronRight } from "./Icons";
 import Skeleton from "./ui/Skeleton";
@@ -222,8 +222,6 @@ type FollowerWithUrl = FollowerRecord & { profile_url: string };
 
 export default function FollowerTable({
   lang,
-  licence,
-  onShowLicence,
   showToast,
   refreshTrigger,
   onFakeSelectionChange,
@@ -231,8 +229,6 @@ export default function FollowerTable({
   onGoToCleanup,
 }: {
   lang: string;
-  licence?: LicenseInfo;
-  onShowLicence?: () => void;
   showToast?: (msg: string) => void;
   refreshTrigger?: number;
   // U-C2 : remonte la sélection des faux à supprimer (cases cochées) au parent.
@@ -252,7 +248,6 @@ export default function FollowerTable({
   const [communityScores, setCommunityScores] = useState<Map<string, CommunityScore>>(new Map());
   const [myVotes, setMyVotes] = useState<Map<string, "fake" | "ok">>(new Map());
   const [voteLoading, setVoteLoading] = useState<string | null>(null);
-  const [licencePrompt, setLicencePrompt] = useState<string | null>(null);
   // U-C2 : cases décochées dans la vue « faux ». On stocke les EXCLUS (plutôt que
   // les inclus) pour que tout nouveau faux soit coché par défaut sans resynchro.
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
@@ -339,12 +334,6 @@ export default function FollowerTable({
 
   async function handleVote(e: React.MouseEvent, username: string, verdict: "fake" | "ok", score: number) {
     e.stopPropagation();
-
-    // Not licensed → upsell
-    if (!licence?.active) {
-      setLicencePrompt(username);
-      return;
-    }
 
     setVoteLoading(username);
     try {
@@ -486,37 +475,12 @@ export default function FollowerTable({
                 const cs = communityScores.get(f.username);
                 const isSpotted = cs && cs.voteCount >= 3 && cs.fakeRatio >= 0.60;
                 const isFakeFilter = filter === "fake";
-                const isLockedRow = isFakeFilter && !licence?.active && index >= FREE_LIMITS.visibleFakes;
-
-                // Unlicensed users on the Fake tab: show one clean upsell banner
-                // in place of the first hidden row and hide the rest.
-                if (isLockedRow) {
-                  if (index !== FREE_LIMITS.visibleFakes) return null;
-                  return (
-                    <tr key="paywall">
-                      <td colSpan={2} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-surface-2">
-                        <p className="text-xs text-ink-soft mb-2">
-                          {t("blur_banner_count", lang)
-                            .replace("{0}", String(followers.length))
-                            .replace("{1}", String(Math.max(0, followers.length - FREE_LIMITS.visibleFakes)))}
-                        </p>
-                        <button
-                          onClick={() => onShowLicence?.()}
-                          className="px-3 py-1.5 bg-accent text-accent-ink text-xs font-medium rounded-lg
-                            hover:bg-accent-hover transition-colors"
-                        >
-                          {t("blur_cta", lang)}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                }
 
                 return (
                   <React.Fragment key={f.username}>
                     {/* Main row */}
                     <tr
-                      onClick={() => { setExpanded(isExpanded ? null : f.username); setLicencePrompt(null); }}
+                      onClick={() => setExpanded(isExpanded ? null : f.username)}
                       className="border-t border-line hover:bg-surface-2 cursor-pointer transition-colors animate-row-in"
                     >
                       <td className="px-2 py-1.5 font-mono text-ink-soft">
@@ -604,21 +568,7 @@ export default function FollowerTable({
                                 <IconGlobe /> {t("community_vote", lang)}
                               </div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                {licencePrompt === f.username ? (
-                                  /* Upsell sans licence */
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-[11px] text-ink-soft">
-                                      {t("vote_licence_required", lang)}
-                                    </span>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); onShowLicence?.(); setLicencePrompt(null); }}
-                                      className="px-2 py-0.5 rounded text-[11px] bg-accent text-accent-ink font-medium
-                                        hover:bg-accent-hover transition-colors"
-                                    >
-                                      {t("vote_licence_cta", lang)}
-                                    </button>
-                                  </div>
-                                ) : myVotes.has(f.username) ? (
+                                {myVotes.has(f.username) ? (
                                   /* Déjà voté */
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-[11px] text-ink-soft">

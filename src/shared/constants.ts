@@ -23,10 +23,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 // ── Licence (Stripe + Cloudflare Worker) ──
-export const PAYMENT_LINK = "https://buy.stripe.com/7sYdR84WU5z3cPobdKcMM0u";
-export const LICENCE_VERIFY_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/verify";
-export const LICENCE_RECOVER_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/recover";
-export const LICENCE_PRICE = "7,99 €";
+// Paiement & licence supprimés (2026-07) : l'app est entièrement gratuite.
 
 // ── Community voting (Cloudflare Worker + D1) ──
 export const COMMUNITY_VOTE_URL = "https://restless-credit-5e6a.fred-olalde.workers.dev/vote";

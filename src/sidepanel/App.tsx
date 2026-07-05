@@ -9,7 +9,6 @@ import CommunityCard from "./components/CommunityCard";
 import LogConsole from "./components/LogConsole";
 import FollowerTable from "./components/FollowerTable";
 import SettingsPanel from "./components/SettingsPanel";
-import LicencePanel from "./components/LicencePanel";
 import Toast from "./components/Toast";
 import Onboarding from "./components/Onboarding";
 import { IconX } from "./components/Icons";
@@ -23,9 +22,10 @@ const LOGO_URL = chrome.runtime?.getURL?.("icons/icon128.png") ?? "icons/icon128
 export default function App() {
   const [lang, setLang] = useState(getStoredLang);
   const [showSettings, setShowSettings] = useState(false);
-  const [showLicence, setShowLicence] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [licence, setLicence] = useState<LicenseInfo>({ active: false, key: null, activatedAt: null, communityToken: null });
+  // Plus de licence : accès complet pour tous. On garde l'objet pour les
+  // composants qui le lisent, mais il est toujours actif.
+  const [licence, setLicence] = useState<LicenseInfo>({ active: true, key: "free", activatedAt: 0, communityToken: null });
   // U-L2 : file de toasts empilables (avant : un seul toast, le suivant écrasait
   // le précédent). Cap à 4 affichés ; chaque toast s'auto-efface.
   const toastId = useRef(0);
@@ -103,26 +103,6 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Réagit en direct à une licence qui devient active dans le stockage — ex. le
-  // content script de la page /success l'active après paiement pendant que ce
-  // panneau est ouvert. Sans ça, le panneau reste verrouillé et l'acheteur croit
-  // que ça a échoué. Surveille les deux zones de stockage (local + sauvegarde sync).
-  useEffect(() => {
-    function onChanged(
-      changes: Record<string, chrome.storage.StorageChange>,
-      area: string
-    ) {
-      if ((area === "local" || area === "sync") && changes.license) {
-        api.getLicense().then((lic) => {
-          setLicence(lic);
-          if (!licence.active && lic.active) pushToast(t("licence_success", lang));
-        }).catch(() => {});
-      }
-    }
-    chrome.storage.onChanged.addListener(onChanged);
-    return () => chrome.storage.onChanged.removeListener(onChanged);
-  }, [licence.active, lang]);
-
   // Initial load: settings (for onboarding gate) and licence state.
   // Split into separate effects so each has a single, obvious responsibility
   // and can re-run independently if its dependency changes.
@@ -147,21 +127,6 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Auto-refresh communityToken for licences activated before the community
-  // deployment. Runs only when the licence has a key but no token, and
-  // re-runs when the key changes (e.g. user activates a fresh licence).
-  useEffect(() => {
-    if (!licence.active || !licence.key || licence.communityToken) return;
-    let cancelled = false;
-    api.activateLicense(licence.key).then((result) => {
-      if (cancelled) return;
-      if (result?.ok) {
-        api.getLicense().then((l) => { if (!cancelled) setLicence(l); }).catch(() => {});
-      }
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [licence.active, licence.key, licence.communityToken]);
-
   // Surface a one-time toast when a selector drift is detected on Threads.
   // The content script reports drift as LOG_FROM_CONTENT with category="drift";
   // service-worker rebroadcasts as LOG_EVENT. Capping to once per session
@@ -184,11 +149,6 @@ export default function App() {
     const next = cycle[lang] || "fr";
     setLang(next);
     setStoredLang(next);
-  }
-
-  function onLicenceUpdate(l: LicenseInfo) {
-    setLicence(l);
-    setShowLicence(false);
   }
 
   // Lot 2 — écran unique guidé : l'étape du parcours est dérivée des stats.
@@ -222,16 +182,6 @@ export default function App() {
           </div>
         </div>
         <div className="flex gap-1.5 items-center">
-          <button
-            onClick={() => setShowLicence(true)}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors
-              ${licence.active
-                ? "bg-clean-bg text-clean border border-clean/20"
-                : "bg-accent text-accent-ink hover:bg-accent-hover"
-              }`}
-          >
-            {licence.active ? t("licence_active", lang) : t("licence", lang)}
-          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="px-2 py-1 rounded-lg bg-surface border border-line text-[11px] text-ink-soft
@@ -326,8 +276,6 @@ export default function App() {
       {stage === "results" && (
         <FollowerTable
           lang={lang}
-          licence={licence}
-          onShowLicence={() => setShowLicence(true)}
           showToast={pushToast}
           refreshTrigger={(stats?.totalFollowers ?? 0) + (stats?.scanned ?? 0) + (stats?.removed ?? 0)}
           onFakeSelectionChange={setFakeSelection}
@@ -344,7 +292,6 @@ export default function App() {
           <CommunityCard
             lang={lang}
             licence={licence}
-            onShowLicence={() => setShowLicence(true)}
             showToast={pushToast}
           />
         </div>
@@ -366,18 +313,6 @@ export default function App() {
           lang={lang}
           onClose={() => { setShowSettings(false); reloadUsername(); }}
           showToast={pushToast}
-        />
-      )}
-
-      {/* Licence modal */}
-      {showLicence && (
-        <LicencePanel
-          lang={lang}
-          licence={licence}
-          onUpdate={onLicenceUpdate}
-          onClose={() => setShowLicence(false)}
-          showToast={pushToast}
-          communityTotal={communityTotal}
         />
       )}
 

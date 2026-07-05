@@ -14,13 +14,9 @@ import {
   computeStats,
   resetScannedFollowers,
   getLicense,
-  saveLicense,
   getPipelineState,
   savePipelineState,
   purgeOwnerSubPageFakes,
-  exportLicenseBackup,
-  readLicenseBackup,
-  getDailyUsage,
 } from "./storage";
 import {
   runFetch,
@@ -44,9 +40,8 @@ import {
   getCommunityStatus,
   checkTokenHealth,
 } from "./community";
-import { recordCommunityEvent, setTokenStatus } from "./community-events";
+import { recordCommunityEvent } from "./community-events";
 import { reportTelemetry } from "./telemetry";
-import { verifyLicenceToken } from "./licence-verify";
 
 // ── Récupération après crash du service worker ──
 // MV3 service workers terminate after ~30s of inactivity. On restart we:
@@ -199,15 +194,10 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       runRemoveFlagged(msg.payload?.usernames); // lancé sans attendre
       return { ok: true };
 
-    case "START_CONTINUOUS": {
-      // B-H1 : le mode continu est réservé aux licenciés. L'UI le verrouille déjà,
-      // mais un message direct ne doit pas faire boucler un free-user à vide
-      // (quota épuisé après 1 cycle → re-fetch sans fin).
-      const lic = await getLicense();
-      if (!lic.active) return { ok: false, error: "licence_required" };
+    case "START_CONTINUOUS":
+      // Plus de licence : le mode continu est ouvert à tout le monde.
       runContinuous(); // fire and forget
       return { ok: true };
-    }
 
     case "STOP":
       stopPipeline();
@@ -277,144 +267,10 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
     }
 
-    case "GET_DAILY_USAGE":
-      return await getDailyUsage();
-
     case "GET_LICENSE":
+      // Plus de paiement ni de licence : getLicense() renvoie toujours l'accès
+      // complet. On garde ce handler pour que l'UI lise l'état (toujours actif).
       return await getLicense();
-
-    case "ACTIVATE_LICENSE": {
-      const raw = (msg.payload as { key: string }).key?.trim();
-      if (!raw) {
-        return { ok: false, error: "licence_invalid" };
-      }
-
-      // Normalize: WFC codes are uppercase, alphanumeric — accept lowercase
-      // input but never coerce other formats.
-      const WFC_CODE_RE = /^WFC-[A-Z2-9]{4}-[A-Z2-9]{4}$/i;
-      const STRIPE_RE = /^cs_(live|test)_[A-Za-z0-9]{20,80}$/;
-
-      // ── Owner / beta licence path: Ed25519 signature verification ──
-      // The public key is safe to embed; only the matching private key (held offline)
-      // can produce valid signatures. Each token carries a userId and optional expiry.
-      if (raw.startsWith("wfc_lic_")) {
-        const result = await verifyLicenceToken(raw);
-        if (!result.valid) {
-          return { ok: false, error: "licence_invalid" };
-        }
-        await saveLicense({
-          active: true,
-          key: "owner-" + (result.userId ?? "unknown"),
-          activatedAt: Date.now(),
-          communityToken: null,
-          recoveryToken: raw, // preserved so export/import works
-        });
-        return { ok: true };
-      }
-
-      // ── WFC code path (since 2.2): short product code WFC-XXXX-XXXX ──
-      if (WFC_CODE_RE.test(raw)) {
-        const code = raw.toUpperCase();
-        try {
-          const { LICENCE_VERIFY_URL } = await import("@shared/constants");
-          const res = await fetch(`${LICENCE_VERIFY_URL}?code=${encodeURIComponent(code)}`, {
-            headers: { "Accept": "application/json" },
-          });
-          if (!res.ok) return { ok: false, error: "network_error" };
-          const data = await res.json() as { valid: boolean; communityToken?: string };
-          if (!data.valid) return { ok: false, error: "licence_invalid" };
-          await saveLicense({
-            active: true,
-            key: code,
-            activatedAt: Date.now(),
-            communityToken: data.communityToken ?? code,
-            recoveryToken: code,
-          });
-          // The Worker just validated this token — record it so the community
-          // card starts green instead of "unknown".
-          setTokenStatus("ok").catch(() => {});
-          return { ok: true };
-        } catch {
-          return { ok: false, error: "network_error" };
-        }
-      }
-
-      // ── Stripe legacy path: validate, then upgrade to a WFC code if the
-      //    Worker hands one back. Pre-2.2 customers re-activating via their
-      //    cs_live_xxx end up with a clean WFC-XXXX-XXXX in their storage. ──
-      if (!STRIPE_RE.test(raw)) {
-        return { ok: false, error: "licence_invalid" };
-      }
-      try {
-        const { LICENCE_VERIFY_URL } = await import("@shared/constants");
-        const res = await fetch(`${LICENCE_VERIFY_URL}?session_id=${encodeURIComponent(raw)}`, {
-          headers: { "Accept": "application/json" },
-        });
-        if (!res.ok) {
-          return { ok: false, error: "network_error" };
-        }
-        const data = await res.json() as { valid: boolean; communityToken?: string; code?: string };
-        if (!data.valid) {
-          return { ok: false, error: "licence_invalid" };
-        }
-        const upgradedKey = data.code || raw;
-        await saveLicense({
-          active: true,
-          key: upgradedKey,
-          activatedAt: Date.now(),
-          communityToken: data.communityToken ?? upgradedKey,
-          recoveryToken: upgradedKey, // prefer the short code for backups
-        });
-        setTokenStatus("ok").catch(() => {});
-      } catch {
-        return { ok: false, error: "network_error" };
-      }
-      return { ok: true };
-    }
-
-    case "RECOVER_LICENSE": {
-      // Recover-by-email: ask the Worker for the WFC code tied to this email,
-      // then run it through the normal activation path (same as IMPORT_LICENSE).
-      // The email travels in the POST body, never the URL.
-      const email = (msg.payload as { email: string }).email?.trim();
-      if (!email) return { ok: false, error: "invalid_email" };
-      try {
-        const { LICENCE_RECOVER_URL } = await import("@shared/constants");
-        const res = await fetch(LICENCE_RECOVER_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-        if (!res.ok) return { ok: false, error: "network_error" };
-        const data = await res.json() as { found: boolean; code?: string };
-        if (!data.found || !data.code) return { ok: false, error: "not_found" };
-        return await handleMessage({
-          type: "ACTIVATE_LICENSE",
-          payload: { key: data.code },
-        });
-      } catch {
-        return { ok: false, error: "network_error" };
-      }
-    }
-
-    case "EXPORT_LICENSE": {
-      const backup = await exportLicenseBackup();
-      if (!backup) return { ok: false, error: "no_license" };
-      return { ok: true, backup };
-    }
-
-    case "IMPORT_LICENSE": {
-      const { backup } = msg.payload as { backup: unknown };
-      const parsed = readLicenseBackup(backup);
-      if (!parsed) return { ok: false, error: "invalid_backup" };
-      // Re-run activation on the recovered token so we get fresh validation
-      // (Stripe re-check, Ed25519 sig verification) and a current
-      // communityToken from the Worker.
-      return await handleMessage({
-        type: "ACTIVATE_LICENSE",
-        payload: { key: parsed.key },
-      });
-    }
 
     case "KEEPALIVE_PING":
       return { ok: true };

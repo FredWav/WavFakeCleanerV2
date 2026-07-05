@@ -18,11 +18,9 @@ import Skeleton from "./ui/Skeleton";
 export default function CommunityCard({
   lang,
   licence,
-  onShowLicence,
 }: {
   lang: string;
   licence?: LicenseInfo;
-  onShowLicence?: () => void;
   showToast?: (msg: string) => void;
 }) {
   const [status, setStatus] = useState<CommunityStatus | null>(null);
@@ -66,19 +64,8 @@ export default function CommunityCard({
 
   return (
     <div className="bg-surface rounded-xl border border-line px-3 py-2 space-y-1.5">
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] text-ink-faint uppercase font-semibold tracking-wide flex items-center gap-1">
-          <IconGlobe /> {t("community_card_title", lang)}
-        </div>
-        {status.tokenStatus === "invalid" && (
-          <button
-            onClick={onShowLicence}
-            className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-suspect-bg text-suspect
-              border border-suspect/20 hover:bg-suspect/10 transition-colors"
-          >
-            {t("community_token_invalid", lang)}
-          </button>
-        )}
+      <div className="text-[11px] text-ink-faint uppercase font-semibold tracking-wide flex items-center gap-1">
+        <IconGlobe /> {t("community_card_title", lang)}
       </div>
 
       {/* Valorisation de la contribution — la fierté, pas la tuyauterie. */}

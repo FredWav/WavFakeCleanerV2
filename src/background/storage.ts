@@ -355,34 +355,34 @@ import type { LicenseInfo } from "@shared/types";
 // On every save we write both. On read, if .local is empty but .sync has a
 // licence, we restore it back into .local (so the next read is fast).
 
+// Depuis 2026-07 : plus de paiement ni de licence. Tout le monde a l'accès
+// COMPLET, gratuitement. getLicense() renvoie donc toujours un accès actif.
+// Le seul reliquat est un identifiant anonyme stable qui sert de « jeton
+// communautaire » (le Worker accepte les votes publics, rate-limités par ce
+// jeton + l'IP). Aucune vérification, aucun déblocage conditionnel.
 export async function getLicense(): Promise<LicenseInfo> {
-  const localResult = await chrome.storage.local.get("license");
-  let lic = localResult.license;
-
-  // Auto-recovery path: local is empty but the sync mirror has a licence.
-  if (!lic || !lic.active || !lic.key) {
-    try {
-      const syncResult = await chrome.storage.sync.get("license");
-      const synced = syncResult.license;
-      if (synced && synced.active && synced.key) {
-        // Push it back to local so we don't pay the sync read every time
-        await chrome.storage.local.set({ license: synced });
-        lic = synced;
-        console.log("[WFC] License restored from chrome.storage.sync");
-      }
-    } catch {
-      // sync may be unavailable (user signed out of Chrome) — that's fine
-    }
-  }
-
-  lic = lic || {};
   return {
-    active: lic.active ?? false,
-    key: lic.key ?? null,
-    activatedAt: lic.activatedAt ?? null,
-    communityToken: lic.communityToken ?? null,
-    recoveryToken: lic.recoveryToken ?? null,
+    active: true,
+    key: "free",
+    activatedAt: 0,
+    communityToken: await getAnonCommunityToken(),
+    recoveryToken: null,
   };
+}
+
+// Jeton communautaire anonyme, généré une fois par installation et stable
+// ensuite. Préfixe « anon- » (jamais « owner- », qui est filtré côté vote).
+async function getAnonCommunityToken(): Promise<string> {
+  const KEY = "wfc_anon_community_id";
+  try {
+    const r = await chrome.storage.local.get(KEY);
+    if (typeof r[KEY] === "string" && r[KEY]) return r[KEY] as string;
+    const id = "anon-" + crypto.randomUUID();
+    await chrome.storage.local.set({ [KEY]: id });
+    return id;
+  } catch {
+    return "anon-public";
+  }
 }
 
 export async function saveLicense(license: LicenseInfo): Promise<void> {

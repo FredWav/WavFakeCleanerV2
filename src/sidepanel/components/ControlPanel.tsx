@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/messaging";
 import { t } from "../lib/i18n";
-import { FREE_LIMITS, type Stats, type LicenseInfo } from "@shared/types";
+import { type Stats, type LicenseInfo } from "@shared/types";
 import Modal from "./ui/Modal";
 
 // Étape courante du parcours (écran unique guidé). Pilote quels contrôles
@@ -232,18 +232,6 @@ export default function ControlPanel({
   // Nettoie le timer si le composant est démonté pendant l'attente.
   useEffect(() => () => { if (pendingTimer.current) clearTimeout(pendingTimer.current); }, []);
 
-  // U-H6 : compteur de consommation quotidienne du plan gratuit. Rafraîchi quand
-  // l'état de run change (un cycle vient de se terminer) ou la licence.
-  const [cyclesToday, setCyclesToday] = useState<number | null>(null);
-  useEffect(() => {
-    if (licence.active) { setCyclesToday(null); return; }
-    let cancelled = false;
-    api.getDailyUsage()
-      .then((u) => { if (!cancelled) setCyclesToday(u.cycles); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [licence.active, isRunning]);
-
   // Confirme l'action en attente. La suppression explicite passe par la file
   // différée annulable ; le nettoyage/continu (scan + suppression) démarre direct.
   function confirmProceed() {
@@ -443,20 +431,6 @@ export default function ControlPanel({
               >
                 {t("auto_clean_cta", lang)}
               </button>
-            </div>
-          )}
-
-          {/* Limites du plan gratuit, visibles sans mur surprise. */}
-          {!licence.active && (
-            <div className="space-y-0.5">
-              <p className="text-[11px] text-ink-soft leading-snug">{t("free_plan_note", lang)}</p>
-              {cyclesToday !== null && (
-                <p className="text-[11px] text-ink-soft tabular-nums">
-                  {t("free_usage_today", lang)
-                    .replace("{0}", String(cyclesToday))
-                    .replace("{1}", String(FREE_LIMITS.cyclesPerDay))}
-                </p>
-              )}
             </div>
           )}
         </>

@@ -64,17 +64,6 @@ function extensionPlugin(): Plugin {
         minify: true,
       });
 
-      // Build licence activator content script (injected on Stripe success page)
-      await esbuild({
-        entryPoints: ["src/content/licence-activator.ts"],
-        bundle: true,
-        format: "iife",
-        outfile: "dist/licence-activator.js",
-        alias: { "@shared": "./src/shared" },
-        tsconfig: "tsconfig.json",
-        minify: true,
-      });
-
       // Manifest
       const threadsDomains = [
         "https://www.threads.net/*",
@@ -104,11 +93,6 @@ function extensionPlugin(): Plugin {
           {
             matches: threadsDomains,
             js: ["content.js"],
-            run_at: "document_idle",
-          },
-          {
-            matches: [`${workerDomain}/success*`],
-            js: ["licence-activator.js"],
             run_at: "document_idle",
           },
         ],
