@@ -187,8 +187,14 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
   ];
 
   for (const url of endpoints) {
+    // web_profile_info est un endpoint Instagram WEB : il exige l'app-id WEB
+    // (THREADS_API.webAppId), sinon Meta répond 400 « useragent mismatch ». Les
+    // autres endpoints gardent l'app-id Threads natif.
+    const reqHeaders = url.includes("web_profile_info")
+      ? { ...headers, "X-IG-App-ID": THREADS_API.webAppId }
+      : headers;
     try {
-      const { status, body } = await mainWorldFetch(url, headers);
+      const { status, body } = await mainWorldFetch(url, reqHeaders);
       dbg("api", `resolveProfile ${url.replace(/\?.*/, "")} → HTTP ${status}`);
 
       if (status !== 200) {

@@ -58,7 +58,12 @@ export const CONTINUOUS_IDLE_PAUSE = [1800, 3600] as [number, number]; // 30–6
 // ── Threads API ──
 
 export const THREADS_API = {
-  appId: "238260118697367",
+  appId: "238260118697367",          // app Threads (Barcelona) — endpoints natifs (followers)
+  // web_profile_info est un endpoint Instagram WEB : il exige l'app-id WEB d'IG,
+  // sinon Meta répond 400 {"message":"useragent mismatch"} (l'app-id mobile ne
+  // colle pas au User-Agent navigateur). On l'envoie donc uniquement pour cet
+  // endpoint, pas pour les endpoints Threads natifs.
+  webAppId: "936619743392459",       // app Instagram web = web_profile_info
   followersEndpoint: "/api/v1/friendships/{user_id}/followers/",
   profileEndpoint: "/api/v1/users/web_profile_info/",
   searchEndpoint: "/api/v1/users/search/",
