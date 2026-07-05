@@ -283,7 +283,7 @@ export default function ControlPanel({
   }, [scanned, totalFollowers, isRunning]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {/* ÉTAPE START — connexion du compte + lancement de l'analyse. */}
       {stage === "start" && (
         <>
@@ -295,15 +295,15 @@ export default function ControlPanel({
           {/* Saisie @ inline : le préalable et l'action au même endroit. */}
           <div>
             <label className="block text-[11px] text-gray-400 mb-1">{t("connect_username_label", lang)}</label>
-            <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg px-2 focus-within:border-accent transition-colors">
-              <span className="text-gray-500 text-sm select-none">@</span>
+            <div className="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-xl px-3 focus-within:border-accent transition-colors">
+              <span className="text-gray-500 text-base select-none">@</span>
               <input
                 type="text"
                 value={draft}
                 placeholder={t("username_placeholder", lang)}
                 onChange={(e) => setDraft(e.target.value.replace(/\s+/g, "").replace(/^@+/, ""))}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAnalyze(); }}
-                className="flex-1 bg-transparent py-2 text-sm text-white placeholder-gray-600 outline-none"
+                className="flex-1 bg-transparent py-2.5 text-base text-white placeholder-gray-600 outline-none"
               />
             </div>
           </div>
@@ -311,7 +311,7 @@ export default function ControlPanel({
           <button
             onClick={handleAnalyze}
             disabled={!!loading || !draft.trim()}
-            className={`w-full px-3 py-2.5 rounded-lg font-bold text-sm transition-all
+            className={`w-full px-3 py-3 rounded-xl font-bold text-base transition-all
               ${!draft.trim()
                 ? "bg-gray-800 text-gray-600 cursor-not-allowed"
                 : "bg-accent text-accent-ink hover:bg-accent-hover active:scale-95"
@@ -331,7 +331,7 @@ export default function ControlPanel({
           <button
             onClick={() => run("stop")}
             disabled={!!loading}
-            className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+            className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
               bg-red-600 text-white hover:bg-red-500 active:scale-95"
           >
             {t("stop", lang)}
@@ -390,7 +390,7 @@ export default function ControlPanel({
             <button
               onClick={requestRemoveFakes}
               disabled={!!loading}
-              className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+              className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
                 bg-red-600/90 text-white hover:bg-red-500 active:scale-95"
             >
               {(selectionActive ? t("remove_selection_btn", lang) : t("remove_fakes_btn", lang))}{" "}
@@ -414,7 +414,7 @@ export default function ControlPanel({
           <button
             onClick={() => run("analyze")}
             disabled={!!loading || !!pendingDelete}
-            className="w-full px-3 py-2 rounded-lg font-medium text-sm transition-all
+            className="w-full px-3 py-2.5 rounded-xl font-medium text-sm transition-all
               bg-gray-800 text-gray-200 hover:bg-gray-700 active:scale-95
               disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -432,7 +432,7 @@ export default function ControlPanel({
           {/* Mode continu (licenciés) : sorti du repli « avancé » et clairement
               décrit AVANT activation (l'audit : nature jamais posée avant le clic). */}
           {licence.active && (
-            <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-2 py-2 space-y-1">
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 px-3 py-2.5 space-y-1">
               <p className="text-xs text-gray-200 font-medium">{t("auto_clean_title", lang)}</p>
               <p className="text-[11px] text-gray-500 leading-snug">{t("auto_clean_desc", lang)}</p>
               <button

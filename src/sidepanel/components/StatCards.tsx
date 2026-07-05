@@ -17,9 +17,9 @@ function StatCell({ value, label, tone }: { value: number; label: string; tone?:
   // en a. Tout le reste reste neutre pour ne pas concurrencer l'œil.
   const numColor = tone === "danger" && value > 0 ? "text-red-400" : "text-white";
   return (
-    <div className="rounded-lg bg-gray-900/60 border border-gray-800 px-2 py-1.5 text-center">
-      <div className={`text-lg font-bold tabular-nums ${numColor}`}>{display.toLocaleString()}</div>
-      <div className="text-[11px] text-gray-500">{label}</div>
+    <div className="rounded-xl bg-gray-900/60 border border-gray-800 px-2 py-3 text-center">
+      <div className={`text-2xl font-bold tabular-nums ${numColor}`}>{display.toLocaleString()}</div>
+      <div className="text-xs text-gray-500 mt-0.5">{label}</div>
     </div>
   );
 }
@@ -65,7 +65,7 @@ function HealthGauge({ score, coverage, lang }: { score: number | null; coverage
           {hasScore ? "/ 100" : ""}
         </text>
       </svg>
-      <span className="text-[11px] text-gray-500 -mt-1">{t("health_score", lang)}</span>
+      <span className="text-xs text-gray-500 -mt-1">{t("health_score", lang)}</span>
       {coverage > 0 && coverage < 100 && (
         <span className="text-[11px] text-gray-600">
           {t("scanned_coverage", lang).replace("{0}", String(coverage))}
@@ -94,7 +94,7 @@ export default function StatCards({
         </div>
         <div className="grid grid-cols-3 gap-2">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-[52px] rounded-lg" />
+            <Skeleton key={i} className="h-[64px] rounded-xl" />
           ))}
         </div>
       </div>

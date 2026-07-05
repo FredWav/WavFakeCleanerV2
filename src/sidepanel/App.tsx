@@ -201,13 +201,13 @@ export default function App() {
   const fakes = stats?.fakes ?? 0;
 
   return (
-    <div className="w-full px-3 py-4 space-y-4">
+    <div className="w-full px-4 py-5 space-y-5">
       {/* Header */}
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <img src={LOGO_URL} alt="Wav Fake Cleaner" className="w-7 h-7 rounded-md shrink-0" />
           <div>
-            <h1 className="text-lg font-bold text-white leading-none">Wav Fake Cleaner</h1>
+            <h1 className="text-xl font-bold text-white leading-none tracking-tight">Wav Fake Cleaner</h1>
             <p className="text-[11px] text-gray-500">
               by{" "}
               <a
@@ -276,26 +276,26 @@ export default function App() {
 
       {/* Accroche à l'étape start. */}
       {stage === "start" && (
-        <h2 className="text-base font-semibold text-white leading-snug">{t("connect_title", lang)}</h2>
+        <h2 className="text-xl font-bold text-white leading-tight tracking-tight">{t("connect_title", lang)}</h2>
       )}
 
       {/* Bilan héros à l'étape résultats : le chiffre qui compte, en grand. */}
       {stage === "results" && (
         fakes > 0 ? (
-          <div className="text-center py-1">
-            <div className="text-4xl font-extrabold text-white tabular-nums leading-none">
+          <div className="text-center py-3">
+            <div className="text-6xl font-extrabold text-white tabular-nums leading-none tracking-tight">
               {fakes.toLocaleString()}
             </div>
-            <div className="text-sm text-gray-300 mt-1">{t("hero_fakes_label", lang)}</div>
-            <div className="text-[11px] text-gray-500">
+            <div className="text-base text-gray-300 mt-2">{t("hero_fakes_label", lang)}</div>
+            <div className="text-xs text-gray-500 mt-0.5">
               {t("hero_context", lang).replace("{0}", (stats?.totalFollowers ?? 0).toLocaleString())}
             </div>
           </div>
         ) : (stats?.scanned ?? 0) > 0 ? (
-          <div className="text-center py-1">
-            <div className="text-2xl text-green-400" aria-hidden="true">✓</div>
-            <div className="text-sm text-white font-semibold">{t("hero_clean_title", lang)}</div>
-            <div className="text-[11px] text-gray-500">{t("hero_clean_sub", lang)}</div>
+          <div className="text-center py-3">
+            <div className="text-4xl text-green-400" aria-hidden="true">✓</div>
+            <div className="text-base text-white font-semibold mt-1">{t("hero_clean_title", lang)}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{t("hero_clean_sub", lang)}</div>
           </div>
         ) : null
       )}
