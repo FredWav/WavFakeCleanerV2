@@ -3,21 +3,23 @@ import { useCountUp } from "../hooks/useCountUp";
 import type { Stats } from "@shared/types";
 import Skeleton from "./ui/Skeleton";
 
-const cards = [
-  { key: "total", color: "bg-blue-500/20 text-blue-400", field: "totalFollowers" as const },
-  { key: "pending", color: "bg-yellow-500/20 text-yellow-400", field: "pending" as const },
-  { key: "scanned", color: "bg-cyan-500/20 text-cyan-400", field: "scanned" as const },
-  { key: "fakes", color: "bg-red-500/20 text-red-400", field: "fakes" as const },
-  { key: "to_review", color: "bg-orange-500/20 text-orange-400", field: "toReview" as const },
-  { key: "removed", color: "bg-green-500/20 text-green-400", field: "removed" as const },
-];
+// Lot 3 — hiérarchie de l'information. Plus d'arc-en-ciel de 6 cartes de poids
+// égal mélangeant KPI et tuyauterie (« En attente »/« Analysés »). La jauge de
+// santé reste le repère premium ; en dessous, une bande CONTEXTE discrète et
+// neutre (fond encre, chiffre blanc, label gris) sur les 3 seuls états qui
+// parlent à un créateur : faux, à vérifier, supprimés. Le total et le nombre
+// analysés vivent déjà dans la barre de progression et le bilan héros — plus de
+// doublon, plus de rouge redondant (l'ancienne « Estimation ~X faux » a sauté).
 
-function AnimatedCard({ value, color, label }: { value: number; color: string; label: string }) {
+function StatCell({ value, label, tone }: { value: number; label: string; tone?: "danger" }) {
   const display = useCountUp(value);
+  // Une seule couleur d'exception : le nombre de faux vire au rouge quand il y
+  // en a. Tout le reste reste neutre pour ne pas concurrencer l'œil.
+  const numColor = tone === "danger" && value > 0 ? "text-red-400" : "text-white";
   return (
-    <div className={`rounded-xl p-3 ${color} backdrop-blur-sm`}>
-      <div className="text-[11px] uppercase tracking-wider opacity-70">{label}</div>
-      <div className="text-xl font-bold mt-0.5">{display.toLocaleString()}</div>
+    <div className="rounded-lg bg-gray-900/60 border border-gray-800 px-2 py-1.5 text-center">
+      <div className={`text-lg font-bold tabular-nums ${numColor}`}>{display.toLocaleString()}</div>
+      <div className="text-[11px] text-gray-500">{label}</div>
     </div>
   );
 }
@@ -91,8 +93,8 @@ export default function StatCards({
           <Skeleton className="w-20 h-20 rounded-full" />
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {cards.map(({ key }) => (
-            <Skeleton key={key} className="h-[60px] rounded-xl" />
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-[52px] rounded-lg" />
           ))}
         </div>
       </div>
@@ -112,41 +114,18 @@ export default function StatCards({
   const healthScore = evaluated > 0 ? Math.min(100, Math.round((clean / evaluated) * 100)) : null;
   const coverage = total > 0 ? Math.min(100, Math.round((evaluated / total) * 100)) : 0;
 
-  // Extrapole la proportion de faux de l'échantillon scanné à tout le compte,
-  // pour qu'un scan partiel donne déjà une idée de l'ampleur. Affiché seulement si
-  // on a un vrai échantillon, des faux, et que le scan n'est pas déjà terminé.
-  const fakesCount = stats.fakes ?? 0;
-  const estimatedFakes =
-    evaluated > 0 && fakesCount > 0 && total > evaluated
-      ? Math.round((fakesCount / evaluated) * total)
-      : null;
-
   return (
     <div className="space-y-2">
       <HealthGauge score={healthScore} coverage={coverage} lang={lang} />
 
-      {estimatedFakes !== null && (
-        <p className="text-[11px] text-red-300/90 text-center bg-red-500/5 rounded-lg px-2 py-1 leading-snug">
-          {t("fakes_estimate", lang)
-            .replace("{0}", estimatedFakes.toLocaleString())
-            .replace("{1}", total.toLocaleString())}
-        </p>
-      )}
-
       <div className="grid grid-cols-3 gap-2">
-        {cards.map(({ key, color, field }) => (
-          <AnimatedCard
-            key={key}
-            value={stats[field] ?? 0}
-            color={color}
-            label={t(key, lang)}
-          />
-        ))}
-
+        <StatCell value={stats.fakes ?? 0} label={t("fakes", lang)} tone="danger" />
+        <StatCell value={stats.toReview ?? 0} label={t("to_review", lang)} />
+        <StatCell value={stats.removed ?? 0} label={t("removed", lang)} />
       </div>
 
       {typeof communityTotal === "number" && communityTotal > 0 && (
-        <p className="text-[11px] text-blue-400/90 text-center leading-snug">
+        <p className="text-[11px] text-gray-500 text-center leading-snug">
           {t("community_total_banner", lang).replace("{0}", communityTotal.toLocaleString())}
         </p>
       )}

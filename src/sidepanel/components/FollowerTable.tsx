@@ -205,20 +205,15 @@ function exportRemovedCsv(rows: FollowerWithUrl[]): void {
   URL.revokeObjectURL(url);
 }
 
-function scoreBadge(score: number | null) {
-  if (score === null || score === undefined) return null;
-  let color = "bg-green-500/20 text-green-400";
-  if (score >= 70) color = "bg-red-500/20 text-red-400";
-  else if (score >= 40) color = "bg-yellow-500/20 text-yellow-400";
-  return <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${color}`}>{score}</span>;
-}
-
-function statusBadge(f: FollowerRecord, lang: string) {
-  if (f.removed) return <span className="text-green-400 text-[11px]">{t("filter_removed", lang)}</span>;
-  if (f.toReview) return <span className="text-orange-400 text-[11px]">{t("to_review", lang)}</span>;
+// Lot 3 — verdict qualitatif : fini le « Score : 73 » brut et le statut « OK »
+// codé en dur. Une seule colonne lisible, dérivée de l'état déjà calculé par le
+// scorer. Le score exact reste disponible dans l'export CSV et le détail replié.
+function verdictBadge(f: FollowerRecord, lang: string) {
+  if (f.removed) return <span className="text-gray-400 text-[11px]">{t("filter_removed", lang)}</span>;
+  if (f.toReview) return <span className="text-amber-400 text-[11px]">{t("to_review", lang)}</span>;
   if (f.approved) return <span className="text-emerald-400 text-[11px]">{t("approved", lang)}</span>;
-  if (f.isFake) return <span className="text-red-400 text-[11px]">{t("filter_fake", lang)}</span>;
-  if (f.scanned) return <span className="text-cyan-400 text-[11px]">OK</span>;
+  if (f.isFake) return <span className="text-red-400 text-[11px] font-medium">{t("verdict_suspect", lang)}</span>;
+  if (f.scanned) return <span className="text-green-400 text-[11px]">{t("verdict_ok", lang)}</span>;
   return <span className="text-gray-500 text-[11px]">{t("filter_pending", lang)}</span>;
 }
 
@@ -444,8 +439,7 @@ export default function FollowerTable({
           <thead className="sticky top-0 bg-gray-900">
             <tr className="text-gray-500 text-[11px] uppercase">
               <th className="text-left px-2 py-1.5">{t("follower", lang)}</th>
-              <th className="text-center px-1 py-1.5">{t("score", lang)}</th>
-              <th className="text-center px-1 py-1.5">{t("status", lang)}</th>
+              <th className="text-right px-2 py-1.5">{t("status", lang)}</th>
             </tr>
           </thead>
           <tbody>
@@ -454,13 +448,12 @@ export default function FollowerTable({
               Array.from({ length: 6 }, (_, i) => (
                 <tr key={`skeleton-${i}`} className="border-t border-gray-800/50">
                   <td className="px-2 py-2"><Skeleton className="h-3.5 w-28" /></td>
-                  <td className="px-1 py-2"><Skeleton className="h-3.5 w-7 mx-auto" /></td>
-                  <td className="px-1 py-2"><Skeleton className="h-3.5 w-12 mx-auto" /></td>
+                  <td className="px-2 py-2"><Skeleton className="h-3.5 w-12 ml-auto" /></td>
                 </tr>
               ))
             ) : followers.length === 0 ? (
               <tr>
-                <td colSpan={3} className="text-center py-8">
+                <td colSpan={2} className="text-center py-8">
                   {filter === "fake" ? (
                     // Empty "fake" tab is GOOD news — say so instead of "no data".
                     <div className="space-y-1">
@@ -500,7 +493,7 @@ export default function FollowerTable({
                   if (index !== FREE_LIMITS.visibleFakes) return null;
                   return (
                     <tr key="paywall">
-                      <td colSpan={3} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-gray-900">
+                      <td colSpan={2} className="px-3 py-5 text-center bg-gradient-to-b from-transparent to-gray-900">
                         <p className="text-xs text-gray-300 mb-2">
                           {t("blur_banner_count", lang)
                             .replace("{0}", String(followers.length))
@@ -552,18 +545,15 @@ export default function FollowerTable({
                         )}
                         <span className="ml-1 text-gray-600">{isExpanded ? <IconChevronDown /> : <IconChevronRight />}</span>
                       </td>
-                      <td className="text-center px-1 py-1.5">{scoreBadge(f.score)}</td>
-                      <td className="text-center px-1 py-1.5">
-                        <div className="flex items-center justify-center gap-1">
-                          {statusBadge(f, lang)}
-                        </div>
+                      <td className="text-right px-2 py-1.5 whitespace-nowrap">
+                        {verdictBadge(f, lang)}
                       </td>
                     </tr>
 
                     {/* Expanded detail */}
                     {isExpanded && (
                       <tr className="bg-gray-800/40">
-                        <td colSpan={3} className="px-3 py-2 space-y-2">
+                        <td colSpan={2} className="px-3 py-2 space-y-2">
 
                           {/* Section 1: Infos compte */}
                           <div className="text-[11px] text-gray-500 flex flex-wrap gap-x-2">
