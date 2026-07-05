@@ -81,7 +81,7 @@ export default function SettingsPanel({
                 setForm({ ...form, threadsUsername: e.target.value.replace(/\s+/g, "").replace(/^@+/, "") })
               }
               className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
-                text-xs text-white w-36 placeholder-gray-600 focus:border-purple-500 outline-none"
+                text-xs text-white w-36 placeholder-gray-600 focus:border-accent outline-none"
             />
           </div>
           {/* Threshold */}
@@ -94,7 +94,7 @@ export default function SettingsPanel({
                 setForm({ ...form, scoreThreshold: parseInt(e.target.value) || 70 })
               }
               className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
-                text-xs text-white w-20 focus:border-purple-500 outline-none"
+                text-xs text-white w-20 focus:border-accent outline-none"
             />
           </div>
           {/* Private = review */}
@@ -105,7 +105,7 @@ export default function SettingsPanel({
               role="switch"
               aria-checked={!!form.privateAlwaysReview}
               aria-label={t("setting_private_review", lang)}
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${form.privateAlwaysReview ? "bg-purple-600" : "bg-gray-700"}`}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${form.privateAlwaysReview ? "bg-accent" : "bg-gray-700"}`}
             >
               <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.privateAlwaysReview ? "translate-x-4" : "translate-x-0"}`} />
             </button>
@@ -121,7 +121,7 @@ export default function SettingsPanel({
               role="switch"
               aria-checked={!!form.telemetry}
               aria-label={t("setting_telemetry", lang)}
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 mt-0.5 ${form.telemetry ? "bg-purple-600" : "bg-gray-700"}`}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 mt-0.5 ${form.telemetry ? "bg-accent" : "bg-gray-700"}`}
             >
               <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.telemetry ? "translate-x-4" : "translate-x-0"}`} />
             </button>

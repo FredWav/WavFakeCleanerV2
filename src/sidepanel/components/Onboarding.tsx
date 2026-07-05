@@ -44,12 +44,12 @@ export default function Onboarding({
             <div
               key={num}
               className={`flex items-start gap-3 p-2.5 rounded-xl ${
-                action ? "bg-purple-600/10 border border-purple-600/20 cursor-pointer hover:bg-purple-600/20" : "bg-gray-800/50"
+                action ? "bg-accent/10 border border-accent/20 cursor-pointer hover:bg-accent/20" : "bg-gray-800/50"
               }`}
               onClick={action ? () => { action(); handleDismiss(); } : undefined}
             >
-              <div className="w-6 h-6 rounded-full bg-purple-600 flex items-center justify-center flex-shrink-0">
-                <span className="text-[11px] text-white font-bold">{num}</span>
+              <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
+                <span className="text-[11px] text-accent-ink font-bold">{num}</span>
               </div>
               <p className="text-xs text-gray-300 pt-0.5">{text}</p>
             </div>

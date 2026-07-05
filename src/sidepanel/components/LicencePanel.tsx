@@ -212,8 +212,8 @@ export default function LicencePanel({
                 <button
                   onClick={copyCode}
                   title={t("licence_code_copy_hint", lang)}
-                  className="w-full font-mono text-sm font-bold tracking-wider text-purple-300
-                    bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 hover:border-purple-500
+                  className="w-full font-mono text-sm font-bold tracking-wider text-accent
+                    bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 hover:border-accent
                     transition-colors select-all"
                 >
                   {licence.key}
@@ -263,7 +263,7 @@ export default function LicencePanel({
               <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-1">
                 <span className="flex-1" />
                 <span className="w-10 text-center">Free</span>
-                <span className="w-10 text-center text-purple-400 font-bold">Pro</span>
+                <span className="w-10 text-center text-accent font-bold">Pro</span>
               </div>
               {features.map(({ label, free }) => (
                 <div key={label} className="flex items-center gap-2 text-[11px]">
@@ -283,7 +283,7 @@ export default function LicencePanel({
 
             {/* Launch badge + buy */}
             <div className="text-center space-y-1.5">
-              <span className="text-[11px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full font-medium">
+              <span className="text-[11px] bg-accent/20 text-accent px-2 py-0.5 rounded-full font-medium">
                 {t("licence_launch_badge", lang)}
               </span>
               <a
@@ -298,7 +298,7 @@ export default function LicencePanel({
                 </span>
                 {t("licence_launch_price", lang)}{" €"} — {t("licence_lifetime", lang)}
               </a>
-              <p className="text-[11px] text-purple-300">{t("licence_price_anchor", lang)}</p>
+              <p className="text-[11px] text-gray-400">{t("licence_price_anchor", lang)}</p>
               <p className="text-[11px] text-gray-400">{t("licence_guarantee", lang)}</p>
             </div>
 
@@ -321,7 +321,7 @@ export default function LicencePanel({
                   onChange={(e) => setKey(e.target.value)}
                   placeholder={t("licence_key_placeholder", lang)}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                    text-xs text-white focus:border-purple-500 outline-none"
+                    text-xs text-white focus:border-accent outline-none"
                   onKeyDown={(e) => e.key === "Enter" && activate()}
                 />
                 <button
@@ -340,7 +340,7 @@ export default function LicencePanel({
                 <button
                   onClick={triggerImport}
                   disabled={loading}
-                  className="text-[11px] text-purple-400 hover:text-purple-300 underline
+                  className="text-[11px] text-accent hover:text-accent-hover underline
                     disabled:opacity-50"
                 >
                   {t("licence_import_link", lang)}
@@ -366,7 +366,7 @@ export default function LicencePanel({
                   onChange={(e) => setRecoverEmail(e.target.value)}
                   placeholder={t("licence_recover_placeholder", lang)}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                    text-xs text-white focus:border-purple-500 outline-none"
+                    text-xs text-white focus:border-accent outline-none"
                   onKeyDown={(e) => e.key === "Enter" && recover()}
                 />
                 <button
@@ -388,7 +388,7 @@ export default function LicencePanel({
           {t("support_help", lang)}{" "}
           <a
             href="mailto:contact@fredwav.com"
-            className="text-purple-400 hover:text-purple-300 transition-colors"
+            className="text-accent hover:text-accent-hover transition-colors"
           >
             contact@fredwav.com
           </a>

@@ -394,7 +394,7 @@ export default function FollowerTable({
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("search_placeholder", lang)}
           className="ml-auto px-2 py-0.5 rounded-lg text-[11px] bg-gray-800 border border-gray-700
-            text-gray-300 placeholder-gray-600 outline-none focus:border-purple-500 w-28"
+            text-gray-300 placeholder-gray-600 outline-none focus:border-accent w-28"
         />
         <button onClick={load} aria-label={t("refresh", lang)} title={t("refresh", lang)} className="text-gray-500 hover:text-gray-300 px-1">
           <IconRefresh />
@@ -501,8 +501,8 @@ export default function FollowerTable({
                         </p>
                         <button
                           onClick={() => onShowLicence?.()}
-                          className="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg
-                            hover:bg-purple-500 transition-colors"
+                          className="px-3 py-1.5 bg-accent text-accent-ink text-xs font-medium rounded-lg
+                            hover:bg-accent-hover transition-colors"
                         >
                           {t("blur_cta", lang)}
                         </button>
@@ -533,7 +533,7 @@ export default function FollowerTable({
                           href={f.profile_url}
                           rel="noopener noreferrer"
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openProfileTab(f.profile_url); }}
-                          className="text-purple-400 hover:text-purple-300 hover:underline transition-colors"
+                          className="text-gray-300 hover:text-white hover:underline transition-colors"
                         >
                           @{f.username}
                         </a>
@@ -606,13 +606,13 @@ export default function FollowerTable({
                                 {licencePrompt === f.username ? (
                                   /* Upsell sans licence */
                                   <div className="flex items-center gap-1.5">
-                                    <span className="text-[11px] text-purple-300">
+                                    <span className="text-[11px] text-gray-400">
                                       {t("vote_licence_required", lang)}
                                     </span>
                                     <button
                                       onClick={(e) => { e.stopPropagation(); onShowLicence?.(); setLicencePrompt(null); }}
-                                      className="px-2 py-0.5 rounded text-[11px] bg-purple-600 text-white font-medium
-                                        hover:bg-purple-500 transition-colors"
+                                      className="px-2 py-0.5 rounded text-[11px] bg-accent text-accent-ink font-medium
+                                        hover:bg-accent-hover transition-colors"
                                     >
                                       {t("vote_licence_cta", lang)}
                                     </button>

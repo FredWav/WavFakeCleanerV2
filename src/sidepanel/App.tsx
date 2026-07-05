@@ -214,7 +214,7 @@ export default function App() {
                 href="https://fredwav.com/contact"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-purple-400 hover:text-purple-300 transition-colors"
+                className="text-accent hover:text-accent-hover transition-colors"
               >
                 Fred Wav
               </a>
@@ -251,17 +251,17 @@ export default function App() {
 
       {/* One-time v3 telemetry notice */}
       {showTelemetryNotice && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-purple-800/40 bg-purple-950/30 text-[11px] text-purple-200">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-gray-800 bg-gray-900/60 text-[11px] text-gray-300">
           <span className="flex-1 leading-snug">{t("telemetry_notice", lang)}</span>
           <button
             onClick={() => { dismissTelemetryNotice(); setShowSettings(true); }}
-            className="shrink-0 px-2 py-0.5 rounded bg-purple-600/40 text-purple-100 hover:bg-purple-600/60 transition-colors"
+            className="shrink-0 px-2 py-0.5 rounded bg-accent text-accent-ink font-medium hover:bg-accent-hover transition-colors"
           >
             {t("telemetry_notice_cta", lang)}
           </button>
           <button
             onClick={dismissTelemetryNotice}
-            className="shrink-0 text-purple-400 hover:text-white transition-colors p-0.5"
+            className="shrink-0 text-gray-500 hover:text-white transition-colors p-0.5"
             aria-label={t("confirm_cancel", lang)}
           >
             <IconX />

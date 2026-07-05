@@ -19,18 +19,16 @@
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
-/* ── Tokens de marque (D1) ──────────────────────────────────────────────
-   Avant : violet Tailwind par défaut partout (purple-600), aucune variable,
-   l'or du logo absent de l'UI. Désormais l'ACTION porte l'ambre/or du logo —
-   ça sort l'app du lot des SaaS violets et la rend immédiatement « Wav ». Le
-   violet devient la couleur secondaire « communauté/social ». Tailwind v4
-   génère bg-accent / text-accent / border-accent… à partir de ces tokens. */
+/* ── Tokens de marque (D1 / Lot 4) ──────────────────────────────────────
+   UN seul accent fort : l'ambre/or du logo = l'ACTION. Fini le violet Tailwind
+   par défaut (purple-*) qui doublonnait l'accent et dominait les CTA — purge
+   complète au Lot 4. Tailwind v4 génère bg-accent / text-accent / border-accent
+   à partir de ces tokens. Rouge/vert/ambre restent réservés au sens (danger /
+   succès / attention). */
 @theme {
   --color-accent: #f5a524;        /* or/ambre du balai du logo = action */
   --color-accent-hover: #e0941a;
   --color-accent-ink: #1a1523;    /* texte foncé sur l'ambre (contraste AA) */
-  --color-community: #7c3aed;     /* violet relégué = communauté/social */
-  --color-community-hover: #6d28d9;
   --color-ink: #0c0a12;           /* fond : encre légèrement violacée (pas gris bleuté) */
 
   /* Échelle typographique nommée (D3) — la taille porte la hiérarchie, plus la
@@ -44,8 +42,8 @@
 body {
   @apply text-white;
   background-color: var(--color-ink);
-  /* Police de marque self-hostée si présente (public/fonts/Satoshi-Variable.woff2,
-     déclarée plus bas), repli propre sur la pile système sinon. */
+  /* Police de marque Satoshi (poids 400/500/700, déclarés en @font-face plus
+     haut), repli propre sur la pile système si un fichier manque. */
   font-family: "Satoshi", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   min-width: 320px;
 }
