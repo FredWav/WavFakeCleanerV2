@@ -82,21 +82,38 @@ export async function getOrCreateBackgroundTab(): Promise<number> {
   // Reuse existing background tab if still open
   if (backgroundTabId !== null) {
     try {
-      const tab = await chrome.tabs.get(backgroundTabId);
-      if (tab) return backgroundTabId;
+      await chrome.tabs.get(backgroundTabId);
+      return backgroundTabId;
     } catch {
       backgroundTabId = null;
       persistSession();
     }
   }
 
-  // Create a new background tab (active: false = doesn't steal focus)
-  const tab = await chrome.tabs.create({
-    url: "https://www.threads.com/",
-    active: false,
-  });
+  // Create a new background tab (active: false = doesn't steal focus).
+  //
+  // chrome.tabs.create MUST resolve with a numeric id. On the rare occasion it
+  // resolves without one, the old `tab.id!` cached `undefined` and every
+  // downstream call inherited it — with a nasty twist: chrome.tabs.update(
+  // undefined, {url}) doesn't throw, it silently RETARGETS the user's active
+  // tab (the optional-tabId overload), and scripting.executeScript then fails
+  // with "Missing required property 'tabId'". We validate the id, retry once on
+  // a transient miss, and fail loud rather than corrupt the cache.
+  async function createTab(): Promise<number | undefined> {
+    const tab = await chrome.tabs.create({ url: "https://www.threads.com/", active: false });
+    return typeof tab.id === "number" ? tab.id : undefined;
+  }
 
-  backgroundTabId = tab.id!;
+  let newId = await createTab();
+  if (newId === undefined) {
+    await new Promise((r) => setTimeout(r, 300));
+    newId = await createTab();
+  }
+  if (newId === undefined) {
+    throw new Error("chrome.tabs.create returned no tabId — cannot open the background scraping tab");
+  }
+
+  backgroundTabId = newId;
   persistSession();
   log("INFO", "pipeline", m("bg_tab_created", backgroundTabId));
 

@@ -20,6 +20,13 @@ const POST_INJECT_SETTLE_MS = 500;
  * was closed mid-operation). Callers handle the error to recreate the tab.
  */
 export async function ensureContentScript(tabId: number): Promise<void> {
+  // Defense in depth: never let an undefined/invalid id reach scripting or
+  // messaging. sendMessage(undefined) / executeScript({target:{tabId:undefined}})
+  // throw cryptic errors, and a stray chrome.tabs.update(undefined) elsewhere
+  // would hijack the user's active tab. Fail with a clear, catchable message.
+  if (typeof tabId !== "number" || tabId < 0) {
+    throw new Error(`Cannot inject content script: invalid tabId (${String(tabId)})`);
+  }
   try {
     await Promise.race([
       chrome.tabs.sendMessage(tabId, { type: "PING" }),
