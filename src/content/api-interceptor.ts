@@ -175,12 +175,66 @@ export async function resolveUserId(username: string): Promise<string | null> {
   return profile?.userId ?? null;
 }
 
-export async function resolveUserProfile(username: string): Promise<UserProfile | null> {
-  const headers = apiHeaders();
+// Descend l'arbre JSON d'un <script> de page jusqu'à l'objet utilisateur qui
+// porte ce username (insensible à la casse) + un pk numérique. Borne la
+// profondeur pour ne pas exploser sur les blobs Meta très imbriqués.
+function walkForUser(node: unknown, uname: string, depth: number): UserProfile | null {
+  if (depth > 60 || !node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const it of node) { const r = walkForUser(it, uname, depth + 1); if (r) return r; }
+    return null;
+  }
+  const o = node as Record<string, unknown>;
+  if (typeof o.username === "string" && o.username.toLowerCase() === uname) {
+    const pk = o.pk ?? o.pk_id ?? o.id ?? o.user_id;
+    if (pk != null && /^\d+$/.test(String(pk))) {
+      const fc = Number(o.follower_count ?? 0);
+      return { userId: String(pk), followerCount: Number.isFinite(fc) ? fc : 0, isPrivate: !!o.is_private };
+    }
+  }
+  for (const k in o) { const r = walkForUser(o[k], uname, depth + 1); if (r) return r; }
+  return null;
+}
 
-  // Absolutise against the page origin (https://www.threads.com). The bridge's
-  // allowlist accepts the relative form too, but an explicit absolute URL is
-  // unambiguous and removes any dependency on how fetch resolves a bare path.
+/**
+ * Voie FIABLE de résolution du profil sur Threads : threads.com embarque les
+ * données du profil dans des <script type="application/json"> (web_profile_info
+ * y est un stub mort qui renvoie {status} vide, et /users/search/ refuse nos
+ * app-ids). On lit donc le pk du propriétaire directement dans la page — aucune
+ * requête réseau, aucune surface anti-bot.
+ */
+function findEmbeddedProfile(username: string): UserProfile | null {
+  const uname = username.toLowerCase();
+  const needle = `"username":"${uname}"`;
+  const scripts = document.querySelectorAll('script[type="application/json"]');
+  for (const s of scripts) {
+    const text = s.textContent || "";
+    if (text.length < 20 || !text.toLowerCase().includes(needle)) continue;
+    // a) parse structuré (le plus fiable) : on trouve l'objet du bon @.
+    try {
+      const hit = walkForUser(JSON.parse(text), uname, 0);
+      if (hit) return hit;
+    } catch { /* pas du JSON pur → repli regex ci-dessous */ }
+    // b) repli regex : pk le plus proche du pseudo (pk/pk_id d'abord, sinon id).
+    const at = text.toLowerCase().indexOf(needle);
+    const win = text.slice(Math.max(0, at - 700), at + 400);
+    const m = win.match(/"pk(?:_id)?"\s*:\s*"?(\d{3,})"?/) || win.match(/"(?:user_)?id"\s*:\s*"?(\d{3,})"?/);
+    if (m) return { userId: m[1], followerCount: 0, isPrivate: /"is_private"\s*:\s*true/.test(win) };
+  }
+  return null;
+}
+
+export async function resolveUserProfile(username: string): Promise<UserProfile | null> {
+  // ── 1) Voie fiable : le pk est déjà dans le JSON de la page threads.com/@user. ──
+  const embed = findEmbeddedProfile(username);
+  if (embed) {
+    dbg("api", `resolveProfile via page embed : uid=${embed.userId} · fc=${embed.followerCount} · priv=${embed.isPrivate}`);
+    return embed;
+  }
+
+  // ── 2) Repli réseau : endpoints IG-web (app-id WEB requis). Souvent morts côté
+  //    threads.com, mais on tente pour les edge cases (profil non embarqué). ──
+  const headers = apiHeaders();
   const endpoints = [
     apiUrl(`${THREADS_API.profileEndpoint}?username=${encodeURIComponent(username)}`),
     apiUrl(`${THREADS_API.searchEndpoint}?q=${encodeURIComponent(username)}`),
@@ -246,29 +300,7 @@ export async function resolveUserProfile(username: string): Promise<UserProfile 
     }
   }
 
-  // Fallback: check page scripts for embedded data (no follower count available here)
-  try {
-    const scripts = document.querySelectorAll('script[type="application/json"]');
-    for (const s of scripts) {
-      const text = s.textContent || "";
-      if (text.includes(username)) {
-        // Lit is_private dans le MÊME JSON embarqué, près de ce pseudo (le blob
-        // peut lister plusieurs comptes → on limite la recherche à une fenêtre après).
-        const uIdx = text.indexOf(`"username":"${username}"`);
-        const priv = uIdx >= 0 && /"is_private":\s*true/.test(text.slice(uIdx, uIdx + 600));
-        const pkM = text.match(/"pk":"?(\d+)"?/);
-        if (pkM) {
-          return { userId: pkM[1], followerCount: 0, isPrivate: priv };
-        }
-        const idM = text.match(/"user_id":"?(\d+)"?/);
-        if (idM) return { userId: idM[1], followerCount: 0, isPrivate: priv };
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  dbg("api", `resolveProfile : aucun identifiant trouvé pour @${username}`, "WARNING");
+  dbg("api", `resolveProfile : aucun identifiant trouvé pour @${username} (page non embarquée ?)`, "WARNING");
   return null;
 }
 
