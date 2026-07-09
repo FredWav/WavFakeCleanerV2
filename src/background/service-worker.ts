@@ -17,6 +17,7 @@ import {
   getPipelineState,
   savePipelineState,
   purgeOwnerSubPageFakes,
+  setAutoCleanup,
 } from "./storage";
 import {
   runFetch,
@@ -195,11 +196,16 @@ async function handleMessage(msg: RequestMessage | ContentMessage): Promise<unkn
       return { ok: true };
 
     case "START_CONTINUOUS":
-      // Plus de licence : le mode continu est ouvert à tout le monde.
+      // Ouvert à tous. On MÉMORISE l'intention (persistée) pour que l'UI affiche
+      // « activé » ensuite au lieu de redemander l'activation, puis on lance.
+      await setAutoCleanup(true);
       runContinuous(); // fire and forget
       return { ok: true };
 
     case "STOP":
+      // Un arrêt manuel désactive aussi le nettoyage auto : l'utilisateur reprend
+      // la main (il pourra le réactiver quand il veut).
+      await setAutoCleanup(false);
       stopPipeline();
       return { ok: true };
 

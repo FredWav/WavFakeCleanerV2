@@ -118,7 +118,16 @@ export async function getFollowers(filter?: {
   if (filter?.status) {
     const statusMap: Record<string, () => Promise<FollowerRecord[]>> = {
       pending: () => db.getAllFromIndex("followers", "status", "pending"),
-      fake: () => db.getAllFromIndex("followers", "isFake", 1 as unknown as IDBValidKey),
+      // ⚠️ IndexedDB n'indexe PAS les booléens : l'index "isFake" est vide, donc
+      // getAllFromIndex(..., "isFake", 1) renvoyait TOUJOURS [] (liste des faux
+      // vide alors que le compteur en voyait 83). On filtre en JS avec la MÊME
+      // logique que le compteur (computeStats) pour que liste et compteur
+      // concordent toujours. Répare aussi la suppression (runRemoveFlagged +
+      // getFollowers({status:"fake"})).
+      fake: async () => {
+        const all = await db.getAll("followers");
+        return all.filter((f) => f.isFake && !f.removed);
+      },
       removed: () => db.getAllFromIndex("followers", "status", "removed"),
       review: async () => {
         const all = await db.getAll("followers");
@@ -255,6 +264,29 @@ export async function updateScanSession(
   }
 }
 
+// ── Nettoyage automatique (mode continu) : intention persistée de l'utilisateur.
+// On la garde même quand le cycle s'arrête (SW suspendu) pour ne pas redemander
+// l'activation. On NE reprend PAS la suppression toute seule au boot (sécurité) :
+// l'UI propose « Reprendre » en un clic. ──
+const AUTO_CLEANUP_KEY = "wfc_auto_cleanup";
+
+export async function getAutoCleanup(): Promise<boolean> {
+  try {
+    const r = await chrome.storage.local.get(AUTO_CLEANUP_KEY);
+    return r[AUTO_CLEANUP_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function setAutoCleanup(on: boolean): Promise<void> {
+  try {
+    await chrome.storage.local.set({ [AUTO_CLEANUP_KEY]: on });
+  } catch {
+    /* stockage indisponible — sans conséquence */
+  }
+}
+
 // ── Stats computation ──
 
 export async function computeStats(isRunning: boolean, rateStats: Stats["rate"]): Promise<Stats> {
@@ -273,6 +305,7 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
   const lastError = pipelineState?.lastError ?? null;
   const pausedUntil = pipelineState?.pausedUntil ?? null;
   const pauseReason = pipelineState?.pauseReason ?? null;
+  const autoCleanupEnabled = await getAutoCleanup();
 
   return {
     totalFollowers,
@@ -285,6 +318,7 @@ export async function computeStats(isRunning: boolean, rateStats: Stats["rate"])
     lastError,
     pausedUntil,
     pauseReason,
+    autoCleanupEnabled,
     rate: rateStats,
   };
 }

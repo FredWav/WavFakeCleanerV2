@@ -826,9 +826,17 @@ async function handleCheckSightings(request, env) {
   if (targetHashes.length === 0) return json({ results: {} }, 200, request);
 
   const placeholders = targetHashes.map(() => "?").join(", ");
-  const rows = await env.DB.prepare(
-    `SELECT target_hash, COUNT(DISTINCT reporter_hash) AS cnt FROM sightings WHERE target_hash IN (${placeholders}) GROUP BY target_hash`
-  ).bind(...targetHashes).all();
+  let rows;
+  try {
+    rows = await env.DB.prepare(
+      `SELECT target_hash, COUNT(DISTINCT reporter_hash) AS cnt FROM sightings WHERE target_hash IN (${placeholders}) GROUP BY target_hash`
+    ).bind(...targetHashes).all();
+  } catch {
+    // Lecture NON bloquante : en cas d'erreur transitoire D1 (contention, etc.)
+    // on degrade en douceur (aucune donnee communautaire) plutot que de renvoyer
+    // un 500 qui remonte en warning cote extension.
+    return json({ results: {} }, 200, request);
+  }
 
   const results = {};
   for (const row of rows.results) {

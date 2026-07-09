@@ -417,22 +417,48 @@ export default function ControlPanel({
             {t("rescan_all_btn", lang)}
           </button>
 
-          {/* Mode continu (licenciés) : sorti du repli « avancé » et clairement
-              décrit AVANT activation (l'audit : nature jamais posée avant le clic). */}
-          {licence.active && (
-            <div className="rounded-xl border border-line bg-surface-2 px-3 py-2.5 space-y-1">
-              <p className="text-xs text-ink font-medium">{t("auto_clean_title", lang)}</p>
-              <p className="text-[11px] text-ink-soft leading-snug">{t("auto_clean_desc", lang)}</p>
-              <button
-                type="button"
-                onClick={handleContinuous}
-                disabled={!!loading || !!pendingDelete}
-                className="text-[11px] text-accent-deep hover:text-accent transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
-              >
-                {t("auto_clean_cta", lang)}
-              </button>
-            </div>
-          )}
+          {/* Mode continu (nettoyage auto). Bug 3 : l'intention est MÉMORISÉE
+              (stats.autoCleanupEnabled). Si déjà activé mais à l'arrêt (SW
+              suspendu), on n'en redemande pas l'activation : on propose Reprendre
+              (1 clic) / Désactiver. Décrit AVANT activation sinon. */}
+          <div className="rounded-xl border border-line bg-surface-2 px-3 py-2.5 space-y-1">
+            <p className="text-xs text-ink font-medium">{t("auto_clean_title", lang)}</p>
+            {stats?.autoCleanupEnabled ? (
+              <>
+                <p className="text-[11px] text-clean leading-snug">{t("auto_clean_on", lang)}</p>
+                <div className="flex items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => run("continuous")}
+                    disabled={!!loading || !!pendingDelete}
+                    className="text-[11px] text-accent-deep hover:text-accent transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+                  >
+                    {t("auto_clean_resume", lang)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => run("stop")}
+                    disabled={!!loading}
+                    className="text-[11px] text-ink-faint hover:text-ink transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+                  >
+                    {t("auto_clean_disable", lang)}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[11px] text-ink-soft leading-snug">{t("auto_clean_desc", lang)}</p>
+                <button
+                  type="button"
+                  onClick={handleContinuous}
+                  disabled={!!loading || !!pendingDelete}
+                  className="text-[11px] text-accent-deep hover:text-accent transition-colors underline decoration-dotted underline-offset-2 disabled:opacity-50"
+                >
+                  {t("auto_clean_cta", lang)}
+                </button>
+              </>
+            )}
+          </div>
         </>
       )}
 

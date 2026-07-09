@@ -117,6 +117,10 @@ export interface Stats {
   // plus a reason code the UI maps to a label. Null/absent when not paused.
   pausedUntil?: number | null;
   pauseReason?: string | null;
+  // Nettoyage automatique (mode continu) : intention MÉMORISÉE de l'utilisateur.
+  // Reste true même si le cycle s'est arrêté (SW suspendu) → l'UI affiche « activé
+  // — Reprendre » au lieu de redemander l'activation.
+  autoCleanupEnabled?: boolean;
   rate: {
     actionsThisHour: number;
     limitHour: number;
