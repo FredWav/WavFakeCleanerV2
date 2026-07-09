@@ -32,3 +32,8 @@ wfc-licence-tokens.txt
 # Backfill artifact (regenerable; HMAC hex only, but noise)
 scripts/backfill-emails.generated.sql
 .audit_extracted.txt
+
+# Archives de distribution (jamais dans le dépôt)
+dist.rar
+dist.zip
+*.rar
